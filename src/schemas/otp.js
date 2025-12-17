@@ -7,7 +7,7 @@ export const generateOtpSchema = z.object({
 
 // Schema for verifying OTP (input)
 export const verifyOtpSchema = z.object({
-    user_id: z.string({ required_error: 'user_id is required' }).min(1, 'user_id is required'),
+    user_id: z.string({ required_error: 'user_id is required' }).min(16, 'user_id is required'),
     otp_code: z.string({ required_error: 'otp_code is required' }).length(6, 'otp_code must be 6 digits')
 });
 
