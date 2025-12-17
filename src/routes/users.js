@@ -14,7 +14,7 @@ router.get('/', async (req, res) => {
         );
         res.json(users);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -28,7 +28,7 @@ router.post('/register', validate(userSchema), async (req, res) => {
             .get();
 
         if (!existingUser.empty) {
-            return res.status(409).json({ error: 'phone_number already exists' });
+            return res.status(409).json({ error: 'User already registered', error_code: 'USER_ALREADY_REGISTERED' });
         }
 
         // Generate unique user ID
@@ -54,7 +54,7 @@ router.post('/register', validate(userSchema), async (req, res) => {
             userResponseSchema.parse({ id: userId, first_name, last_name, phone_number, telegram_id, is_verified: false })
         );
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
 });
 

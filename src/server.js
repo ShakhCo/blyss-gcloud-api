@@ -27,3 +27,5 @@ app.use(routes);
 app.listen(PORT, () => {
     console.log(`App is running on port: http://localhost:${PORT}`);
 });
+
+export default app;

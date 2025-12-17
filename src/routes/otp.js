@@ -22,7 +22,7 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
             .get();
 
         if (otpSnapshot.empty) {
-            return res.status(400).json({ error: 'Invalid or expired OTP' });
+            return res.status(400).json({ error: 'Invalid OTP', error_code: 'INVALID_OTP' });
         }
 
         const otpDoc = otpSnapshot.docs[0];
@@ -34,7 +34,7 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
         const diffMinutes = (now - otpDate) / (1000 * 60);
 
         if (diffMinutes > OTP_EXPIRY_MINUTES) {
-            return res.status(400).json({ error: 'OTP has expired' });
+            return res.status(400).json({ error: 'OTP has expired', error_code: 'OTP_EXPIRED' });
         }
 
         // Mark OTP as used
@@ -45,7 +45,7 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
 
         res.json({ message: 'OTP verified successfully', is_verified: true });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
 });
 
