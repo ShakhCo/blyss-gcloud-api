@@ -43,7 +43,11 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
         // Update user's is_verified status
         await db.collection('users').doc(user_id).update({ is_verified: true });
 
-        res.json({ message: 'OTP verified successfully', is_verified: true });
+        // Get updated user
+        const userDoc = await db.collection('users').doc(user_id).get();
+        const user = { id: userDoc.id, ...userDoc.data() };
+
+        res.json({ message: 'OTP verified successfully', is_verified: true, user });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
