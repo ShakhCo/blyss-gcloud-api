@@ -2,10 +2,10 @@ import { z } from 'zod';
 
 // Input schema (for registration)
 export const userSchema = z.object({
-    first_name: z.string().min(1, 'first_name is required'),
+    first_name: z.string({ required_error: 'first_name is required' }).min(1, 'first_name is required'),
     last_name: z.string().default(''),
-    phone_number: z.string().min(13, 'phone_number is required'),
-    telegram_id: z.number({ required_error: 'telegram_id is required' }).positive('telegram_id must be positive')
+    phone_number: z.string({ required_error: 'phone_number is required' }).min(13, 'phone_number must be at least 13 characters'),
+    telegram_id: z.coerce.number({ required_error: 'telegram_id is required', invalid_type_error: 'telegram_id must be a number' }).positive('telegram_id must be positive')
 });
 
 // Output schema (for responses)
