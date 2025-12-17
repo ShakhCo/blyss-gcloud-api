@@ -12,6 +12,13 @@ export const userSchema = z.object({
         .positive('telegram_id must be positive')
 });
 
+// Input schema (for login)
+export const loginSchema = z.object({
+    phone_number: z.string({ required_error: 'phone_number is required' })
+        .regex(/^\d+$/, 'phone_number must contain only digits')
+        .min(12, 'phone_number must be at least 12 digits')
+});
+
 // Output schema (for responses)
 export const userResponseSchema = z.object({
     id: z.string(),
