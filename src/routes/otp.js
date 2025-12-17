@@ -15,7 +15,7 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
         // Find OTP for user
         const otpSnapshot = await db.collection('otps')
             .where('user_id', '==', user_id)
-            .where('otp_code', '==', otp_code)
+            .where('otp_code', '==', String(otp_code))
             .where('used', '==', false)
             .orderBy('date_created', 'desc')
             .limit(1)

@@ -8,7 +8,10 @@ export const generateOtpSchema = z.object({
 // Schema for verifying OTP (input)
 export const verifyOtpSchema = z.object({
     user_id: z.string({ required_error: 'user_id is required' }).min(16, 'user_id is required'),
-    otp_code: z.string({ required_error: 'otp_code is required' }).length(6, 'otp_code must be 6 digits')
+    otp_code: z.coerce.number({ required_error: 'otp_code is required' })
+        .int('otp_code must be an integer')
+        .min(10000, 'otp_code must be 5 digits')
+        .max(99999, 'otp_code must be 5 digits')
 });
 
 // Schema for OTP document (Firestore)
