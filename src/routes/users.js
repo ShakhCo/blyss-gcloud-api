@@ -28,7 +28,15 @@ router.post('/register', validate(userSchema), async (req, res) => {
             .get();
 
         if (!existingUser.empty) {
-            return res.status(409).json({ error: 'User already registered', error_code: 'USER_ALREADY_REGISTERED' });
+            const existingDoc = existingUser.docs[0];
+            const existingData = existingDoc.data();
+
+            if (existingData.is_verified) {
+                return res.status(409).json({ error: 'User already registered', error_code: 'USER_ALREADY_REGISTERED' });
+            }
+
+            // Delete unverified user to allow re-registration
+            await existingDoc.ref.delete();
         }
 
         // Generate unique user ID
