@@ -31,8 +31,14 @@ router.post('/register', validate(userSchema), async (req, res) => {
             return res.status(409).json({ error: 'phone_number already exists' });
         }
 
-        // Generate random string ID
-        const userId = crypto.randomBytes(16).toString('hex');
+        // Generate unique user ID
+        let userId;
+        let userExists = true;
+        while (userExists) {
+            userId = crypto.randomBytes(16).toString('hex');
+            const existingDoc = await db.collection('users').doc(userId).get();
+            userExists = existingDoc.exists;
+        }
 
         // Create user
         await db.collection('users').doc(userId).set({
