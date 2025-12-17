@@ -9,7 +9,10 @@ const PORT = process.env.PORT || 3000;
 const upload = multer();
 
 app.use(cors({
-    origin: 'https://barbershop-miniapp-beta.automations.uz',
+    origin: [
+        'https://barbershop-miniapp-beta.automations.uz',
+        'https://barbershop-miniapp.automations.uz'
+    ],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type']
 }));
