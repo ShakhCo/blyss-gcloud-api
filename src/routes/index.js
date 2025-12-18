@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import usersRouter from './users.js';
 import otpRouter from './otp.js';
+import businessOwnersRouter from './businessOwners.js';
 
 const router = Router();
 
 router.use('/users', usersRouter);
 router.use('/otp', otpRouter);
+router.use('/business-owners', businessOwnersRouter);
 
 export default router;
