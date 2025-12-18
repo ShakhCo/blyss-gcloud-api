@@ -1,12 +1,73 @@
 import { Router } from 'express';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
-import { verifyOtpSchema } from '../schemas/otp.js';
+import { verifyOtpSchema, sendOtpSchema } from '../schemas/otp.js';
 
 const router = Router();
 
 // OTP expiry time in minutes
 const OTP_EXPIRY_MINUTES = 15;
+
+router.post('/send', validate(sendOtpSchema), async (req, res) => {
+    try {
+        const { phone_number } = req.validated;
+
+        // Find user by phone number
+        const userSnapshot = await db.collection('users')
+            .where('phone_number', '==', phone_number)
+            .get();
+
+        if (userSnapshot.empty) {
+            return res.status(404).json({ error: 'User not found', error_code: 'USER_NOT_FOUND' });
+        }
+
+        const userDoc = userSnapshot.docs[0];
+
+        // Generate OTP
+        const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
+
+        // Store OTP
+        await db.collection('otps').add({
+            user_id: userDoc.id,
+            otp_code: otpCode,
+            date_created: new Date(),
+            used: false
+        });
+
+        // Send SMS via Eskiz
+        const eskizToken = process.env.ESKIZ_TOKEN;
+        let otpSent = false;
+
+        if (eskizToken) {
+            try {
+                await fetch('https://notify.eskiz.uz/api/message/sms/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${eskizToken}`
+                    },
+                    body: JSON.stringify({
+                        mobile_phone: phone_number,
+                        message: `BLYSS ilovasiga kirish uchun tasdiqlash kodi: ${otpCode}`,
+                        from: '4546',
+                        callback_url: ''
+                    })
+                });
+                otpSent = true;
+            } catch (smsError) {
+                console.error('Failed to send SMS:', smsError);
+            }
+        }
+
+        res.json({
+            message: otpSent ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
+            user_id: userDoc.id,
+            sms_sent: otpSent
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
 
 router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
     try {

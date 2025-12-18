@@ -5,6 +5,12 @@ export const generateOtpSchema = z.object({
     user_id: z.string({ required_error: 'user_id is required' }).min(16, 'user_id is required')
 });
 
+// Schema for sending OTP by phone number
+export const sendOtpSchema = z.object({
+    phone_number: z.string({ required_error: 'phone_number is required' })
+        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX')
+});
+
 // Schema for verifying OTP (input)
 export const verifyOtpSchema = z.object({
     user_id: z.string({ required_error: 'user_id is required' }).min(16, 'user_id is required'),
