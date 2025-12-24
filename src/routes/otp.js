@@ -10,15 +10,19 @@ const OTP_EXPIRY_MINUTES = 15;
 
 router.post('/send', validate(sendOtpSchema), async (req, res) => {
     try {
-        const { phone_number } = req.validated;
+        const { phone_number, user_type } = req.validated;
+
+        // Determine collection based on user_type
+        const collection = user_type === 'business_owner' ? 'business_owners' : 'users';
 
         // Find user by phone number
-        const userSnapshot = await db.collection('users')
+        const userSnapshot = await db.collection(collection)
             .where('phone_number', '==', phone_number)
             .get();
 
         if (userSnapshot.empty) {
-            return res.status(404).json({ error: 'User not found', error_code: 'USER_NOT_FOUND' });
+            const errorMsg = user_type === 'business_owner' ? 'Business owner not found' : 'User not found';
+            return res.status(404).json({ error: errorMsg, error_code: 'USER_NOT_FOUND' });
         }
 
         const userDoc = userSnapshot.docs[0];
@@ -29,6 +33,7 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
         // Store OTP
         await db.collection('otps').add({
             user_id: userDoc.id,
+            user_type,
             otp_code: otpCode,
             date_created: new Date(),
             used: false
@@ -71,7 +76,10 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
 
 router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
     try {
-        const { user_id, otp_code } = req.validated;
+        const { user_id, otp_code, user_type } = req.validated;
+
+        // Determine collection based on user_type
+        const collection = user_type === 'business_owner' ? 'business_owners' : 'users';
 
         // Find OTP for user
         const otpSnapshot = await db.collection('otps')
@@ -102,10 +110,10 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
         await otpDoc.ref.update({ used: true });
 
         // Update user's is_verified status
-        await db.collection('users').doc(user_id).update({ is_verified: true });
+        await db.collection(collection).doc(user_id).update({ is_verified: true });
 
         // Get updated user
-        const userDoc = await db.collection('users').doc(user_id).get();
+        const userDoc = await db.collection(collection).doc(user_id).get();
         const user = { id: userDoc.id, ...userDoc.data() };
 
         res.json({ message: 'OTP verified successfully', is_verified: true, user });

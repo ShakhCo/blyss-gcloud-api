@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+// User type enum
+export const userTypeEnum = z.enum(['user', 'business_owner']);
+
 // Schema for generating OTP (input)
 export const generateOtpSchema = z.object({
     user_id: z.string({ required_error: 'user_id is required' }).min(16, 'user_id is required')
@@ -8,7 +11,8 @@ export const generateOtpSchema = z.object({
 // Schema for sending OTP by phone number
 export const sendOtpSchema = z.object({
     phone_number: z.string({ required_error: 'phone_number is required' })
-        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX')
+        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
+    user_type: userTypeEnum.default('user')
 });
 
 // Schema for verifying OTP (input)
@@ -17,7 +21,8 @@ export const verifyOtpSchema = z.object({
     otp_code: z.coerce.number({ required_error: 'otp_code is required' })
         .int('otp_code must be an integer')
         .min(10000, 'otp_code must be 5 digits')
-        .max(99999, 'otp_code must be 5 digits')
+        .max(99999, 'otp_code must be 5 digits'),
+    user_type: userTypeEnum.default('user')
 });
 
 // Schema for OTP document (Firestore)
