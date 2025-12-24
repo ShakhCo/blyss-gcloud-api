@@ -4,7 +4,7 @@ import { placeSearchSchema } from '../schemas/places.js';
 
 const router = Router();
 
-// Search places using Google Places API (restricted to Uzbekistan)
+// Search places using Google Places API (restricted to Uzbekistan, beauty/wellness)
 router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => {
     try {
         const { query } = req.validated;
@@ -19,7 +19,9 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
         const uzbekistanLng = 64.585262;
         const radiusMeters = 800000; // 800km to cover all of Uzbekistan
 
-        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&location=${uzbekistanLat},${uzbekistanLng}&radius=${radiusMeters}&region=uz&key=${apiKey}`;
+        // Search for beauty/wellness places
+        const searchQuery = `${query} beauty salon spa barbershop`;
+        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&location=${uzbekistanLat},${uzbekistanLng}&radius=${radiusMeters}&region=uz&key=${apiKey}`;
 
         const response = await fetch(url);
         const data = await response.json();
