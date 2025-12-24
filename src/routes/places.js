@@ -105,12 +105,12 @@ router.get('/:placeId/details', async (req, res) => {
             }
         })) || [];
 
-        // Format photos with photo_url
+        // Format photos with proxy URL (hides API key)
         const photos = (data.result?.photos || []).map(photo => ({
             height: photo.height,
             width: photo.width,
             photo_reference: photo.photo_reference,
-            photo_url: `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photo.photo_reference}&key=${apiKey}`
+            photo_url: `/places/photo/${photo.photo_reference}`
         }));
 
         res.json({
@@ -121,6 +121,35 @@ router.get('/:placeId/details', async (req, res) => {
             weekday_text: openingHours.weekday_text || [],
             photos
         });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Photo proxy endpoint (hides API key from client)
+router.get('/photo/:photoReference', async (req, res) => {
+    try {
+        const { photoReference } = req.params;
+        const maxwidth = req.query.maxwidth || 400;
+
+        const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+        if (!apiKey) {
+            return res.status(500).json({ error: 'Google Places API key not configured', error_code: 'API_KEY_MISSING' });
+        }
+
+        const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${maxwidth}&photoreference=${photoReference}&key=${apiKey}`;
+
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            return res.status(response.status).json({ error: 'Failed to fetch photo', error_code: 'PHOTO_FETCH_ERROR' });
+        }
+
+        // Forward the image
+        res.set('Content-Type', response.headers.get('content-type'));
+        res.set('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
+        const buffer = await response.arrayBuffer();
+        res.send(Buffer.from(buffer));
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
