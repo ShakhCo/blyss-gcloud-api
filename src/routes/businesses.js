@@ -6,17 +6,30 @@ import { businessSchema, businessResponseSchema } from '../schemas/business.js';
 
 const router = Router();
 
+// Helper to format business images for response
+const formatImages = (images) => {
+    return (images || []).map(img => ({
+        source: img.source,
+        photo_reference: img.photo_reference,
+        url: img.source === 'place_id_photo'
+            ? `/places/photo/${img.photo_reference}`
+            : img.url || null,
+        is_primary: img.is_primary
+    }));
+};
+
 // Get all businesses
 router.get('/', async (req, res) => {
     try {
         const snapshot = await db.collection('businesses').get();
         const businesses = snapshot.docs.map(doc => {
             const data = doc.data();
-            return businessResponseSchema.parse({
+            return {
                 id: doc.id,
                 ...data,
+                business_images: formatImages(data.business_images),
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
-            });
+            };
         });
         res.json(businesses);
     } catch (error) {
@@ -34,11 +47,12 @@ router.get('/:id', async (req, res) => {
         }
 
         const data = doc.data();
-        res.json(businessResponseSchema.parse({
+        res.json({
             id: doc.id,
             ...data,
+            business_images: formatImages(data.business_images),
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
-        }));
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
@@ -59,11 +73,12 @@ router.get('/owner/:ownerId', async (req, res) => {
 
         const businesses = snapshot.docs.map(doc => {
             const data = doc.data();
-            return businessResponseSchema.parse({
+            return {
                 id: doc.id,
                 ...data,
+                business_images: formatImages(data.business_images),
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
-            });
+            };
         });
         res.json(businesses);
     } catch (error) {
@@ -76,11 +91,12 @@ router.post('/', validate(businessSchema), async (req, res) => {
     try {
         const {
             business_name,
-            business_address,
             business_phone_number,
-            working_hours,
-            business_status,
-            business_owner_id
+            business_owner_id,
+            business_address,
+            business_images,
+            business_hours,
+            place_id
         } = req.validated;
 
         // Verify business owner exists
@@ -100,27 +116,35 @@ router.post('/', validate(businessSchema), async (req, res) => {
 
         const dateCreated = new Date();
 
-        // Create business
-        await db.collection('businesses').doc(businessId).set({
-            business_name,
-            business_address,
-            business_phone_number,
-            working_hours,
-            business_status,
-            business_owner_id,
-            date_created: dateCreated
-        });
-
-        res.status(201).json(businessResponseSchema.parse({
-            id: businessId,
-            business_name,
-            business_address,
-            business_phone_number,
-            working_hours,
-            business_status,
-            business_owner_id,
-            date_created: dateCreated.toISOString()
+        // Process images - store base64 data or photo_reference
+        const processedImages = business_images.map(img => ({
+            source: img.source,
+            photo_reference: img.photo_reference || null,
+            url: img.source === 'local_upload' ? img.data : null, // Store base64 as url for local uploads
+            is_primary: img.is_primary
         }));
+
+        // Create business
+        const businessData = {
+            business_name,
+            business_phone_number,
+            business_owner_id,
+            business_address,
+            business_images: processedImages,
+            business_hours,
+            place_id: place_id || null,
+            business_status: 'unverified',
+            date_created: dateCreated
+        };
+
+        await db.collection('businesses').doc(businessId).set(businessData);
+
+        res.status(201).json({
+            id: businessId,
+            ...businessData,
+            business_images: formatImages(processedImages),
+            date_created: dateCreated.toISOString()
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
@@ -138,15 +162,17 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
 
         const {
             business_name,
-            business_address,
             business_phone_number,
-            working_hours,
-            business_status,
-            business_owner_id
+            business_owner_id,
+            business_address,
+            business_images,
+            business_hours,
+            place_id
         } = req.validated;
 
-        // Verify business owner exists if changing owner
         const currentData = doc.data();
+
+        // Verify business owner exists if changing owner
         if (business_owner_id !== currentData.business_owner_id) {
             const ownerDoc = await db.collection('business_owners').doc(business_owner_id).get();
             if (!ownerDoc.exists) {
@@ -154,25 +180,33 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
             }
         }
 
-        await docRef.update({
-            business_name,
-            business_address,
-            business_phone_number,
-            working_hours,
-            business_status,
-            business_owner_id
-        });
-
-        res.json(businessResponseSchema.parse({
-            id: req.params.id,
-            business_name,
-            business_address,
-            business_phone_number,
-            working_hours,
-            business_status,
-            business_owner_id,
-            date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
+        // Process images
+        const processedImages = business_images.map(img => ({
+            source: img.source,
+            photo_reference: img.photo_reference || null,
+            url: img.source === 'local_upload' ? img.data : null,
+            is_primary: img.is_primary
         }));
+
+        const updateData = {
+            business_name,
+            business_phone_number,
+            business_owner_id,
+            business_address,
+            business_images: processedImages,
+            business_hours,
+            place_id: place_id || null
+        };
+
+        await docRef.update(updateData);
+
+        res.json({
+            id: req.params.id,
+            ...updateData,
+            business_images: formatImages(processedImages),
+            business_status: currentData.business_status,
+            date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
