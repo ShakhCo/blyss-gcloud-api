@@ -56,7 +56,7 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
 });
 
 // Get place opening hours by place_id
-router.get('/:placeId/hours', async (req, res) => {
+router.get('/:placeId/details', async (req, res) => {
     try {
         const { placeId } = req.params;
 
@@ -65,7 +65,7 @@ router.get('/:placeId/hours', async (req, res) => {
             return res.status(500).json({ error: 'Google Places API key not configured', error_code: 'API_KEY_MISSING' });
         }
 
-        const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${apiKey}&fields=opening_hours,name`;
+        const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${apiKey}&fields=opening_hours,name,photos`;
 
         const response = await fetch(url);
         const data = await response.json();
@@ -105,12 +105,21 @@ router.get('/:placeId/hours', async (req, res) => {
             }
         })) || [];
 
+        // Format photos with photo_url
+        const photos = (data.result?.photos || []).map(photo => ({
+            height: photo.height,
+            width: photo.width,
+            photo_reference: photo.photo_reference,
+            photo_url: `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photo.photo_reference}&key=${apiKey}`
+        }));
+
         res.json({
             place_id: placeId,
             name: data.result?.name,
             open_now: openingHours.open_now,
             schedule,
-            weekday_text: openingHours.weekday_text || []
+            weekday_text: openingHours.weekday_text || [],
+            photos
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
