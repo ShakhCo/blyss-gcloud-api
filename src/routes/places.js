@@ -65,7 +65,7 @@ router.get('/:placeId/details', async (req, res) => {
             return res.status(500).json({ error: 'Google Places API key not configured', error_code: 'API_KEY_MISSING' });
         }
 
-        const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${apiKey}&fields=opening_hours,name,photos`;
+        const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${apiKey}&fields=opening_hours,name,photos,international_phone_number`;
 
         const response = await fetch(url);
         const data = await response.json();
@@ -116,6 +116,7 @@ router.get('/:placeId/details', async (req, res) => {
         res.json({
             place_id: placeId,
             name: data.result?.name,
+            international_phone_number: data.result?.international_phone_number || null,
             open_now: openingHours.open_now,
             schedule,
             weekday_text: openingHours.weekday_text || [],
