@@ -27,15 +27,23 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
             });
         }
 
-        // Format results
-        const places = (data.predictions || []).map(place => ({
-            place_id: place.place_id,
-            name: place.structured_formatting?.main_text,
-            description: place.description,
-            secondary_text: place.structured_formatting?.secondary_text,
-            types: place.types || [],
-            reference: place.reference
-        }));
+        // Beauty/wellness types to filter by
+        const beautyTypes = ['hair_care', 'health', 'beauty_salon', 'spa'];
+
+        // Format and filter results to only include beauty/wellness places
+        const places = (data.predictions || [])
+            .filter(place => {
+                const types = place.types || [];
+                return types.some(type => beautyTypes.includes(type));
+            })
+            .map(place => ({
+                place_id: place.place_id,
+                name: place.structured_formatting?.main_text,
+                description: place.description,
+                secondary_text: place.structured_formatting?.secondary_text,
+                types: place.types || [],
+                reference: place.reference
+            }));
 
         res.json({
             results: places,
