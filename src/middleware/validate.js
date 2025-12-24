@@ -1,8 +1,12 @@
-export const validate = (schema) => (req, res, next) => {
-    if (!req.body || Object.keys(req.body).length === 0) {
-        return res.status(400).json({ error: 'Request body is required', error_code: 'EMPTY_BODY' });
+export const validate = (schema, source = 'body') => (req, res, next) => {
+    const data = source === 'query' ? req.query : req.body;
+
+    if (!data || Object.keys(data).length === 0) {
+        const errorMsg = source === 'query' ? 'Query parameters are required' : 'Request body is required';
+        return res.status(400).json({ error: errorMsg, error_code: 'EMPTY_REQUEST' });
     }
-    const result = schema.safeParse(req.body);
+
+    const result = schema.safeParse(data);
     if (!result.success) {
         const validation_errors = result.error.issues.map(e => ({
             field: e.path.join('.'),
