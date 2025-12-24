@@ -22,9 +22,9 @@ export const businessSchema = z.object({
         .min(12, 'business_phone_number must be at least 12 digits'),
     working_hours: z.object({
         start_time: z.string({ required_error: 'start_time is required' })
-            .min(1, 'start_time is required'),
+            .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'start_time must be in HH:MM 24-hour format'),
         end_time: z.string({ required_error: 'end_time is required' })
-            .min(1, 'end_time is required')
+            .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'end_time must be in HH:MM 24-hour format')
     }),
     business_status: businessStatusEnum.default('unverified'),
     business_owner_id: z.string({ required_error: 'business_owner_id is required' })
