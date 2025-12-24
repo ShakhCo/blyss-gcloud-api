@@ -4,7 +4,7 @@ import { placeSearchSchema } from '../schemas/places.js';
 
 const router = Router();
 
-// Search places using Google Places API
+// Search places using Google Places API (restricted to Uzbekistan)
 router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => {
     try {
         const { query } = req.validated;
@@ -14,7 +14,12 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
             return res.status(500).json({ error: 'Google Places API key not configured', error_code: 'API_KEY_MISSING' });
         }
 
-        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${apiKey}`;
+        // Uzbekistan center coordinates and search parameters
+        const uzbekistanLat = 41.377491;
+        const uzbekistanLng = 64.585262;
+        const radiusMeters = 800000; // 800km to cover all of Uzbekistan
+
+        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&location=${uzbekistanLat},${uzbekistanLng}&radius=${radiusMeters}&region=uz&key=${apiKey}`;
 
         const response = await fetch(url);
         const data = await response.json();
@@ -26,27 +31,33 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
             });
         }
 
-        // Format results
+        // Format results with all data
         const places = (data.results || []).map(place => ({
             place_id: place.place_id,
             name: place.name,
-            address: place.formatted_address,
-            location: {
-                lat: place.geometry?.location?.lat,
-                lng: place.geometry?.location?.lng
-            },
+            business_status: place.business_status ?? null,
+            formatted_address: place.formatted_address,
+            geometry: place.geometry,
+            icon: place.icon,
+            icon_background_color: place.icon_background_color,
+            icon_mask_base_uri: place.icon_mask_base_uri,
+            opening_hours: place.opening_hours ?? null,
+            photos: place.photos?.map(photo => ({
+                height: photo.height,
+                width: photo.width,
+                photo_reference: photo.photo_reference,
+                photo_url: `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photo.photo_reference}&key=${apiKey}`
+            })) ?? [],
             rating: place.rating ?? null,
             user_ratings_total: place.user_ratings_total ?? null,
             types: place.types || [],
-            open_now: place.opening_hours?.open_now ?? null,
-            photo_url: place.photos?.[0]?.photo_reference
-                ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${place.photos[0].photo_reference}&key=${apiKey}`
-                : null
+            reference: place.reference
         }));
 
         res.json({
             results: places,
-            total: places.length
+            total: places.length,
+            status: data.status
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
