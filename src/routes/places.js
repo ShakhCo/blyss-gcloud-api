@@ -4,7 +4,7 @@ import { placeSearchSchema } from '../schemas/places.js';
 
 const router = Router();
 
-// Search places using Google Places API (restricted to Uzbekistan, beauty/wellness)
+// Search places using Google Places Autocomplete API (restricted to Uzbekistan)
 router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => {
     try {
         const { query } = req.validated;
@@ -14,13 +14,8 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
             return res.status(500).json({ error: 'Google Places API key not configured', error_code: 'API_KEY_MISSING' });
         }
 
-        // Uzbekistan center coordinates and search parameters
-        const uzbekistanLat = 41.377491;
-        const uzbekistanLng = 64.585262;
-        const radiusMeters = 800000; // 800km to cover all of Uzbekistan
-
-        // Search for beauty/wellness places
-        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&location=${uzbekistanLat},${uzbekistanLng}&radius=${radiusMeters}&region=uz&type=beauty_salon&key=${apiKey}`;
+        // Use autocomplete with strict country filter
+        const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&components=country:uz&key=${apiKey}`;
 
         const response = await fetch(url);
         const data = await response.json();
@@ -32,25 +27,12 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
             });
         }
 
-        // Format results with all data
-        const places = (data.results || []).map(place => ({
+        // Format results
+        const places = (data.predictions || []).map(place => ({
             place_id: place.place_id,
-            name: place.name,
-            business_status: place.business_status ?? null,
-            formatted_address: place.formatted_address,
-            geometry: place.geometry,
-            icon: place.icon,
-            icon_background_color: place.icon_background_color,
-            icon_mask_base_uri: place.icon_mask_base_uri,
-            opening_hours: place.opening_hours ?? null,
-            photos: place.photos?.map(photo => ({
-                height: photo.height,
-                width: photo.width,
-                photo_reference: photo.photo_reference,
-                photo_url: `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photo.photo_reference}&key=${apiKey}`
-            })) ?? [],
-            rating: place.rating ?? null,
-            user_ratings_total: place.user_ratings_total ?? null,
+            name: place.structured_formatting?.main_text,
+            description: place.description,
+            secondary_text: place.structured_formatting?.secondary_text,
             types: place.types || [],
             reference: place.reference
         }));
