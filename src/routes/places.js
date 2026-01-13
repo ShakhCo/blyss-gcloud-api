@@ -88,21 +88,32 @@ router.get('/:placeId/details', async (req, res) => {
 
         const result = data.result;
 
-        /** ---------------- ADDRESS PARSING ---------------- */
+        /** ---------------- ADDRESS PARSING (UZ) ---------------- */
         const getComponent = (type) =>
             result.address_components?.find(c => c.types.includes(type))?.long_name || null;
 
+        let region =
+            getComponent('administrative_area_level_1') ||
+            getComponent('administrative_area_level_2');
+
+        let city =
+            getComponent('locality') ||
+            getComponent('administrative_area_level_3') ||
+            getComponent('sublocality');
+
+        const street_name = [getComponent('route'), getComponent('street_number')]
+            .filter(Boolean)
+            .join(' ') || null;
+
+        // Special case: Toshkent city
+        if (region?.includes('Tashkent') && !city) {
+            city = 'Tashkent';
+        }
+
         const address = {
-            street_name: [
-                getComponent('route'),
-                getComponent('street_number')
-            ].filter(Boolean).join(' ') || null,
-
-            city: getComponent('locality') || getComponent('administrative_area_level_2'),
-            region: getComponent('administrative_area_level_1'),
-            country: getComponent('country'),
-
-            display_address_name: result.formatted_address || null
+            region,
+            city,
+            street_name
         };
 
         /** ---------------- OPENING HOURS ---------------- */
