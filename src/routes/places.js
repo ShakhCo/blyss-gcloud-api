@@ -106,6 +106,8 @@ router.get('/:placeId/details', async (req, res) => {
             .filter(Boolean)
             .join(' ') || null;
 
+        const display_name = `${result.name}, ${result.formatted_address}`;
+
         // Special case: Toshkent city
         if (region?.includes('Tashkent') && !city) {
             city = 'Tashkent';
@@ -114,7 +116,8 @@ router.get('/:placeId/details', async (req, res) => {
         const address = {
             region,
             city,
-            street_name
+            street_name,
+            display_name
         };
 
         /** ---------------- OPENING HOURS ---------------- */
