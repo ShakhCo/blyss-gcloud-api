@@ -62,10 +62,16 @@ router.get('/:placeId/details', async (req, res) => {
 
         const apiKey = process.env.GOOGLE_PLACES_API_KEY;
         if (!apiKey) {
-            return res.status(500).json({ error: 'Google Places API key not configured', error_code: 'API_KEY_MISSING' });
+            return res.status(500).json({
+                error: 'Google Places API key not configured',
+                error_code: 'API_KEY_MISSING'
+            });
         }
 
-        const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${apiKey}&fields=opening_hours,name,photos,international_phone_number`;
+        const url = `https://maps.googleapis.com/maps/api/place/details/json
+            ?place_id=${placeId}
+            &key=${apiKey}
+            &fields=name,opening_hours,photos,international_phone_number,address_components,formatted_address`;
 
         const response = await fetch(url);
         const data = await response.json();
@@ -77,26 +83,34 @@ router.get('/:placeId/details', async (req, res) => {
             });
         }
 
-        const openingHours = data.result?.opening_hours;
+        const result = data.result;
 
-        if (!openingHours) {
-            return res.status(404).json({
-                error: 'Opening hours not available for this place',
-                error_code: 'NO_OPENING_HOURS'
-            });
-        }
+        /** ---------------- ADDRESS PARSING ---------------- */
+        const getComponent = (type) =>
+            result.address_components?.find(c => c.types.includes(type))?.long_name || null;
 
-        // Day names mapping
-        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const address = {
+            street_name: [
+                getComponent('route'),
+                getComponent('street_number')
+            ].filter(Boolean).join(' ') || null,
 
-        // Format time from "1000" to "10:00"
-        const formatTime = (time) => {
-            if (!time) return null;
-            return `${time.slice(0, 2)}:${time.slice(2)}`;
+            city: getComponent('locality') || getComponent('administrative_area_level_2'),
+            region: getComponent('administrative_area_level_1'),
+            country: getComponent('country'),
+
+            display_address_name: result.formatted_address || null
         };
 
-        // Format periods into nice structure
-        const schedule = openingHours.periods?.map(period => ({
+        /** ---------------- OPENING HOURS ---------------- */
+        const openingHours = result.opening_hours || null;
+
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+        const formatTime = (time) =>
+            time ? `${time.slice(0, 2)}:${time.slice(2)}` : null;
+
+        const schedule = openingHours?.periods?.map(period => ({
             day: period.open.day,
             day_name: dayNames[period.open.day],
             working_hours: {
@@ -105,27 +119,36 @@ router.get('/:placeId/details', async (req, res) => {
             }
         })) || [];
 
-        // Format photos with proxy URL (hides API key)
-        const photos = (data.result?.photos || []).map(photo => ({
+        /** ---------------- PHOTOS ---------------- */
+        const photos = (result.photos || []).map(photo => ({
             height: photo.height,
             width: photo.width,
             photo_reference: photo.photo_reference,
             photo_url: `/places/photo/${photo.photo_reference}`
         }));
 
+        /** ---------------- RESPONSE ---------------- */
         res.json({
             place_id: placeId,
-            name: data.result?.name,
-            international_phone_number: data.result?.international_phone_number || null,
-            open_now: openingHours.open_now,
+            name: result.name,
+            international_phone_number: result.international_phone_number || null,
+
+            address,
+
+            open_now: openingHours?.open_now ?? null,
+            weekday_text: openingHours?.weekday_text || [],
             schedule,
-            weekday_text: openingHours.weekday_text || [],
             photos
         });
+
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        res.status(500).json({
+            error: error.message,
+            error_code: 'INTERNAL_ERROR'
+        });
     }
 });
+
 
 // Photo proxy endpoint (hides API key from client)
 router.get('/photo/:photoReference', async (req, res) => {
