@@ -72,7 +72,7 @@ router.get('/:placeId/details', async (req, res) => {
             place_id: placeId,
             key: apiKey,
             language: 'uz',
-            fields: 'name,opening_hours,photos,international_phone_number,address_components,formatted_address'
+            fields: 'name,opening_hours,photos,international_phone_number,address_components,formatted_address,geometry'
         });
 
         const url = `https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`;
@@ -145,6 +145,12 @@ router.get('/:placeId/details', async (req, res) => {
             photo_url: `/places/photo/${photo.photo_reference}`
         }));
 
+        /** ---------------- LAT/LNG ---------------- */
+        const location = {
+            lat: result.geometry?.location?.lat || null,
+            lng: result.geometry?.location?.lng || null
+        };
+
         /** ---------------- RESPONSE ---------------- */
         res.json({
             place_id: placeId,
@@ -152,6 +158,7 @@ router.get('/:placeId/details', async (req, res) => {
             international_phone_number: result.international_phone_number || null,
 
             address,
+            location,
 
             open_now: openingHours?.open_now ?? null,
             weekday_text: openingHours?.weekday_text || [],
@@ -166,7 +173,6 @@ router.get('/:placeId/details', async (req, res) => {
         });
     }
 });
-
 
 // Photo proxy endpoint (hides API key from client)
 router.get('/photo/:photoReference', async (req, res) => {
