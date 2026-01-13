@@ -35,7 +35,7 @@ export const businessSchema = z.object({
         .min(1, 'business_type is required'),
     location: locationSchema,
     working_graphic_type: workingGraphicTypeEnum,
-    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days').optional(),
+    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days').nullable().optional(),
     business_phone_number: z.string({ required_error: 'business_phone_number is required' })
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
         .min(12, 'business_phone_number must be at least 12 digits'),
