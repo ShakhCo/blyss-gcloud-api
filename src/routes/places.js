@@ -71,6 +71,7 @@ router.get('/:placeId/details', async (req, res) => {
         const params = new URLSearchParams({
             place_id: placeId,
             key: apiKey,
+            language: 'uz',
             fields: 'name,opening_hours,photos,international_phone_number,address_components,formatted_address'
         });
 
