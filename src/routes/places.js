@@ -68,10 +68,13 @@ router.get('/:placeId/details', async (req, res) => {
             });
         }
 
-        const url = `https://maps.googleapis.com/maps/api/place/details/json
-            ?place_id=${placeId}
-            &key=${apiKey}
-            &fields=name,opening_hours,photos,international_phone_number,address_components,formatted_address`;
+        const params = new URLSearchParams({
+            place_id: placeId,
+            key: apiKey,
+            fields: 'name,opening_hours,photos,international_phone_number,address_components,formatted_address'
+        });
+
+        const url = `https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`;
 
         const response = await fetch(url);
         const data = await response.json();
