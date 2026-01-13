@@ -6,18 +6,6 @@ import { businessSchema, businessResponseSchema } from '../schemas/business.js';
 
 const router = Router();
 
-// Helper to format business images for response
-const formatImages = (images) => {
-    return (images || []).map(img => ({
-        source: img.source,
-        photo_reference: img.photo_reference,
-        url: img.source === 'place_id_photo'
-            ? `/places/photo/${img.photo_reference}`
-            : img.url || null,
-        is_primary: img.is_primary
-    }));
-};
-
 // Get all businesses
 router.get('/', async (req, res) => {
     try {
@@ -27,7 +15,6 @@ router.get('/', async (req, res) => {
             return {
                 id: doc.id,
                 ...data,
-                business_images: formatImages(data.business_images),
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
         });
@@ -50,7 +37,6 @@ router.get('/:id', async (req, res) => {
         res.json({
             id: doc.id,
             ...data,
-            business_images: formatImages(data.business_images),
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
         });
     } catch (error) {
@@ -76,7 +62,6 @@ router.get('/owner/:ownerId', async (req, res) => {
             return {
                 id: doc.id,
                 ...data,
-                business_images: formatImages(data.business_images),
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
         });
@@ -91,12 +76,12 @@ router.post('/', validate(businessSchema), async (req, res) => {
     try {
         const {
             business_name,
+            business_type,
+            location,
+            working_graphic_type,
+            working_hours,
             business_phone_number,
-            business_owner_id,
-            business_address,
-            business_images,
-            business_hours,
-            place_id
+            business_owner_id
         } = req.validated;
 
         // Verify business owner exists
@@ -116,23 +101,15 @@ router.post('/', validate(businessSchema), async (req, res) => {
 
         const dateCreated = new Date();
 
-        // Process images - store base64 data or photo_reference
-        const processedImages = business_images.map(img => ({
-            source: img.source,
-            photo_reference: img.photo_reference || null,
-            url: img.source === 'local_upload' ? img.data : null, // Store base64 as url for local uploads
-            is_primary: img.is_primary
-        }));
-
         // Create business
         const businessData = {
             business_name,
+            business_type,
+            location,
+            working_graphic_type,
+            working_hours: working_hours || null,
             business_phone_number,
             business_owner_id,
-            business_address,
-            business_images: processedImages,
-            business_hours,
-            place_id: place_id || null,
             business_status: 'unverified',
             date_created: dateCreated
         };
@@ -142,7 +119,6 @@ router.post('/', validate(businessSchema), async (req, res) => {
         res.status(201).json({
             id: businessId,
             ...businessData,
-            business_images: formatImages(processedImages),
             date_created: dateCreated.toISOString()
         });
     } catch (error) {
@@ -162,12 +138,12 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
 
         const {
             business_name,
+            business_type,
+            location,
+            working_graphic_type,
+            working_hours,
             business_phone_number,
-            business_owner_id,
-            business_address,
-            business_images,
-            business_hours,
-            place_id
+            business_owner_id
         } = req.validated;
 
         const currentData = doc.data();
@@ -180,22 +156,14 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
             }
         }
 
-        // Process images
-        const processedImages = business_images.map(img => ({
-            source: img.source,
-            photo_reference: img.photo_reference || null,
-            url: img.source === 'local_upload' ? img.data : null,
-            is_primary: img.is_primary
-        }));
-
         const updateData = {
             business_name,
+            business_type,
+            location,
+            working_graphic_type,
+            working_hours: working_hours || null,
             business_phone_number,
-            business_owner_id,
-            business_address,
-            business_images: processedImages,
-            business_hours,
-            place_id: place_id || null
+            business_owner_id
         };
 
         await docRef.update(updateData);
@@ -203,7 +171,6 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
         res.json({
             id: req.params.id,
             ...updateData,
-            business_images: formatImages(processedImages),
             business_status: currentData.business_status,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
