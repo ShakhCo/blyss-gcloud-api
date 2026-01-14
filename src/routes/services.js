@@ -182,46 +182,37 @@ router.put('/:id', validate(serviceSchema), async (req, res) => {
     }
 });
 
-// Helper function to find service across all businesses
-async function findService(serviceId) {
-    const businessesSnapshot = await db.collection('businesses').get();
+// Activate service
+router.post('/business/:businessId/services/:id/activate', async (req, res) => {
+    try {
+        const { businessId, id: serviceId } = req.params;
 
-    for (const businessDoc of businessesSnapshot.docs) {
-        const doc = await db.collection('businesses')
-            .doc(businessDoc.id)
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        const serviceDoc = await db.collection('businesses')
+            .doc(businessId)
             .collection('services')
             .doc(serviceId)
             .get();
 
-        if (doc.exists) {
-            return { serviceDoc: doc, businessId: businessDoc.id };
-        }
-    }
-
-    return null;
-}
-
-// Activate service
-router.post('/:id/activate', async (req, res) => {
-    try {
-        const result = await findService(req.params.id);
-
-        if (!result) {
+        if (!serviceDoc.exists) {
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
-
-        const { serviceDoc, businessId } = result;
 
         await db.collection('businesses')
             .doc(businessId)
             .collection('services')
-            .doc(req.params.id)
+            .doc(serviceId)
             .update({ is_active: true });
 
         const currentData = serviceDoc.data();
 
         res.json({
-            id: req.params.id,
+            id: serviceId,
             business_id: businessId,
             name: currentData.name,
             price: currentData.price,
@@ -235,26 +226,36 @@ router.post('/:id/activate', async (req, res) => {
 });
 
 // Deactivate service
-router.post('/:id/deactivate', async (req, res) => {
+router.post('/business/:businessId/services/:id/deactivate', async (req, res) => {
     try {
-        const result = await findService(req.params.id);
+        const { businessId, id: serviceId } = req.params;
 
-        if (!result) {
-            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
         }
 
-        const { serviceDoc, businessId } = result;
+        const serviceDoc = await db.collection('businesses')
+            .doc(businessId)
+            .collection('services')
+            .doc(serviceId)
+            .get();
+
+        if (!serviceDoc.exists) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
 
         await db.collection('businesses')
             .doc(businessId)
             .collection('services')
-            .doc(req.params.id)
+            .doc(serviceId)
             .update({ is_active: false });
 
         const currentData = serviceDoc.data();
 
         res.json({
-            id: req.params.id,
+            id: serviceId,
             business_id: businessId,
             name: currentData.name,
             price: currentData.price,
