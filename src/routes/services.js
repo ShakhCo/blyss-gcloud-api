@@ -25,7 +25,8 @@ router.get('/business/:businessId', async (req, res) => {
             return {
                 id: doc.id,
                 ...data,
-                date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+                date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+                is_active: data.is_active ?? false
             };
         });
         res.json(services);
@@ -66,7 +67,8 @@ router.get('/:id', async (req, res) => {
             id: service.id,
             business_id: businessId,
             ...data,
-            date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+            date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+            is_active: data.is_active ?? false
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -103,6 +105,7 @@ router.post('/business/:businessId', validate(serviceSchema), async (req, res) =
             name,
             price,
             duration_minutes,
+            is_active: false,
             date_created: dateCreated
         };
 
@@ -116,7 +119,8 @@ router.post('/business/:businessId', validate(serviceSchema), async (req, res) =
             id: serviceId,
             business_id: req.params.businessId,
             ...serviceData,
-            date_created: dateCreated.toISOString()
+            date_created: dateCreated.toISOString(),
+            is_active: false
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -170,6 +174,92 @@ router.put('/:id', validate(serviceSchema), async (req, res) => {
             id: req.params.id,
             business_id: businessId,
             ...updateData,
+            date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created,
+            is_active: currentData.is_active ?? false
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Helper function to find service across all businesses
+async function findService(serviceId) {
+    const businessesSnapshot = await db.collection('businesses').get();
+
+    for (const businessDoc of businessesSnapshot.docs) {
+        const doc = await db.collection('businesses')
+            .doc(businessDoc.id)
+            .collection('services')
+            .doc(serviceId)
+            .get();
+
+        if (doc.exists) {
+            return { serviceDoc: doc, businessId: businessDoc.id };
+        }
+    }
+
+    return null;
+}
+
+// Activate service
+router.post('/:id/activate', async (req, res) => {
+    try {
+        const result = await findService(req.params.id);
+
+        if (!result) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
+
+        const { serviceDoc, businessId } = result;
+
+        await db.collection('businesses')
+            .doc(businessId)
+            .collection('services')
+            .doc(req.params.id)
+            .update({ is_active: true });
+
+        const currentData = serviceDoc.data();
+
+        res.json({
+            id: req.params.id,
+            business_id: businessId,
+            name: currentData.name,
+            price: currentData.price,
+            duration_minutes: currentData.duration_minutes,
+            is_active: true,
+            date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Deactivate service
+router.post('/:id/deactivate', async (req, res) => {
+    try {
+        const result = await findService(req.params.id);
+
+        if (!result) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
+
+        const { serviceDoc, businessId } = result;
+
+        await db.collection('businesses')
+            .doc(businessId)
+            .collection('services')
+            .doc(req.params.id)
+            .update({ is_active: false });
+
+        const currentData = serviceDoc.data();
+
+        res.json({
+            id: req.params.id,
+            business_id: businessId,
+            name: currentData.name,
+            price: currentData.price,
+            duration_minutes: currentData.duration_minutes,
+            is_active: false,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {

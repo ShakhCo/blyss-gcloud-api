@@ -21,6 +21,7 @@ export const serviceResponseSchema = z.object({
     name: z.string(),
     price: z.number(),
     duration_minutes: z.number(),
+    is_active: z.boolean(),
     business_id: z.string(),
     date_created: z.string()
 });
