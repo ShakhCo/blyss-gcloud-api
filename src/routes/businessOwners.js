@@ -24,6 +24,40 @@ router.get('/', async (req, res) => {
     }
 });
 
+// Search business owners by phone number or name
+router.get('/search', async (req, res) => {
+    try {
+        const { q } = req.query;
+
+        if (!q || q.trim().length === 0) {
+            return res.status(400).json({ error: 'Search query is required', error_code: 'INVALID_QUERY' });
+        }
+
+        const query = q.trim().toLowerCase();
+
+        // Get all business owners and filter
+        const snapshot = await db.collection('business_owners').get();
+        const businessOwners = snapshot.docs
+            .map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    ...data,
+                    date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+                };
+            })
+            .filter(owner => {
+                const fullName = `${owner.first_name} ${owner.last_name}`.toLowerCase();
+                return owner.phone_number.includes(query) || fullName.includes(query);
+            })
+            .map(owner => businessOwnerResponseSchema.parse(owner));
+
+        res.json(businessOwners);
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 // Get business owner by ID
 router.get('/:id', async (req, res) => {
     try {
