@@ -63,6 +63,6 @@ export const businessResponseSchema = z.object({
     business_phone_number: z.string(),
     business_owner_id: z.string(),
     business_status: businessStatusEnum,
-    marketplace_website_url: z.string().optional(),
+    tenant_url: z.string().optional(),
     date_created: z.string()
 });

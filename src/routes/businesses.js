@@ -7,12 +7,12 @@ import { businessSchema, businessResponseSchema } from '../schemas/business.js';
 const router = Router();
 
 /**
- * Generate a marketplace website URL from business name (without creating DNS record)
+ * Generate a tenant URL from business name (without creating DNS record)
  * @param {string} businessName - The business name
  * @param {string} businessId - The unique business ID
  * @returns {string} - The generated URL
  */
-function generateMarketplaceUrl(businessName, businessId) {
+function generateTenantUrl(businessName, businessId) {
     const zoneDomain = process.env.CLOUDFLARE_ZONE_DOMAIN || 'blyss.uz';
 
     // Generate a clean subdomain from business name
@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
                 business_phone_number: data.business_phone_number,
                 business_owner_id: data.business_owner_id,
                 business_status: data.business_status,
-                marketplace_website_url: data.marketplace_website_url || null,
+                tenant_url: data.tenant_url || null,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
         });
@@ -74,7 +74,7 @@ router.get('/:id', async (req, res) => {
             business_phone_number: data.business_phone_number,
             business_owner_id: data.business_owner_id,
             business_status: data.business_status,
-            marketplace_website_url: data.marketplace_website_url || null,
+            tenant_url: data.tenant_url || null,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
         });
     } catch (error) {
@@ -107,7 +107,7 @@ router.get('/owner/:ownerId', async (req, res) => {
                 business_phone_number: data.business_phone_number,
                 business_owner_id: data.business_owner_id,
                 business_status: data.business_status,
-                marketplace_website_url: data.marketplace_website_url || null,
+                tenant_url: data.tenant_url || null,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
         });
@@ -147,8 +147,8 @@ router.post('/', validate(businessSchema), async (req, res) => {
 
         const dateCreated = new Date();
 
-        // Generate marketplace website URL (without creating DNS record)
-        const marketplaceWebsiteUrl = generateMarketplaceUrl(business_name, businessId);
+        // Generate tenant URL (without creating DNS record)
+        const tenantUrl = generateTenantUrl(business_name, businessId);
 
         // Create business
         const businessData = {
@@ -160,7 +160,7 @@ router.post('/', validate(businessSchema), async (req, res) => {
             business_phone_number,
             business_owner_id,
             business_status: 'unverified',
-            marketplace_website_url: marketplaceWebsiteUrl,
+            tenant_url: tenantUrl,
             date_created: dateCreated
         };
 
@@ -247,6 +247,45 @@ router.delete('/:id', async (req, res) => {
 
         await docRef.delete();
         res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update tenant URL
+router.patch('/:id/tenant-url', async (req, res) => {
+    try {
+        const { business_owner_id, tenant_url } = req.body;
+
+        if (!business_owner_id) {
+            return res.status(400).json({ error: 'business_owner_id is required', error_code: 'MISSING_OWNER_ID' });
+        }
+
+        if (!tenant_url) {
+            return res.status(400).json({ error: 'tenant_url is required', error_code: 'MISSING_TENANT_URL' });
+        }
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        // Verify business owner ID matches
+        if (currentData.business_owner_id !== business_owner_id) {
+            return res.status(403).json({ error: 'Business owner ID does not match', error_code: 'FORBIDDEN' });
+        }
+
+        // Update only tenant_url
+        await docRef.update({ tenant_url });
+
+        res.json({
+            id: req.params.id,
+            tenant_url
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
