@@ -187,14 +187,15 @@ router.get('/business-owner/:businessOwnerId/workplaces', async (req, res) => {
             return {
                 business: {
                     id: businessDoc.id,
-                    name: businessData.name,
-                    address: businessData.address,
-                    phone_number: businessData.phone_number,
-                    email: businessData.email,
-                    website: businessData.website,
+                    business_name: businessData.business_name,
                     business_type: businessData.business_type,
+                    location: businessData.location,
+                    working_graphic_type: businessData.working_graphic_type,
                     working_hours: businessData.working_hours,
-                    description: businessData.description
+                    business_phone_number: businessData.business_phone_number,
+                    business_owner_id: businessData.business_owner_id,
+                    business_status: businessData.business_status,
+                    date_created: businessData.date_created?.toDate?.().toISOString() || businessData.date_created
                 },
                 employee: {
                     id: employeeDoc.id,
