@@ -291,4 +291,43 @@ router.patch('/:id/tenant-url', async (req, res) => {
     }
 });
 
+// Update business name
+router.patch('/:id/name', async (req, res) => {
+    try {
+        const { business_owner_id, business_name } = req.body;
+
+        if (!business_owner_id) {
+            return res.status(400).json({ error: 'business_owner_id is required', error_code: 'MISSING_OWNER_ID' });
+        }
+
+        if (!business_name) {
+            return res.status(400).json({ error: 'business_name is required', error_code: 'MISSING_BUSINESS_NAME' });
+        }
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        // Verify business owner ID matches
+        if (currentData.business_owner_id !== business_owner_id) {
+            return res.status(403).json({ error: 'Business owner ID does not match', error_code: 'FORBIDDEN' });
+        }
+
+        // Update only business_name
+        await docRef.update({ business_name });
+
+        res.json({
+            id: req.params.id,
+            business_name
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
