@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import authRouter from './auth.js';
 import usersRouter from './users.js';
 import otpRouter from './otp.js';
 import businessOwnersRouter from './businessOwners.js';
@@ -9,6 +10,7 @@ import employeesRouter from './employees.js';
 
 const router = Router();
 
+router.use('/auth', authRouter);
 router.use('/users', usersRouter);
 router.use('/otp', otpRouter);
 router.use('/business-owners', businessOwnersRouter);
