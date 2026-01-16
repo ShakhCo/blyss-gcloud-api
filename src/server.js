@@ -13,7 +13,7 @@ app.use(cors({
         'https://business-miniapp.blyss.uz',
         'https://barbershop-miniapp-beta.automations.uz'
     ],
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type']
 }));
 
