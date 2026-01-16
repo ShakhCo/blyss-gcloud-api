@@ -360,9 +360,6 @@ router.post('/register', validate(registerSchema), async (req, res) => {
 
         await db.collection(collection).doc(userId).set(createData);
 
-        // Mark OTP as used
-        await otpDoc.ref.update({ is_used: true });
-
         // Return success response
         res.status(201).json({
             success: true
