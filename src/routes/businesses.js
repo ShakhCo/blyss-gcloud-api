@@ -3,9 +3,30 @@ import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { businessSchema, businessResponseSchema } from '../schemas/business.js';
-import { suggestAndCreateSubdomain, getCloudflareConfig } from '../utils/cloudflare.js';
 
 const router = Router();
+
+/**
+ * Generate a marketplace website URL from business name (without creating DNS record)
+ * @param {string} businessName - The business name
+ * @param {string} businessId - The unique business ID
+ * @returns {string} - The generated URL
+ */
+function generateMarketplaceUrl(businessName, businessId) {
+    const zoneDomain = process.env.CLOUDFLARE_ZONE_DOMAIN || 'blyss.uz';
+
+    // Generate a clean subdomain from business name
+    const subdomain = businessName
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove accents
+        .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
+        .trim()
+        .replace(/\s+/g, '-') // Replace spaces with hyphens
+        .replace(/-+/g, '-') // Remove duplicate hyphens
+        .substring(0, 50) || businessId; // Fallback to business ID if empty
+
+    return `${subdomain}.${zoneDomain}`;
+}
 
 // Get all businesses
 router.get('/', async (req, res) => {
@@ -124,24 +145,10 @@ router.post('/', validate(businessSchema), async (req, res) => {
             businessExists = existingDoc.exists;
         }
 
-        // Create subdomain via Cloudflare DNS
-        let marketplaceWebsiteUrl = null;
-        try {
-            const cloudflareConfig = getCloudflareConfig();
-            const subdomainResult = await suggestAndCreateSubdomain(
-                business_name,
-                businessId,
-                cloudflareConfig.serverIp,
-                cloudflareConfig
-            );
-            marketplaceWebsiteUrl = subdomainResult.fullUrl;
-        } catch (dnsError) {
-            console.error('Failed to create DNS record:', dnsError);
-            // Continue with business creation even if DNS fails
-            // marketplace_website_url will remain null
-        }
-
         const dateCreated = new Date();
+
+        // Generate marketplace website URL (without creating DNS record)
+        const marketplaceWebsiteUrl = generateMarketplaceUrl(business_name, businessId);
 
         // Create business
         const businessData = {
