@@ -70,7 +70,8 @@ export const authUserSchema = z.object({
 
 export const authResponseSchema = z.object({
     user: authUserSchema,
-    token: z.string(),
+    access_token: z.string(),
+    refresh_token: z.string(),
     expires_at: z.string()
 });
 
