@@ -363,12 +363,9 @@ router.post('/register', validate(registerSchema), async (req, res) => {
         // Mark OTP as used
         await otpDoc.ref.update({ is_used: true });
 
-        // Return response
+        // Return success response
         res.status(201).json({
-            id: userId,
-            user_type: user_type,
-            ...createData,
-            created_at: dateCreated.toISOString()
+            success: true
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
