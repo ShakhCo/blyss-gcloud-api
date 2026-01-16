@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { businessSchema, businessResponseSchema } from '../schemas/business.js';
+import { suggestAndCreateSubdomain, getCloudflareConfig } from '../utils/cloudflare.js';
 
 const router = Router();
 
@@ -14,7 +15,15 @@ router.get('/', async (req, res) => {
             const data = doc.data();
             return {
                 id: doc.id,
-                ...data,
+                business_name: data.business_name,
+                business_type: data.business_type,
+                location: data.location,
+                working_graphic_type: data.working_graphic_type,
+                working_hours: data.working_hours,
+                business_phone_number: data.business_phone_number,
+                business_owner_id: data.business_owner_id,
+                business_status: data.business_status,
+                marketplace_website_url: data.marketplace_website_url || null,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
         });
@@ -36,7 +45,15 @@ router.get('/:id', async (req, res) => {
         const data = doc.data();
         res.json({
             id: doc.id,
-            ...data,
+            business_name: data.business_name,
+            business_type: data.business_type,
+            location: data.location,
+            working_graphic_type: data.working_graphic_type,
+            working_hours: data.working_hours,
+            business_phone_number: data.business_phone_number,
+            business_owner_id: data.business_owner_id,
+            business_status: data.business_status,
+            marketplace_website_url: data.marketplace_website_url || null,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
         });
     } catch (error) {
@@ -61,7 +78,15 @@ router.get('/owner/:ownerId', async (req, res) => {
             const data = doc.data();
             return {
                 id: doc.id,
-                ...data,
+                business_name: data.business_name,
+                business_type: data.business_type,
+                location: data.location,
+                working_graphic_type: data.working_graphic_type,
+                working_hours: data.working_hours,
+                business_phone_number: data.business_phone_number,
+                business_owner_id: data.business_owner_id,
+                business_status: data.business_status,
+                marketplace_website_url: data.marketplace_website_url || null,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
         });
@@ -99,6 +124,23 @@ router.post('/', validate(businessSchema), async (req, res) => {
             businessExists = existingDoc.exists;
         }
 
+        // Create subdomain via Cloudflare DNS
+        let marketplaceWebsiteUrl = null;
+        try {
+            const cloudflareConfig = getCloudflareConfig();
+            const subdomainResult = await suggestAndCreateSubdomain(
+                business_name,
+                businessId,
+                cloudflareConfig.serverIp,
+                cloudflareConfig
+            );
+            marketplaceWebsiteUrl = subdomainResult.fullUrl;
+        } catch (dnsError) {
+            console.error('Failed to create DNS record:', dnsError);
+            // Continue with business creation even if DNS fails
+            // marketplace_website_url will remain null
+        }
+
         const dateCreated = new Date();
 
         // Create business
@@ -111,6 +153,7 @@ router.post('/', validate(businessSchema), async (req, res) => {
             business_phone_number,
             business_owner_id,
             business_status: 'unverified',
+            marketplace_website_url: marketplaceWebsiteUrl,
             date_created: dateCreated
         };
 
@@ -170,7 +213,13 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
 
         res.json({
             id: req.params.id,
-            ...updateData,
+            business_name: updateData.business_name,
+            business_type: updateData.business_type,
+            location: updateData.location,
+            working_graphic_type: updateData.working_graphic_type,
+            working_hours: updateData.working_hours,
+            business_phone_number: updateData.business_phone_number,
+            business_owner_id: updateData.business_owner_id,
             business_status: currentData.business_status,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
