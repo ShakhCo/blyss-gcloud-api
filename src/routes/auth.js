@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../middleware/authenticate.js';
-import { generateTokenPair, getAccessTokenExpiration, getCookieExpiration, decodeToken, verifyRefreshToken } from '../utils/jwt.js';
+import { generateTokenPair, getAccessTokenExpiration, getRefreshTokenExpiration, getCookieExpiration, decodeToken, verifyRefreshToken } from '../utils/jwt.js';
 import { addToBlacklist } from '../utils/tokenBlacklist.js';
 import { storeRefreshToken, findRefreshToken, revokeRefreshToken, revokeAllUserTokens } from '../utils/refreshTokens.js';
 import {
