@@ -4,6 +4,7 @@ import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
+import { serviceSchema } from '../schemas/service.js';
 
 const router = Router();
 
@@ -340,6 +341,309 @@ router.patch('/:id/name', authenticate, async (req, res) => {
         res.json({
             id: req.params.id,
             business_name
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ==================== SERVICES ROUTES ====================
+
+// Get all services for a business
+router.get('/:id/services', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const snapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .get();
+
+        const services = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                ...data,
+                date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+                is_active: data.is_active ?? false
+            };
+        });
+        res.json(services);
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Get a specific service
+router.get('/:id/services/:serviceId', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const serviceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .get();
+
+        if (!serviceDoc.exists) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
+
+        const data = serviceDoc.data();
+        res.json({
+            id: serviceDoc.id,
+            business_id: req.params.id,
+            ...data,
+            date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+            is_active: data.is_active ?? false
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Create a service
+router.post('/:id/services', authenticate, validate(serviceSchema), async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const { name, price, duration_minutes } = req.validated;
+
+        // Generate unique 16 character ID
+        let serviceId;
+        let serviceExists = true;
+        while (serviceExists) {
+            serviceId = crypto.randomBytes(8).toString('hex');
+            const existingDoc = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('services')
+                .doc(serviceId)
+                .get();
+            serviceExists = existingDoc.exists;
+        }
+
+        const dateCreated = new Date();
+
+        const serviceData = {
+            name,
+            price,
+            duration_minutes,
+            is_active: false,
+            date_created: dateCreated
+        };
+
+        await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(serviceId)
+            .set(serviceData);
+
+        res.status(201).json({
+            id: serviceId,
+            business_id: req.params.id,
+            ...serviceData,
+            date_created: dateCreated.toISOString(),
+            is_active: false
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update a service
+router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const serviceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .get();
+
+        if (!serviceDoc.exists) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
+
+        const { name, price, duration_minutes } = req.validated;
+
+        const updateData = {
+            name,
+            price,
+            duration_minutes
+        };
+
+        await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .update(updateData);
+
+        const currentData = serviceDoc.data();
+
+        res.json({
+            id: req.params.serviceId,
+            business_id: req.params.id,
+            ...updateData,
+            date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created,
+            is_active: currentData.is_active ?? false
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Delete a service
+router.delete('/:id/services/:serviceId', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const serviceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .get();
+
+        if (!serviceDoc.exists) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
+
+        await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .delete();
+
+        res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Activate a service
+router.post('/:id/services/:serviceId/activate', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const serviceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .get();
+
+        if (!serviceDoc.exists) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
+
+        await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .update({ is_active: true });
+
+        const currentData = serviceDoc.data();
+
+        res.json({
+            id: req.params.serviceId,
+            business_id: req.params.id,
+            name: currentData.name,
+            price: currentData.price,
+            duration_minutes: currentData.duration_minutes,
+            is_active: true,
+            date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Deactivate a service
+router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const serviceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .get();
+
+        if (!serviceDoc.exists) {
+            return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
+        }
+
+        await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .update({ is_active: false });
+
+        const currentData = serviceDoc.data();
+
+        res.json({
+            id: req.params.serviceId,
+            business_id: req.params.id,
+            name: currentData.name,
+            price: currentData.price,
+            duration_minutes: currentData.duration_minutes,
+            is_active: false,
+            date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
