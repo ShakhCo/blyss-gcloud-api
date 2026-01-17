@@ -653,18 +653,6 @@ router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res
 
 // ==================== EMPLOYEES ROUTES ====================
 
-// Helper function to generate unique ID
-async function generateUniqueId(collection) {
-    let id;
-    let exists = true;
-    while (exists) {
-        id = crypto.randomBytes(8).toString('hex');
-        const doc = await collection.doc(id).get();
-        exists = doc.exists;
-    }
-    return id;
-}
-
 // Get all employees for a business
 router.get('/:id/employees', authenticate, async (req, res) => {
     try {
@@ -731,22 +719,18 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
 
         const { phone_number, position } = req.validated;
 
-        // Check if business owner exists by phone number
-        const existingOwnerSnapshot = await db.collection('business_owners')
-            .where('phone_number', '==', phone_number)
-            .get();
+        // Use phone number as document ID for business owner
+        const ownerId = phone_number;
 
-        let businessOwnerId;
+        // Check if business owner exists
+        const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
+
         let ownerData;
 
-        if (!existingOwnerSnapshot.empty) {
-            // Business owner exists, use it
-            const ownerDoc = existingOwnerSnapshot.docs[0];
-            businessOwnerId = ownerDoc.id;
+        if (ownerDoc.exists) {
             ownerData = ownerDoc.data();
         } else {
             // Create new business owner with is_verified: false
-            businessOwnerId = await generateUniqueId(db.collection('business_owners'));
             const dateCreated = new Date();
 
             ownerData = {
@@ -758,29 +742,24 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
                 is_verified: false
             };
 
-            await db.collection('business_owners').doc(businessOwnerId).set(ownerData);
+            await db.collection('business_owners').doc(ownerId).set(ownerData);
         }
 
-        // Check if already an employee of this business
-        const existingEmployees = await db.collection('businesses')
+        // Check if already an employee (employee doc ID = phone number)
+        const employeeDoc = await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
-            .where('business_owner_id', '==', businessOwnerId)
+            .doc(ownerId)
             .get();
 
-        if (!existingEmployees.empty) {
+        if (employeeDoc.exists) {
             return res.status(409).json({ error: 'Business owner is already an employee', error_code: 'ALREADY_EMPLOYEE' });
         }
-
-        // Generate unique employee ID
-        const employeeId = await generateUniqueId(
-            db.collection('businesses').doc(req.params.id).collection('employees')
-        );
 
         const dateCreated = new Date();
 
         const employeeData = {
-            business_owner_id: businessOwnerId,
+            business_owner_id: ownerId,
             position: position || '',
             is_confirmed_by_employee: false,
             date_created: dateCreated
@@ -789,13 +768,13 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
         await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
-            .doc(employeeId)
+            .doc(ownerId)
             .set(employeeData);
 
         res.status(201).json({
-            id: employeeId,
+            id: ownerId,
             business_id: req.params.id,
-            business_owner_id: businessOwnerId,
+            business_owner_id: ownerId,
             first_name: ownerData.first_name || '',
             last_name: ownerData.last_name || '',
             phone_number: ownerData.phone_number,
@@ -822,6 +801,7 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
+        // employeeId is now the phone number (business_owner_id)
         const employeeDoc = await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
