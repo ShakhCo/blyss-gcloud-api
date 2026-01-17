@@ -6,6 +6,7 @@ export const userTypeEnum = z.enum(['user', 'business_owner']);
 // POST /auth/send-otp
 export const sendOtpSchema = z.object({
     phone_number: z.string({ required_error: 'phone_number is required' })
+        .min(1, 'phone_number is required')
         .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
     user_type: userTypeEnum.default('user')
 });
@@ -13,6 +14,7 @@ export const sendOtpSchema = z.object({
 // POST /auth/verify-otp
 export const verifyOtpSchema = z.object({
     phone_number: z.string({ required_error: 'phone_number is required' })
+        .min(1, 'phone_number is required')
         .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
     otp_code: z.coerce.number({ required_error: 'otp_code is required' })
         .int('otp_code must be an integer')
@@ -22,15 +24,18 @@ export const verifyOtpSchema = z.object({
 
 // POST /auth/login
 export const loginSchema = z.object({
-    otp_id: z.string({ required_error: 'otp_id is required' }),
+    otp_id: z.string({ required_error: 'otp_id is required' })
+        .min(1, 'otp_id is required'),
     phone_number: z.string({ required_error: 'phone_number is required' })
+        .min(1, 'phone_number is required')
         .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
-    user_type: userTypeEnum.default('user')
+    user_type: userTypeEnum
 });
 
 // POST /auth/register (user)
 export const registerUserSchema = z.object({
-    otp_id: z.string({ required_error: 'otp_id is required' }),
+    otp_id: z.string({ required_error: 'otp_id is required' })
+        .min(1, 'otp_id is required'),
     user_type: z.literal('user'),
     first_name: z.string({ required_error: 'first_name is required' }).min(1, 'first_name is required'),
     last_name: z.string().default(''),
@@ -40,7 +45,8 @@ export const registerUserSchema = z.object({
 
 // POST /auth/register (business_owner)
 export const registerBusinessOwnerSchema = z.object({
-    otp_id: z.string({ required_error: 'otp_id is required' }),
+    otp_id: z.string({ required_error: 'otp_id is required' })
+        .min(1, 'otp_id is required'),
     user_type: z.literal('business_owner'),
     first_name: z.string({ required_error: 'first_name is required' }).min(1, 'first_name is required'),
     last_name: z.string().default(''),
