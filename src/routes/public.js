@@ -63,7 +63,6 @@ router.get('/business', async (req, res) => {
         const businessData = businessDoc.data();
 
         res.json({
-            id: businessDoc.id,
             business_name: businessData.business_name,
             business_type: businessData.business_type,
             location: businessData.location,
@@ -138,8 +137,11 @@ router.get('/business/services', async (req, res) => {
 
         res.json({
             business: {
-                id: businessId,
                 name: businessData.business_name,
+                business_type: businessData.business_type,
+                location: businessData.location,
+                working_hours: businessData.working_hours,
+                business_phone_number: businessData.business_phone_number,
                 tenant_url: businessData.tenant_url
             },
             services
@@ -196,8 +198,11 @@ router.get('/businesses/:slug/services', async (req, res) => {
 
         res.json({
             business: {
-                id: businessId,
                 name: businessData.business_name,
+                business_type: businessData.business_type,
+                location: businessData.location,
+                working_hours: businessData.working_hours,
+                business_phone_number: businessData.business_phone_number,
                 tenant_url: businessData.tenant_url
             },
             services
