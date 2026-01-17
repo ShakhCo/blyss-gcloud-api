@@ -8,7 +8,7 @@ export const sendOtpSchema = z.object({
     phone_number: z.string({ required_error: 'phone_number is required' })
         .min(1, 'phone_number is required')
         .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
-    user_type: userTypeEnum.default('user')
+    user_type: userTypeEnum
 });
 
 // POST /auth/verify-otp
@@ -19,7 +19,8 @@ export const verifyOtpSchema = z.object({
     otp_code: z.coerce.number({ required_error: 'otp_code is required' })
         .int('otp_code must be an integer')
         .min(10000, 'otp_code must be 5 digits')
-        .max(99999, 'otp_code must be 5 digits')
+        .max(99999, 'otp_code must be 5 digits'),
+    user_type: userTypeEnum
 });
 
 // POST /auth/login
