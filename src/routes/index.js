@@ -6,6 +6,7 @@ import businessOwnersRouter from './businessOwners.js';
 import businessesRouter from './businesses.js';
 import placesRouter from './places.js';
 import employeesRouter from './employees.js';
+import publicRouter from './public.js';
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use('/business-owners', businessOwnersRouter);
 router.use('/businesses', businessesRouter);
 router.use('/places', placesRouter);
 router.use('/employees', employeesRouter);
+router.use('/public', publicRouter);
 
 export default router;
