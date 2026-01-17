@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
+import { employeeSchema } from '../schemas/employee.js';
 
 const router = Router();
 
@@ -645,6 +646,196 @@ router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res
             is_active: false,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ==================== EMPLOYEES ROUTES ====================
+
+// Helper function to generate unique ID
+async function generateUniqueId(collection) {
+    let id;
+    let exists = true;
+    while (exists) {
+        id = crypto.randomBytes(8).toString('hex');
+        const doc = await collection.doc(id).get();
+        exists = doc.exists;
+    }
+    return id;
+}
+
+// Get all employees for a business
+router.get('/:id/employees', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const snapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .get();
+
+        const employees = await Promise.all(snapshot.docs.map(async (doc) => {
+            const data = doc.data();
+
+            // Fetch business owner details
+            const ownerDoc = await db.collection('business_owners').doc(data.business_owner_id).get();
+
+            if (!ownerDoc.exists) {
+                return null;
+            }
+
+            const ownerData = ownerDoc.data();
+
+            return {
+                id: doc.id,
+                business_id: req.params.id,
+                business_owner_id: data.business_owner_id,
+                first_name: ownerData.first_name,
+                last_name: ownerData.last_name,
+                phone_number: ownerData.phone_number,
+                telegram_id: ownerData.telegram_id,
+                is_confirmed_by_employee: data.is_confirmed_by_employee ?? false,
+                date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+            };
+        }));
+
+        // Filter out nulls (deleted business owners)
+        res.json(employees.filter(emp => emp !== null));
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Add employee to business
+router.post('/:id/employees', authenticate, validate(employeeSchema), async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const { first_name, last_name, phone_number } = req.validated;
+
+        // Check if business owner exists by phone number
+        const existingOwnerSnapshot = await db.collection('business_owners')
+            .where('phone_number', '==', phone_number)
+            .get();
+
+        let businessOwnerId;
+        let ownerData;
+
+        if (!existingOwnerSnapshot.empty) {
+            // Business owner exists, use it
+            const ownerDoc = existingOwnerSnapshot.docs[0];
+            businessOwnerId = ownerDoc.id;
+            ownerData = ownerDoc.data();
+        } else {
+            // Create new business owner with is_verified: false
+            businessOwnerId = await generateUniqueId(db.collection('business_owners'));
+            const dateCreated = new Date();
+
+            ownerData = {
+                first_name,
+                last_name,
+                phone_number,
+                telegram_id: null,
+                date_created: dateCreated,
+                is_verified: false
+            };
+
+            await db.collection('business_owners').doc(businessOwnerId).set(ownerData);
+        }
+
+        // Check if already an employee of this business
+        const existingEmployees = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .where('business_owner_id', '==', businessOwnerId)
+            .get();
+
+        if (!existingEmployees.empty) {
+            return res.status(409).json({ error: 'Business owner is already an employee', error_code: 'ALREADY_EMPLOYEE' });
+        }
+
+        // Generate unique employee ID
+        const employeeId = await generateUniqueId(
+            db.collection('businesses').doc(req.params.id).collection('employees')
+        );
+
+        const dateCreated = new Date();
+
+        const employeeData = {
+            business_owner_id: businessOwnerId,
+            is_confirmed_by_employee: false,
+            date_created: dateCreated
+        };
+
+        await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(employeeId)
+            .set(employeeData);
+
+        res.status(201).json({
+            id: employeeId,
+            business_id: req.params.id,
+            business_owner_id: businessOwnerId,
+            first_name: ownerData.first_name,
+            last_name: ownerData.last_name,
+            phone_number: ownerData.phone_number,
+            telegram_id: ownerData.telegram_id,
+            is_confirmed_by_employee: false,
+            date_created: dateCreated.toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Delete employee from business
+router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const employeeDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .get();
+
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'NOT_FOUND' });
+        }
+
+        await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .delete();
+
+        res.status(204).send();
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }

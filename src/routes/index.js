@@ -5,7 +5,6 @@ import otpRouter from './otp.js';
 import businessOwnersRouter from './businessOwners.js';
 import businessesRouter from './businesses.js';
 import placesRouter from './places.js';
-import servicesRouter from './services.js';
 import employeesRouter from './employees.js';
 
 const router = Router();
@@ -16,7 +15,6 @@ router.use('/otp', otpRouter);
 router.use('/business-owners', businessOwnersRouter);
 router.use('/businesses', businessesRouter);
 router.use('/places', placesRouter);
-router.use('/services', servicesRouter);
 router.use('/employees', employeesRouter);
 
 export default router;
