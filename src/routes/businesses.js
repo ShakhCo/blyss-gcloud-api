@@ -699,10 +699,11 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 id: doc.id,
                 business_id: req.params.id,
                 business_owner_id: data.business_owner_id,
-                first_name: ownerData.first_name,
-                last_name: ownerData.last_name,
+                first_name: ownerData.first_name || '',
+                last_name: ownerData.last_name || '',
                 phone_number: ownerData.phone_number,
                 telegram_id: ownerData.telegram_id,
+                position: data.position || '',
                 is_confirmed_by_employee: data.is_confirmed_by_employee ?? false,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
@@ -728,7 +729,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { first_name, last_name, phone_number } = req.validated;
+        const { phone_number, position } = req.validated;
 
         // Check if business owner exists by phone number
         const existingOwnerSnapshot = await db.collection('business_owners')
@@ -749,8 +750,8 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             const dateCreated = new Date();
 
             ownerData = {
-                first_name,
-                last_name,
+                first_name: '',
+                last_name: '',
                 phone_number,
                 telegram_id: null,
                 date_created: dateCreated,
@@ -780,6 +781,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
 
         const employeeData = {
             business_owner_id: businessOwnerId,
+            position: position || '',
             is_confirmed_by_employee: false,
             date_created: dateCreated
         };
@@ -794,10 +796,11 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             id: employeeId,
             business_id: req.params.id,
             business_owner_id: businessOwnerId,
-            first_name: ownerData.first_name,
-            last_name: ownerData.last_name,
+            first_name: ownerData.first_name || '',
+            last_name: ownerData.last_name || '',
             phone_number: ownerData.phone_number,
             telegram_id: ownerData.telegram_id,
+            position: position || '',
             is_confirmed_by_employee: false,
             date_created: dateCreated.toISOString()
         });
