@@ -2,7 +2,8 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
-import { businessSchema, businessResponseSchema } from '../schemas/business.js';
+import { authenticate } from '../middleware/authenticate.js';
+import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
 
 const router = Router();
 
@@ -28,10 +29,21 @@ function generateTenantUrl(businessName, businessId) {
     return `${subdomain}.${zoneDomain}`;
 }
 
-// Get all businesses
-router.get('/', async (req, res) => {
+// Get businesses for authenticated user
+router.get('/', authenticate, async (req, res) => {
     try {
-        const snapshot = await db.collection('businesses').get();
+        // Only business_owners can have businesses
+        if (req.user.user_type !== 'business_owner') {
+            return res.status(403).json({
+                error: 'Only business owners can access businesses',
+                error_code: 'FORBIDDEN'
+            });
+        }
+
+        const snapshot = await db.collection('businesses')
+            .where('business_owner_id', '==', req.user.id)
+            .get();
+
         const businesses = snapshot.docs.map(doc => {
             const data = doc.data();
             return {
@@ -55,7 +67,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get business by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticate, async (req, res) => {
     try {
         const doc = await db.collection('businesses').doc(req.params.id).get();
 
@@ -64,6 +76,12 @@ router.get('/:id', async (req, res) => {
         }
 
         const data = doc.data();
+
+        // Verify ownership
+        if (data.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
         res.json({
             id: doc.id,
             business_name: data.business_name,
@@ -118,23 +136,26 @@ router.get('/owner/:ownerId', async (req, res) => {
 });
 
 // Create business
-router.post('/', validate(businessSchema), async (req, res) => {
+router.post('/', authenticate, validate(createBusinessSchema), async (req, res) => {
     try {
+        // Only business_owners can create businesses
+        if (req.user.user_type !== 'business_owner') {
+            return res.status(403).json({
+                error: 'Only business owners can create businesses',
+                error_code: 'FORBIDDEN'
+            });
+        }
+
         const {
             business_name,
             business_type,
             location,
             working_graphic_type,
             working_hours,
-            business_phone_number,
-            business_owner_id
+            business_phone_number
         } = req.validated;
 
-        // Verify business owner exists
-        const ownerDoc = await db.collection('business_owners').doc(business_owner_id).get();
-        if (!ownerDoc.exists) {
-            return res.status(404).json({ error: 'Business owner not found', error_code: 'OWNER_NOT_FOUND' });
-        }
+        const business_owner_id = req.user.id;
 
         // Generate unique 16 character ID
         let businessId;
@@ -177,7 +198,7 @@ router.post('/', validate(businessSchema), async (req, res) => {
 });
 
 // Update business
-router.put('/:id', validate(businessSchema), async (req, res) => {
+router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res) => {
     try {
         const docRef = db.collection('businesses').doc(req.params.id);
         const doc = await docRef.get();
@@ -192,18 +213,14 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
             location,
             working_graphic_type,
             working_hours,
-            business_phone_number,
-            business_owner_id
+            business_phone_number
         } = req.validated;
 
         const currentData = doc.data();
 
-        // Verify business owner exists if changing owner
-        if (business_owner_id !== currentData.business_owner_id) {
-            const ownerDoc = await db.collection('business_owners').doc(business_owner_id).get();
-            if (!ownerDoc.exists) {
-                return res.status(404).json({ error: 'Business owner not found', error_code: 'OWNER_NOT_FOUND' });
-            }
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         const updateData = {
@@ -212,8 +229,7 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
             location,
             working_graphic_type,
             working_hours: working_hours || null,
-            business_phone_number,
-            business_owner_id
+            business_phone_number
         };
 
         await docRef.update(updateData);
@@ -226,8 +242,9 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
             working_graphic_type: updateData.working_graphic_type,
             working_hours: updateData.working_hours,
             business_phone_number: updateData.business_phone_number,
-            business_owner_id: updateData.business_owner_id,
+            business_owner_id: currentData.business_owner_id,
             business_status: currentData.business_status,
+            tenant_url: currentData.tenant_url,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
@@ -236,13 +253,20 @@ router.put('/:id', validate(businessSchema), async (req, res) => {
 });
 
 // Delete business
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticate, async (req, res) => {
     try {
         const docRef = db.collection('businesses').doc(req.params.id);
         const doc = await docRef.get();
 
         if (!doc.exists) {
             return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         await docRef.delete();
@@ -253,13 +277,9 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Update tenant URL
-router.patch('/:id/tenant-url', async (req, res) => {
+router.patch('/:id/tenant-url', authenticate, async (req, res) => {
     try {
-        const { business_owner_id, tenant_url } = req.body;
-
-        if (!business_owner_id) {
-            return res.status(400).json({ error: 'business_owner_id is required', error_code: 'MISSING_OWNER_ID' });
-        }
+        const { tenant_url } = req.body;
 
         if (!tenant_url) {
             return res.status(400).json({ error: 'tenant_url is required', error_code: 'MISSING_TENANT_URL' });
@@ -274,9 +294,9 @@ router.patch('/:id/tenant-url', async (req, res) => {
 
         const currentData = doc.data();
 
-        // Verify business owner ID matches
-        if (currentData.business_owner_id !== business_owner_id) {
-            return res.status(403).json({ error: 'Business owner ID does not match', error_code: 'FORBIDDEN' });
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         // Update only tenant_url
@@ -292,13 +312,9 @@ router.patch('/:id/tenant-url', async (req, res) => {
 });
 
 // Update business name
-router.patch('/:id/name', async (req, res) => {
+router.patch('/:id/name', authenticate, async (req, res) => {
     try {
-        const { business_owner_id, business_name } = req.body;
-
-        if (!business_owner_id) {
-            return res.status(400).json({ error: 'business_owner_id is required', error_code: 'MISSING_OWNER_ID' });
-        }
+        const { business_name } = req.body;
 
         if (!business_name) {
             return res.status(400).json({ error: 'business_name is required', error_code: 'MISSING_BUSINESS_NAME' });
@@ -313,9 +329,9 @@ router.patch('/:id/name', async (req, res) => {
 
         const currentData = doc.data();
 
-        // Verify business owner ID matches
-        if (currentData.business_owner_id !== business_owner_id) {
-            return res.status(403).json({ error: 'Business owner ID does not match', error_code: 'FORBIDDEN' });
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         // Update only business_name

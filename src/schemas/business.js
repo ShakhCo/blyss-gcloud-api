@@ -43,6 +43,34 @@ export const businessSchema = z.object({
         .min(1, 'business_owner_id is required')
 });
 
+// Input schema for creating business (without business_owner_id - taken from auth)
+export const createBusinessSchema = z.object({
+    business_name: z.string({ required_error: 'business_name is required' })
+        .min(1, 'business_name is required'),
+    business_type: z.string({ required_error: 'business_type is required' })
+        .min(1, 'business_type is required'),
+    location: locationSchema,
+    working_graphic_type: workingGraphicTypeEnum,
+    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days').nullable().optional(),
+    business_phone_number: z.string({ required_error: 'business_phone_number is required' })
+        .regex(/^\d+$/, 'business_phone_number must contain only digits')
+        .min(12, 'business_phone_number must be at least 12 digits')
+});
+
+// Input schema for updating business (without business_owner_id - cannot be changed)
+export const updateBusinessSchema = z.object({
+    business_name: z.string({ required_error: 'business_name is required' })
+        .min(1, 'business_name is required'),
+    business_type: z.string({ required_error: 'business_type is required' })
+        .min(1, 'business_type is required'),
+    location: locationSchema,
+    working_graphic_type: workingGraphicTypeEnum,
+    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days').nullable().optional(),
+    business_phone_number: z.string({ required_error: 'business_phone_number is required' })
+        .regex(/^\d+$/, 'business_phone_number must contain only digits')
+        .min(12, 'business_phone_number must be at least 12 digits')
+});
+
 // Output schema (for responses)
 export const businessResponseSchema = z.object({
     id: z.string(),
