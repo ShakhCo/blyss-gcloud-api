@@ -1,5 +1,4 @@
 import { verifyAccessToken } from '../utils/jwt.js';
-import { isTokenBlacklisted } from '../utils/tokenBlacklist.js';
 import { db } from '../db/db.js';
 
 // Cookie names
@@ -39,15 +38,6 @@ export const authenticate = async (req, res, next) => {
             return res.status(401).json({
                 error: 'Authorization token required',
                 error_code: 'NO_TOKEN'
-            });
-        }
-
-        // Check if token is blacklisted
-        const blacklisted = await isTokenBlacklisted(token);
-        if (blacklisted) {
-            return res.status(401).json({
-                error: 'Token has been revoked',
-                error_code: 'TOKEN_REVOKED'
             });
         }
 
@@ -95,13 +85,6 @@ export const optionalAuthenticate = async (req, res, next) => {
         const token = extractAccessToken(req);
 
         if (!token) {
-            req.user = null;
-            return next();
-        }
-
-        // Check if token is blacklisted
-        const blacklisted = await isTokenBlacklisted(token);
-        if (blacklisted) {
             req.user = null;
             return next();
         }

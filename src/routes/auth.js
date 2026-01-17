@@ -4,8 +4,6 @@ import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../middleware/authenticate.js';
 import { generateTokenPair, getAccessTokenExpiration, getRefreshTokenExpiration, getCookieExpiration, decodeToken, verifyRefreshToken } from '../utils/jwt.js';
-import { addToBlacklist } from '../utils/tokenBlacklist.js';
-import { storeRefreshToken, findRefreshToken, revokeRefreshToken, revokeAllUserTokens } from '../utils/refreshTokens.js';
 import {
     sendOtpSchema,
     verifyOtpSchema,
@@ -250,10 +248,6 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
         const { accessToken, refreshToken } = generateTokenPair(tokenPayload);
 
-        // Store refresh token in Firestore
-        const refreshTokenExpiresAt = getRefreshTokenExpiration();
-        await storeRefreshToken(userDoc.id, user_type, refreshToken, refreshTokenExpiresAt);
-
         // Set cookies
         setAuthCookies(res, accessToken, refreshToken);
 
@@ -397,16 +391,6 @@ router.post('/refresh', async (req, res) => {
             });
         }
 
-        // Find refresh token in database
-        const tokenData = await findRefreshToken(refreshToken);
-        if (!tokenData) {
-            clearAuthCookies(res);
-            return res.status(401).json({
-                error: 'Refresh token not found or revoked',
-                error_code: 'REFRESH_TOKEN_REVOKED'
-            });
-        }
-
         // Fetch user data
         const collection = decoded.user_type === 'business_owner' ? 'business_owners' : 'users';
         const userDoc = await db.collection(collection).doc(decoded.user_id).get();
@@ -430,13 +414,6 @@ router.post('/refresh', async (req, res) => {
 
         const { accessToken, refreshToken: newRefreshToken } = generateTokenPair(tokenPayload);
 
-        // Store new refresh token
-        const refreshTokenExpiresAt = getRefreshTokenExpiration();
-        await storeRefreshToken(userDoc.id, decoded.user_type, newRefreshToken, refreshTokenExpiresAt);
-
-        // Revoke old refresh token
-        await revokeRefreshToken(tokenData.id);
-
         // Set new cookies
         setAuthCookies(res, accessToken, newRefreshToken);
 
@@ -457,34 +434,6 @@ router.post('/refresh', async (req, res) => {
 // POST /auth/logout
 router.post('/logout', authenticate, async (req, res) => {
     try {
-        // Get access token from cookie or header
-        let accessToken = req.cookies?.[ACCESS_TOKEN_COOKIE];
-        if (!accessToken && req.headers.authorization?.startsWith('Bearer ')) {
-            accessToken = req.headers.authorization.substring(7);
-        }
-
-        // Get refresh token from cookie or body
-        let refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
-        if (!refreshToken && req.body?.refresh_token) {
-            refreshToken = req.body.refresh_token;
-        }
-
-        // Add access token to blacklist
-        if (accessToken) {
-            const decoded = decodeToken(accessToken);
-            if (decoded && decoded.exp) {
-                await addToBlacklist(accessToken, decoded.exp);
-            }
-        }
-
-        // Revoke refresh token from database
-        if (refreshToken) {
-            const tokenData = await findRefreshToken(refreshToken);
-            if (tokenData) {
-                await revokeRefreshToken(tokenData.id);
-            }
-        }
-
         // Clear cookies
         clearAuthCookies(res);
 
@@ -497,22 +446,6 @@ router.post('/logout', authenticate, async (req, res) => {
 // POST /auth/logout-all
 router.post('/logout-all', authenticate, async (req, res) => {
     try {
-        // Revoke all refresh tokens for the user
-        await revokeAllUserTokens(req.user.id, req.user.user_type);
-
-        // Get access token and add to blacklist
-        let accessToken = req.cookies?.[ACCESS_TOKEN_COOKIE];
-        if (!accessToken && req.headers.authorization?.startsWith('Bearer ')) {
-            accessToken = req.headers.authorization.substring(7);
-        }
-
-        if (accessToken) {
-            const decoded = decodeToken(accessToken);
-            if (decoded && decoded.exp) {
-                await addToBlacklist(accessToken, decoded.exp);
-            }
-        }
-
         // Clear cookies
         clearAuthCookies(res);
 
