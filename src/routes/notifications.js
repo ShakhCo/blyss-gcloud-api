@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { authenticate } from '../middleware/authenticate.js';
 
@@ -48,6 +47,32 @@ router.get('/unread-count', authenticate, async (req, res) => {
     }
 });
 
+// Mark all as viewed
+router.post('/mark-all-viewed', authenticate, async (req, res) => {
+    try {
+        const snapshot = await db.collection('notifications')
+            .where('phone_number', '==', req.user.phone_number)
+            .where('is_viewed', '==', false)
+            .get();
+
+        const now = new Date();
+        const batch = db.batch();
+
+        snapshot.docs.forEach(doc => {
+            batch.update(doc.ref, {
+                is_viewed: true,
+                viewed_at: now
+            });
+        });
+
+        await batch.commit();
+
+        res.json({ message: 'All notifications marked as viewed' });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 // Mark notification as viewed
 router.post('/:id/view', authenticate, async (req, res) => {
     try {
@@ -75,32 +100,6 @@ router.post('/:id/view', authenticate, async (req, res) => {
             is_viewed: true,
             viewed_at: now.toISOString()
         });
-    } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
-    }
-});
-
-// Mark all as viewed
-router.post('/mark-all-viewed', authenticate, async (req, res) => {
-    try {
-        const snapshot = await db.collection('notifications')
-            .where('phone_number', '==', req.user.phone_number)
-            .where('is_viewed', '==', false)
-            .get();
-
-        const now = new Date();
-        const batch = db.batch();
-
-        snapshot.docs.forEach(doc => {
-            batch.update(doc.ref, {
-                is_viewed: true,
-                viewed_at: now
-            });
-        });
-
-        await batch.commit();
-
-        res.json({ message: 'All notifications marked as viewed' });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
