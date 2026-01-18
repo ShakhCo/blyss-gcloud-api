@@ -671,34 +671,19 @@ router.get('/:id/employees', authenticate, async (req, res) => {
             .collection('employees')
             .get();
 
-        const employees = await Promise.all(snapshot.docs.map(async (doc) => {
+        const employees = snapshot.docs.map((doc) => {
             const data = doc.data();
-
-            // Fetch business owner details
-            const ownerDoc = await db.collection('business_owners').doc(data.business_owner_id).get();
-
-            if (!ownerDoc.exists) {
-                return null;
-            }
-
-            const ownerData = ownerDoc.data();
 
             return {
                 id: doc.id,
-                business_id: req.params.id,
-                business_owner_id: data.business_owner_id,
-                first_name: ownerData.first_name || '',
-                last_name: ownerData.last_name || '',
-                phone_number: ownerData.phone_number,
-                telegram_id: ownerData.telegram_id,
-                position: data.position || '',
-                is_confirmed_by_employee: data.is_confirmed_by_employee ?? false,
-                date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+                phone_number: data.phone_number,
+                date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+                is_accepted: data.is_accepted ?? false,
+                date_accepted: data.date_accepted ?? null
             };
-        }));
+        });
 
-        // Filter out nulls (deleted business owners)
-        res.json(employees.filter(emp => emp !== null));
+        res.json(employees);
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
