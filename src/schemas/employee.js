@@ -7,6 +7,11 @@ export const employeeSchema = z.object({
         .regex(/^\d+$/, 'phone_number must contain only digits')
 });
 
+// Accept/deny workplace schema
+export const workplaceActionSchema = z.object({
+    accept: z.boolean({ required_error: 'accept is required' })
+});
+
 // Response schema
 export const employeeResponseSchema = z.object({
     id: z.string(),

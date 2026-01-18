@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { db } from '../db/db.js';
 import { authenticate } from '../middleware/authenticate.js';
+import { validate } from '../middleware/validate.js';
+import { workplaceActionSchema } from '../schemas/employee.js';
 
 const router = Router();
 
@@ -117,6 +119,53 @@ router.get('/workplaces', authenticate, async (req, res) => {
 
         // Filter out nulls (deleted businesses)
         res.json(workplaces.filter(wp => wp !== null));
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Accept or deny workplace invitation
+router.post('/workplaces/:employeeId/respond', authenticate, validate(workplaceActionSchema), async (req, res) => {
+    try {
+        const { employeeId } = req.params;
+        const { accept } = req.validated;
+
+        // Find employee by ID using collection group query
+        const employeesSnapshot = await db.collectionGroup('employees')
+            .where('__name__', '==', employeeId)
+            .limit(1)
+            .get();
+
+        if (employeesSnapshot.empty) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'NOT_FOUND' });
+        }
+
+        const employeeDoc = employeesSnapshot.docs[0];
+        const employeeData = employeeDoc.data();
+
+        // Verify ownership (phone_number matches authenticated user)
+        if (employeeData.phone_number !== req.user.phone_number) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        if (accept) {
+            // Accept workplace - update is_accepted and date_accepted
+            const now = new Date();
+            await employeeDoc.ref.update({
+                is_accepted: true,
+                date_accepted: now
+            });
+
+            res.json({
+                id: employeeId,
+                is_accepted: true,
+                date_accepted: now.toISOString()
+            });
+        } else {
+            // Deny workplace - delete employee record
+            await employeeDoc.ref.delete();
+            res.status(204).send();
+        }
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
