@@ -697,6 +697,18 @@ router.get('/:id/employees', authenticate, async (req, res) => {
             };
         });
 
+        // Sort: authenticated user (if employee) first, then by date_created
+        employees.sort((a, b) => {
+            const aIsSelf = a.phone_number === req.user.phone_number;
+            const bIsSelf = b.phone_number === req.user.phone_number;
+
+            if (aIsSelf && !bIsSelf) return -1;
+            if (!aIsSelf && bIsSelf) return 1;
+
+            // If both or neither are self, sort by date_created
+            return new Date(a.date_created) - new Date(b.date_created);
+        });
+
         res.json(employees);
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -751,14 +763,17 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
         // on_demand -> flexible, fixed_hours -> fixed
         const availabilityType = businessData.working_graphic_type === 'on_demand' ? 'flexible' : 'fixed';
 
+        // If adding yourself as employee, auto-accept
+        const isSelf = phone_number === req.user.phone_number;
+
         const employeeData = {
             phone_number,
             position,
             availability_type: availabilityType,
             working_hours: availabilityType === 'flexible' ? null : (businessData.working_hours || null),
             date_created: dateCreated,
-            is_accepted: false,
-            date_accepted: null,
+            is_accepted: isSelf,
+            date_accepted: isSelf ? dateCreated : null,
             is_rejected: false
         };
 
@@ -769,20 +784,23 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             .set(employeeData);
 
         // Check if phone number is a registered business owner with telegram_id
-        const businessOwnerSnapshot = await db.collection('business_owners')
-            .where('phone_number', '==', phone_number)
-            .limit(1)
-            .get();
+        // Skip notification if adding yourself
+        if (!isSelf) {
+            const businessOwnerSnapshot = await db.collection('business_owners')
+                .where('phone_number', '==', phone_number)
+                .limit(1)
+                .get();
 
-        if (!businessOwnerSnapshot.empty) {
-            const businessOwner = businessOwnerSnapshot.docs[0].data();
-            if (businessOwner.telegram_id) {
-                // Send Telegram notification
-                try {
-                    await sendBusinessInvitationNotification(businessOwner.telegram_id, businessDoc.data().business_name);
-                } catch (telegramError) {
-                    console.error('Failed to send Telegram notification:', telegramError);
-                    // Don't fail the request if Telegram notification fails
+            if (!businessOwnerSnapshot.empty) {
+                const businessOwner = businessOwnerSnapshot.docs[0].data();
+                if (businessOwner.telegram_id) {
+                    // Send Telegram notification
+                    try {
+                        await sendBusinessInvitationNotification(businessOwner.telegram_id, businessData.business_name, businessData.business_type, position);
+                    } catch (telegramError) {
+                        console.error('Failed to send Telegram notification:', telegramError);
+                        // Don't fail the request if Telegram notification fails
+                    }
                 }
             }
         }
@@ -794,9 +812,9 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             availability_type: availabilityType,
             working_hours: employeeData.working_hours,
             date_created: dateCreated.toISOString(),
-            is_accepted: false,
-            date_accepted: null,
-            is_rejected: false
+            is_accepted: employeeData.is_accepted,
+            date_accepted: employeeData.date_accepted?.toISOString() || null,
+            is_rejected: employeeData.is_rejected
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -836,18 +854,21 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
             .delete();
 
         // Send Telegram notification to the employee if they have a telegram_id
-        const businessOwnerSnapshot = await db.collection('businesses_owners')
-            .where('phone_number', '==', employee.phone_number)
-            .limit(1)
-            .get();
+        // Skip notification if removing yourself
+        if (employee.phone_number !== req.user.phone_number) {
+            const businessOwnerSnapshot = await db.collection('businesses_owners')
+                .where('phone_number', '==', employee.phone_number)
+                .limit(1)
+                .get();
 
-        if (!businessOwnerSnapshot.empty) {
-            const businessOwner = businessOwnerSnapshot.docs[0].data();
-            if (businessOwner.telegram_id) {
-                try {
-                    await sendBusinessRemovalNotification(businessOwner.telegram_id, businessDoc.data().business_name);
-                } catch (telegramError) {
-                    console.error('Failed to send Telegram notification:', telegramError);
+            if (!businessOwnerSnapshot.empty) {
+                const businessOwner = businessOwnerSnapshot.docs[0].data();
+                if (businessOwner.telegram_id) {
+                    try {
+                        await sendBusinessRemovalNotification(businessOwner.telegram_id, businessDoc.data().business_name);
+                    } catch (telegramError) {
+                        console.error('Failed to send Telegram notification:', telegramError);
+                    }
                 }
             }
         }
@@ -958,7 +979,7 @@ router.post('/join/:token', authenticate, async (req, res) => {
 
         // Send Telegram notification
         try {
-            await sendBusinessInvitationNotification(req.user.telegram_id, businessData.business_name);
+            await sendBusinessInvitationNotification(req.user.telegram_id, businessData.business_name, businessData.business_type, '');
         } catch (telegramError) {
             console.error('Failed to send Telegram notification:', telegramError);
         }

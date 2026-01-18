@@ -55,10 +55,12 @@ export async function sendTelegramMessage(telegramId, text, options = {}) {
  * Send a business invitation notification to a Telegram user
  * @param {number} telegramId - The user's Telegram ID
  * @param {string} businessName - The name of the business
+ * @param {string} businessType - The type of business (e.g., barbershop, salon)
+ * @param {string} position - The position being offered
  * @returns {Promise<void>}
  */
-export async function sendBusinessInvitationNotification(telegramId, businessName) {
-    const message = `🎉 <b>Sizni biznesga taklif qilishdi!</b>\n\nSizni <b>${businessName}</b> biznesiga ishchi sifatida taklif qilishdi.\n\nTaklifni qabul qilish uchun ilovaga kiring va "Ish joylarim" bo'limiga o'ting.`;
+export async function sendBusinessInvitationNotification(telegramId, businessName, businessType, position) {
+    const message = `🎉 <b>Sizni ishga taklif qilishdi!</b>\n\nSizni <b>${businessName}</b> o'z ${businessType}iga <b>${position}</b> sifatida ishga taklif qildi.\n\nTaklifni qabul qilish uchun ilovaga kiring va "Ish joylarim" bo'limiga o'ting.`;
 
     await sendTelegramMessage(telegramId, message);
 }
