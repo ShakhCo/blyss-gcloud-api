@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema } from '../schemas/employee.js';
+import { sendBusinessInvitationNotification } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -743,6 +744,25 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             .collection('employees')
             .doc(employeeId)
             .set(employeeData);
+
+        // Check if phone number is a registered business owner with telegram_id
+        const businessOwnerSnapshot = await db.collection('business_owners')
+            .where('phone_number', '==', phone_number)
+            .limit(1)
+            .get();
+
+        if (!businessOwnerSnapshot.empty) {
+            const businessOwner = businessOwnerSnapshot.docs[0].data();
+            if (businessOwner.telegram_id) {
+                // Send Telegram notification
+                try {
+                    await sendBusinessInvitationNotification(businessOwner.telegram_id, businessDoc.data().name);
+                } catch (telegramError) {
+                    console.error('Failed to send Telegram notification:', telegramError);
+                    // Don't fail the request if Telegram notification fails
+                }
+            }
+        }
 
         res.status(201).json({
             id: employeeId,
