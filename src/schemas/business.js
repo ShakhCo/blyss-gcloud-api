@@ -19,7 +19,7 @@ const locationSchema = z.object({
 });
 
 // Business hours schema (single day)
-const businessHourSchema = z.object({
+export const businessHourSchema = z.object({
     day: z.number().min(0).max(6),
     day_name: dayNameEnum,
     start_time: z.string().regex(timeRegex, 'start_time must be in HH:MM 24-hour format'),
