@@ -130,22 +130,16 @@ router.post('/workplaces/:employeeId/respond', authenticate, validate(workplaceA
         const { employeeId } = req.params;
         const { accept } = req.validated;
 
-        // Find employee by ID using collection group query
+        // Find all employees for this user
         const employeesSnapshot = await db.collectionGroup('employees')
-            .where('__name__', '==', employeeId)
-            .limit(1)
+            .where('phone_number', '==', req.user.phone_number)
             .get();
 
-        if (employeesSnapshot.empty) {
+        // Find the matching employee by ID
+        const employeeDoc = employeesSnapshot.docs.find(doc => doc.id === employeeId);
+
+        if (!employeeDoc) {
             return res.status(404).json({ error: 'Employee not found', error_code: 'NOT_FOUND' });
-        }
-
-        const employeeDoc = employeesSnapshot.docs[0];
-        const employeeData = employeeDoc.data();
-
-        // Verify ownership (phone_number matches authenticated user)
-        if (employeeData.phone_number !== req.user.phone_number) {
-            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         if (accept) {
