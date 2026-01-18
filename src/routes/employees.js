@@ -97,6 +97,9 @@ router.get('/workplaces', authenticate, async (req, res) => {
                 employee: {
                     id: employeeDoc.id,
                     phone_number: employeeData.phone_number,
+                    position: employeeData.position ?? '',
+                    availability_type: employeeData.availability_type ?? 'flexible',
+                    working_hours: employeeData.working_hours ?? null,
                     is_accepted: employeeData.is_accepted ?? false,
                     date_accepted: employeeData.date_accepted ?? null,
                     date_created: employeeData.date_created?.toDate?.().toISOString() || employeeData.date_created

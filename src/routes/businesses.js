@@ -687,6 +687,9 @@ router.get('/:id/employees', authenticate, async (req, res) => {
             return {
                 id: doc.id,
                 phone_number: data.phone_number,
+                position: data.position ?? '',
+                availability_type: data.availability_type ?? 'flexible',
+                working_hours: data.working_hours ?? null,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
                 is_accepted: data.is_accepted ?? false,
                 date_accepted: data.date_accepted ?? null
@@ -712,7 +715,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { phone_number } = req.validated;
+        const { phone_number, position } = req.validated;
 
         // Check if employee with this phone number already exists
         const existingSnapshot = await db.collection('businesses')
@@ -741,8 +744,17 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
 
         const dateCreated = new Date();
 
+        const businessData = businessDoc.data();
+
+        // Map working_graphic_type to availability_type
+        // on_demand -> flexible, fixed_hours -> fixed
+        const availabilityType = businessData.working_graphic_type === 'on_demand' ? 'flexible' : 'fixed';
+
         const employeeData = {
             phone_number,
+            position,
+            availability_type: availabilityType,
+            working_hours: availabilityType === 'flexible' ? null : (businessData.working_hours || null),
             date_created: dateCreated,
             is_accepted: false,
             date_accepted: null
@@ -776,6 +788,9 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
         res.status(201).json({
             id: employeeId,
             phone_number,
+            position,
+            availability_type: availabilityType,
+            working_hours: employeeData.working_hours,
             date_created: dateCreated.toISOString(),
             is_accepted: false,
             date_accepted: null

@@ -1,10 +1,16 @@
 import { z } from 'zod';
+import { dayNameEnum, businessHourSchema } from './business.js';
+
+// Availability type enum
+export const availabilityTypeEnum = z.enum(['flexible', 'fixed']);
 
 // Employee schema (for adding to business)
 export const employeeSchema = z.object({
     phone_number: z.string({ required_error: 'phone_number is required' })
         .min(12, 'phone_number must be at least 12 digits')
-        .regex(/^\d+$/, 'phone_number must contain only digits')
+        .regex(/^\d+$/, 'phone_number must contain only digits'),
+    position: z.string({ required_error: 'position is required' })
+        .min(1, 'position is required')
 });
 
 // Accept/deny workplace schema
