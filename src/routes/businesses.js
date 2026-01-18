@@ -174,6 +174,13 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
         // Generate tenant URL (without creating DNS record)
         const tenantUrl = generateTenantUrl(business_name, businessId);
 
+        // Generate employee invite token
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let employeeInviteToken = '';
+        for (let i = 0; i < 7; i++) {
+            employeeInviteToken += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+
         // Create business
         const businessData = {
             business_name,
@@ -185,6 +192,7 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             business_owner_id,
             business_status: 'unverified',
             tenant_url: tenantUrl,
+            employee_invite_token: employeeInviteToken,
             date_created: dateCreated
         };
 
