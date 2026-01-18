@@ -744,6 +744,27 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             .doc(employeeId)
             .set(employeeData);
 
+        // Create notification for the employee
+        let notificationId;
+        let notificationExists = true;
+        while (notificationExists) {
+            notificationId = crypto.randomBytes(8).toString('hex');
+            const existingDoc = await db.collection('notifications').doc(notificationId).get();
+            notificationExists = existingDoc.exists;
+        }
+
+        const businessData = businessDoc.data();
+
+        await db.collection('notifications').doc(notificationId).set({
+            title: 'Business Invitation',
+            description: `You have been invited to join ${businessData.business_name}`,
+            type: 'invite_to_join_in_business',
+            phone_number,
+            is_viewed: false,
+            viewed_at: null,
+            created_at: dateCreated
+        });
+
         res.status(201).json({
             id: employeeId,
             phone_number,

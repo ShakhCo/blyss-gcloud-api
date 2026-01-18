@@ -7,6 +7,7 @@ import businessesRouter from './businesses.js';
 import placesRouter from './places.js';
 import employeesRouter from './employees.js';
 import publicRouter from './public.js';
+import notificationsRouter from './notifications.js';
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use('/businesses', businessesRouter);
 router.use('/places', placesRouter);
 router.use('/employees', employeesRouter);
 router.use('/public', publicRouter);
+router.use('/notifications', notificationsRouter);
 
 export default router;
