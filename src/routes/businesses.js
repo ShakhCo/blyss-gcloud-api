@@ -6,7 +6,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema } from '../schemas/employee.js';
-import { sendBusinessInvitationNotification } from '../utils/telegram.js';
+import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -800,11 +800,30 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'Employee not found', error_code: 'NOT_FOUND' });
         }
 
+        const employee = employeeDoc.data();
+
         await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
             .doc(req.params.employeeId)
             .delete();
+
+        // Send Telegram notification to the employee if they have a telegram_id
+        const businessOwnerSnapshot = await db.collection('businesses_owners')
+            .where('phone_number', '==', employee.phone_number)
+            .limit(1)
+            .get();
+
+        if (!businessOwnerSnapshot.empty) {
+            const businessOwner = businessOwnerSnapshot.docs[0].data();
+            if (businessOwner.telegram_id) {
+                try {
+                    await sendBusinessRemovalNotification(businessOwner.telegram_id, businessDoc.data().business_name);
+                } catch (telegramError) {
+                    console.error('Failed to send Telegram notification:', telegramError);
+                }
+            }
+        }
 
         res.status(204).send();
     } catch (error) {

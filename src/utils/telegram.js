@@ -62,3 +62,15 @@ export async function sendBusinessInvitationNotification(telegramId, businessNam
 
     await sendTelegramMessage(telegramId, message);
 }
+
+/**
+ * Send a business removal notification to a Telegram user
+ * @param {number} telegramId - The user's Telegram ID
+ * @param {string} businessName - The name of the business
+ * @returns {Promise<void>}
+ */
+export async function sendBusinessRemovalNotification(telegramId, businessName) {
+    const message = `📢 <b>Sizni biznesdan olib tashladilar!</b>\n\nSizni <b>${businessName}</b> biznesidan ishchi sifatida olib tashladilar.\n\nBoshqa ish joylarini ko'rish uchun ilovaning "Ish joylarim" bo'limiga o'ting.`;
+
+    await sendTelegramMessage(telegramId, message);
+}
