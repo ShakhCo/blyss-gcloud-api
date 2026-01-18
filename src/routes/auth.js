@@ -133,7 +133,7 @@ router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
 // POST /auth/verify-otp
 router.post('/verify-otp', validate(verifyOtpSchema), async (req, res) => {
     try {
-        const { phone_number, otp_code } = req.validated;
+        const { phone_number, otp_code, user_type } = req.validated;
 
         // Find OTP by phone number and code
         const otpSnapshot = await db.collection('otps')
@@ -170,6 +170,21 @@ router.post('/verify-otp', validate(verifyOtpSchema), async (req, res) => {
             is_verified: true,
             verified_at: now
         });
+
+        // Check if user exists and update is_verified if not already verified
+        const collection = user_type === 'business_owner' ? 'business_owners' : 'users';
+        const userSnapshot = await db.collection(collection)
+            .where('phone_number', '==', phone_number)
+            .limit(1)
+            .get();
+
+        if (!userSnapshot.empty) {
+            const userDoc = userSnapshot.docs[0];
+            const userData = userDoc.data();
+            if (!userData.is_verified) {
+                await userDoc.ref.update({ is_verified: true });
+            }
+        }
 
         res.json({
             message: 'OTP verified successfully',

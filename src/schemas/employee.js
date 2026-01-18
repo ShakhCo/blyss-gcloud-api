@@ -4,8 +4,7 @@ import { z } from 'zod';
 export const employeeSchema = z.object({
     phone_number: z.string({ required_error: 'phone_number is required' })
         .min(12, 'phone_number must be at least 12 digits')
-        .regex(/^\d+$/, 'phone_number must contain only digits'),
-    position: z.string().optional().default('')
+        .regex(/^\d+$/, 'phone_number must contain only digits')
 });
 
 // Response schema

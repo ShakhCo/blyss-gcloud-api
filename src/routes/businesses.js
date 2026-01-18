@@ -717,71 +717,43 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { phone_number, position } = req.validated;
+        const { phone_number } = req.validated;
 
-        // Use phone number as document ID for business owner
-        const ownerId = phone_number;
+        // Use phone number as document ID
+        const employeeId = phone_number;
 
-        // Check if business owner exists
-        const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
-
-        let ownerData;
-
-        if (ownerDoc.exists) {
-            ownerData = ownerDoc.data();
-        } else {
-            // Create new business owner with is_verified: false
-            const dateCreated = new Date();
-
-            ownerData = {
-                first_name: '',
-                last_name: '',
-                phone_number,
-                telegram_id: null,
-                date_created: dateCreated,
-                is_verified: false
-            };
-
-            await db.collection('business_owners').doc(ownerId).set(ownerData);
-        }
-
-        // Check if already an employee (employee doc ID = phone number)
+        // Check if already an employee
         const employeeDoc = await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
-            .doc(ownerId)
+            .doc(employeeId)
             .get();
 
         if (employeeDoc.exists) {
-            return res.status(409).json({ error: 'Business owner is already an employee', error_code: 'ALREADY_EMPLOYEE' });
+            return res.status(409).json({ error: 'Already an employee', error_code: 'ALREADY_EMPLOYEE' });
         }
 
         const dateCreated = new Date();
 
         const employeeData = {
-            business_owner_id: ownerId,
-            position: position || '',
-            is_confirmed_by_employee: false,
-            date_created: dateCreated
+            phone_number,
+            date_created: dateCreated,
+            is_accepted: false,
+            date_accepted: null
         };
 
         await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
-            .doc(ownerId)
+            .doc(employeeId)
             .set(employeeData);
 
         res.status(201).json({
-            id: ownerId,
-            business_id: req.params.id,
-            business_owner_id: ownerId,
-            first_name: ownerData.first_name || '',
-            last_name: ownerData.last_name || '',
-            phone_number: ownerData.phone_number,
-            telegram_id: ownerData.telegram_id,
-            position: position || '',
-            is_confirmed_by_employee: false,
-            date_created: dateCreated.toISOString()
+            id: employeeId,
+            phone_number,
+            date_created: dateCreated.toISOString(),
+            is_accepted: false,
+            date_accepted: null
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
