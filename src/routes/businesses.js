@@ -831,4 +831,122 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
     }
 });
 
+// Generate/regenerate employee invite token
+router.post('/:id/employee-invite-token', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Generate 7 character alphanumeric token
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let token = '';
+        for (let i = 0; i < 7; i++) {
+            token += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+
+        // Update business document
+        await db.collection('businesses').doc(req.params.id).update({
+            employee_invite_token: token
+        });
+
+        res.json({
+            employee_invite_token: token
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Join business using employee invite token
+router.post('/join/:token', authenticate, async (req, res) => {
+    try {
+        // Find business by employee_invite_token
+        const businessesSnapshot = await db.collection('businesses')
+            .where('employee_invite_token', '==', req.params.token)
+            .limit(1)
+            .get();
+
+        if (businessesSnapshot.empty) {
+            return res.status(404).json({
+                error: 'Invalid invite token',
+                error_code: 'INVALID_TOKEN'
+            });
+        }
+
+        const businessDoc = businessesSnapshot.docs[0];
+        const businessData = businessDoc.data();
+        const businessId = businessDoc.id;
+
+        // Check if already an employee
+        const existingEmployee = await db.collection('businesses')
+            .doc(businessId)
+            .collection('employees')
+            .where('phone_number', '==', req.user.phone_number)
+            .limit(1)
+            .get();
+
+        if (!existingEmployee.empty) {
+            return res.status(409).json({
+                error: 'Already an employee of this business',
+                error_code: 'ALREADY_EMPLOYEE'
+            });
+        }
+
+        // Generate unique employee ID
+        let employeeId;
+        let employeeExists = true;
+        while (employeeExists) {
+            employeeId = crypto.randomBytes(8).toString('hex');
+            const existingDoc = await db.collection('businesses')
+                .doc(businessId)
+                .collection('employees')
+                .doc(employeeId)
+                .get();
+            employeeExists = existingDoc.exists;
+        }
+
+        const dateCreated = new Date();
+
+        // Create employee record
+        const employeeData = {
+            phone_number: req.user.phone_number,
+            date_created: dateCreated,
+            is_accepted: false,
+            date_accepted: null
+        };
+
+        await db.collection('businesses')
+            .doc(businessId)
+            .collection('employees')
+            .doc(employeeId)
+            .set(employeeData);
+
+        // Send Telegram notification
+        try {
+            await sendBusinessInvitationNotification(req.user.telegram_id, businessData.business_name);
+        } catch (telegramError) {
+            console.error('Failed to send Telegram notification:', telegramError);
+        }
+
+        res.status(201).json({
+            id: employeeId,
+            business_id: businessId,
+            business_name: businessData.business_name,
+            phone_number: req.user.phone_number,
+            date_created: dateCreated.toISOString(),
+            is_accepted: false
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
