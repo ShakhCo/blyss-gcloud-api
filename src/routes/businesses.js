@@ -692,7 +692,8 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 working_hours: data.working_hours ?? null,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
                 is_accepted: data.is_accepted ?? false,
-                date_accepted: data.date_accepted ?? null
+                date_accepted: data.date_accepted ?? null,
+                is_rejected: data.is_rejected ?? false
             };
         });
 
@@ -757,7 +758,8 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             working_hours: availabilityType === 'flexible' ? null : (businessData.working_hours || null),
             date_created: dateCreated,
             is_accepted: false,
-            date_accepted: null
+            date_accepted: null,
+            is_rejected: false
         };
 
         await db.collection('businesses')
@@ -793,7 +795,8 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             working_hours: employeeData.working_hours,
             date_created: dateCreated.toISOString(),
             is_accepted: false,
-            date_accepted: null
+            date_accepted: null,
+            is_rejected: false
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });

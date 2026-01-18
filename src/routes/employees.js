@@ -74,6 +74,7 @@ router.get('/workplaces', authenticate, async (req, res) => {
         // Use collection group query to search across all employee subcollections
         const employeesSnapshot = await db.collectionGroup('employees')
             .where('phone_number', '==', req.user.phone_number)
+            .where('is_rejected', '==', false)
             .get();
 
         if (employeesSnapshot.empty) {
@@ -102,6 +103,7 @@ router.get('/workplaces', authenticate, async (req, res) => {
                     working_hours: employeeData.working_hours ?? null,
                     is_accepted: employeeData.is_accepted ?? false,
                     date_accepted: employeeData.date_accepted ?? null,
+                    is_rejected: employeeData.is_rejected ?? false,
                     date_created: employeeData.date_created?.toDate?.().toISOString() || employeeData.date_created
                 },
                 business: {
@@ -159,9 +161,15 @@ router.post('/workplaces/:employeeId/respond', authenticate, validate(workplaceA
                 date_accepted: now.toISOString()
             });
         } else {
-            // Deny workplace - delete employee record
-            await employeeDoc.ref.delete();
-            res.status(204).send();
+            // Deny workplace - set is_rejected to true
+            await employeeDoc.ref.update({
+                is_rejected: true
+            });
+
+            res.json({
+                id: employeeId,
+                is_rejected: true
+            });
         }
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
