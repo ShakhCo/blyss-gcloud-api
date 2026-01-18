@@ -756,7 +756,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             if (businessOwner.telegram_id) {
                 // Send Telegram notification
                 try {
-                    await sendBusinessInvitationNotification(businessOwner.telegram_id, businessDoc.data().name);
+                    await sendBusinessInvitationNotification(businessOwner.telegram_id, businessDoc.data().business_name);
                 } catch (telegramError) {
                     console.error('Failed to send Telegram notification:', telegramError);
                     // Don't fail the request if Telegram notification fails
