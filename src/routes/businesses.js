@@ -704,18 +704,29 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
 
         const { phone_number } = req.validated;
 
-        // Use phone number as document ID
-        const employeeId = phone_number;
-
-        // Check if already an employee
-        const employeeDoc = await db.collection('businesses')
+        // Check if employee with this phone number already exists
+        const existingSnapshot = await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
-            .doc(employeeId)
+            .where('phone_number', '==', phone_number)
+            .limit(1)
             .get();
 
-        if (employeeDoc.exists) {
+        if (!existingSnapshot.empty) {
             return res.status(409).json({ error: 'Already an employee', error_code: 'ALREADY_EMPLOYEE' });
+        }
+
+        // Generate unique 16 character ID
+        let employeeId;
+        let employeeExists = true;
+        while (employeeExists) {
+            employeeId = crypto.randomBytes(8).toString('hex');
+            const existingDoc = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(employeeId)
+                .get();
+            employeeExists = existingDoc.exists;
         }
 
         const dateCreated = new Date();
@@ -758,7 +769,7 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // employeeId is now the phone number (business_owner_id)
+        // employeeId is the unique employee document ID
         const employeeDoc = await db.collection('businesses')
             .doc(req.params.id)
             .collection('employees')
