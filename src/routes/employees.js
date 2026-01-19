@@ -56,6 +56,8 @@ router.get('/business-owner/:businessOwnerId/workplaces', async (req, res) => {
                     id: employeeDoc.id,
                     business_owner_id: employeeData.business_owner_id,
                     is_confirmed_by_employee: employeeData.is_confirmed_by_employee ?? false,
+                    availability_type: employeeData.availability_type ?? null,
+                    working_hours: employeeData.working_hours ?? null,
                     date_created: employeeData.date_created?.toDate?.().toISOString() || employeeData.date_created
                 }
             };

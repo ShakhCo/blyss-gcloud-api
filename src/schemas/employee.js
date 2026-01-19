@@ -28,5 +28,7 @@ export const employeeResponseSchema = z.object({
     phone_number: z.string(),
     telegram_id: z.number().nullable(),
     is_confirmed_by_employee: z.boolean(),
+    availability_type: z.string().nullable(),
+    working_hours: z.any().nullable(),
     date_created: z.string()
 });
