@@ -2,7 +2,8 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
-import { businessOwnerSchema, businessOwnerResponseSchema } from '../schemas/businessOwner.js';
+import { authenticate } from '../middleware/authenticate.js';
+import { businessOwnerSchema, businessOwnerResponseSchema, profileUpdateSchema } from '../schemas/businessOwner.js';
 
 const router = Router();
 
@@ -122,6 +123,34 @@ router.post('/register', validate(businessOwnerSchema), async (req, res) => {
             date_created: dateCreated.toISOString(),
             is_verified: false
         }));
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update authenticated user's profile (first_name, last_name only)
+router.patch('/profile', authenticate, validate(profileUpdateSchema), async (req, res) => {
+    try {
+        const { first_name, last_name } = req.validated;
+
+        const docRef = db.collection('business_owners').doc(req.user.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business owner not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        await docRef.update({
+            first_name,
+            last_name
+        });
+
+        res.json({
+            first_name,
+            last_name
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }

@@ -24,3 +24,9 @@ export const businessOwnerResponseSchema = z.object({
     date_created: z.string(),
     is_verified: z.boolean()
 });
+
+// Profile update schema (only first_name and last_name)
+export const profileUpdateSchema = z.object({
+    first_name: z.string({ required_error: 'first_name is required' }).min(1, 'first_name is required'),
+    last_name: z.string().default('')
+});
