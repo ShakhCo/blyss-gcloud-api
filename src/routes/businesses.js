@@ -688,8 +688,9 @@ router.get('/:id/employees', authenticate, async (req, res) => {
 
             let first_name = null;
             let last_name = null;
+            let phone_number = data.phone_number;
 
-            // If accepted, try to get first_name and last_name from business_owners
+            // If accepted, try to get first_name, last_name and phone_number from business_owners
             if (data.is_accepted) {
                 const businessOwnerSnapshot = await db.collection('business_owners')
                     .where('phone_number', '==', data.phone_number)
@@ -700,12 +701,13 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                     const businessOwner = businessOwnerSnapshot.docs[0].data();
                     first_name = businessOwner.first_name || null;
                     last_name = businessOwner.last_name || null;
+                    phone_number = businessOwner.phone_number || data.phone_number;
                 }
             }
 
             return {
                 id: doc.id,
-                phone_number: data.phone_number,
+                phone_number,
                 first_name,
                 last_name,
                 position: data.position ?? '',
