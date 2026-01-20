@@ -977,6 +977,96 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
     }
 });
 
+// Get a specific employee by ID
+router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
+    try {
+        // Fetch business and employee in parallel
+        const [businessDoc, employeeDoc] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).get(),
+            db.collection('businesses').doc(req.params.id).collection('employees').doc(req.params.employeeId).get()
+        ]);
+
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const data = employeeDoc.data();
+
+        // Parallel queries: employee services + business services + business owner lookup (if needed)
+        const [employeeServicesSnapshot, businessServicesSnapshot, businessOwnerSnapshot] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).collection('employees').doc(req.params.employeeId).collection('employeeServices').get(),
+            db.collection('businesses').doc(req.params.id).collection('services').get(),
+            data.is_accepted
+                ? db.collection('business_owners').where('phone_number', '==', data.phone_number).limit(1).get()
+                : Promise.resolve({ empty: true, docs: [] })
+        ]);
+
+        // Get first_name, last_name from business_owners if accepted
+        let first_name = null;
+        let last_name = null;
+        let phone_number = data.phone_number;
+
+        if (!businessOwnerSnapshot.empty) {
+            const businessOwner = businessOwnerSnapshot.docs[0].data();
+            first_name = businessOwner.first_name || null;
+            last_name = businessOwner.last_name || null;
+            phone_number = businessOwner.phone_number || data.phone_number;
+        }
+
+        const employeeServices = employeeServicesSnapshot.docs.map(serviceDoc => {
+            const serviceData = serviceDoc.data();
+            return {
+                id: serviceDoc.id,
+                service_id: serviceData.service_id,
+                name: serviceData.name,
+                price: serviceData.price,
+                duration_minutes: serviceData.duration_minutes,
+                is_active: serviceData.is_active ?? true
+            };
+        });
+
+        const businessServices = businessServicesSnapshot.docs.map(doc => {
+            const serviceData = doc.data();
+            return {
+                id: doc.id,
+                name: serviceData.name,
+                price: serviceData.price,
+                duration_minutes: serviceData.duration_minutes,
+                is_active: serviceData.is_active ?? false,
+                date_created: serviceData.date_created?.toDate?.().toISOString() || serviceData.date_created
+            };
+        });
+
+        res.json({
+            id: employeeDoc.id,
+            business_id: req.params.id,
+            first_name,
+            last_name,
+            phone_number,
+            position: data.position ?? '',
+            date_joined: data.date_accepted?.toDate?.().toISOString() || data.date_accepted || null,
+            availability_type: data.availability_type ?? 'flexible',
+            working_hours: data.working_hours ?? null,
+            employee_services: employeeServices,
+            business_services: businessServices,
+            date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+            is_accepted: data.is_accepted ?? false,
+            is_rejected: data.is_rejected ?? false
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 // Delete employee from business
 router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
     try {
