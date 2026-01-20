@@ -21,6 +21,12 @@ export const employeeSchema = z.object({
     working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days')
 });
 
+// Update employee working hours schema
+export const updateEmployeeWorkingHoursSchema = z.object({
+    availability_type: availabilityTypeEnum,
+    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days')
+});
+
 // Accept/deny workplace schema
 export const workplaceActionSchema = z.object({
     accept: z.boolean({ required_error: 'accept is required' })

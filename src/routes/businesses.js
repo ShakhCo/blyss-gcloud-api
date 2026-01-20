@@ -5,7 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
-import { employeeSchema } from '../schemas/employee.js';
+import { employeeSchema, updateEmployeeWorkingHoursSchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
 import { sendBusinessInvitationSms } from '../utils/eskiz.js';
 import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
@@ -1030,6 +1030,61 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
         }
 
         res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update employee working hours
+router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(updateEmployeeWorkingHoursSchema), async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const employeeDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .get();
+
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const { availability_type, working_hours } = req.validated;
+
+        // Build working_days helper array for filtering
+        // Extract day numbers from non-null working_hours
+        let workingDays = [];
+        if (availability_type === 'fixed' && working_hours) {
+            workingDays = working_hours
+                .filter(wh => wh !== null)
+                .map(wh => wh.day);
+        }
+
+        const updateData = {
+            availability_type,
+            working_hours: availability_type === 'flexible' ? null : working_hours,
+            working_days: workingDays
+        };
+
+        await employeeDoc.ref.update(updateData);
+
+        const updatedData = (await employeeDoc.ref.get()).data();
+
+        res.json({
+            id: req.params.employeeId,
+            availability_type: updatedData.availability_type,
+            working_hours: updatedData.working_hours,
+            working_days: updatedData.working_days
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
