@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema } from '../schemas/employee.js';
+import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
 import { sendBusinessInvitationSms } from '../utils/eskiz.js';
 import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
 
@@ -510,6 +511,7 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
         }
 
         const { name, price, duration_minutes } = req.validated;
+        const currentData = serviceDoc.data();
 
         const updateData = {
             name,
@@ -523,7 +525,22 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             .doc(req.params.serviceId)
             .update(updateData);
 
-        const currentData = serviceDoc.data();
+        // Sync service name to all employee services if name changed
+        if (name && name !== currentData.name) {
+            // Query all employee services with matching service_id
+            const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
+                .where('service_id', '==', req.params.serviceId)
+                .get();
+
+            // Batch update all employee service names
+            if (!employeeServicesSnapshot.empty) {
+                const batch = db.batch();
+                employeeServicesSnapshot.docs.forEach(doc => {
+                    batch.update(doc.ref, { name });
+                });
+                await batch.commit();
+            }
+        }
 
         res.json({
             id: req.params.serviceId,
@@ -560,6 +577,21 @@ router.delete('/:id/services/:serviceId', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
 
+        // Delete all employee services that reference this service_id
+        const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
+            .where('service_id', '==', req.params.serviceId)
+            .get();
+
+        // Batch delete all employee services
+        if (!employeeServicesSnapshot.empty) {
+            const batch = db.batch();
+            employeeServicesSnapshot.docs.forEach(doc => {
+                batch.delete(doc.ref);
+            });
+            await batch.commit();
+        }
+
+        // Delete the business service
         await db.collection('businesses')
             .doc(req.params.id)
             .collection('services')
@@ -682,7 +714,7 @@ router.get('/:id/employees', authenticate, async (req, res) => {
             .collection('employees')
             .get();
 
-        // Fetch business owner data for accepted employees
+        // Fetch business owner data and services for accepted employees
         const employees = await Promise.all(snapshot.docs.map(async (doc) => {
             const data = doc.data();
 
@@ -705,6 +737,26 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 }
             }
 
+            // Fetch employee services
+            const employeeServicesSnapshot = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(doc.id)
+                .collection('employeeServices')
+                .where('is_active', '==', true)
+                .get();
+
+            const services = employeeServicesSnapshot.docs.map(serviceDoc => {
+                const serviceData = serviceDoc.data();
+                return {
+                    id: serviceDoc.id,
+                    service_id: serviceData.service_id,
+                    name: serviceData.name,
+                    price: serviceData.price,
+                    duration_minutes: serviceData.duration_minutes
+                };
+            });
+
             return {
                 id: doc.id,
                 phone_number,
@@ -714,6 +766,7 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 availability_type: data.availability_type ?? 'flexible',
                 working_hours: data.working_hours ?? null,
                 working_days: data.working_days ?? [],
+                services,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
                 is_accepted: data.is_accepted ?? false,
                 date_accepted: data.date_accepted ?? null,
@@ -1034,6 +1087,226 @@ router.post('/join/:token', authenticate, async (req, res) => {
             date_created: dateCreated.toISOString(),
             is_accepted: false
         });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ==================== EMPLOYEE SERVICES ROUTES ====================
+
+// Get all services for an employee
+router.get('/:id/employees/:employeeId/services', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Verify employee exists
+        const employeeDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .get();
+
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const snapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .collection('employeeServices')
+            .get();
+
+        const services = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                service_id: data.service_id,
+                name: data.name,
+                price: data.price,
+                duration_minutes: data.duration_minutes,
+                is_active: data.is_active ?? true,
+                date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+            };
+        });
+
+        res.json(services);
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Add services to an employee
+router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmployeeServicesSchema), async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Verify employee exists
+        const employeeDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .get();
+
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const { services } = req.validated;
+        const dateCreated = new Date();
+
+        // Validate all service_ids exist in business's services
+        const businessServicesSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .get();
+
+        const businessServiceIds = new Set(businessServicesSnapshot.docs.map(doc => doc.id));
+
+        // Check for invalid service_ids
+        const invalidServiceIds = services
+            .filter(s => !businessServiceIds.has(s.service_id))
+            .map(s => s.service_id);
+
+        if (invalidServiceIds.length > 0) {
+            return res.status(400).json({
+                error: `Invalid service_ids: ${invalidServiceIds.join(', ')}`,
+                error_code: 'INVALID_SERVICE_IDS'
+            });
+        }
+
+        // Add/update services for employee
+        const batch = db.batch();
+        const results = [];
+
+        for (const service of services) {
+            const docRef = db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .collection('employeeServices')
+                .doc(service.service_id);
+
+            batch.set(docRef, {
+                service_id: service.service_id,
+                name: service.name,
+                price: service.price,
+                duration_minutes: service.duration_minutes,
+                is_active: service.is_active ?? true,
+                date_created: dateCreated
+            }, { merge: true });
+
+            results.push({
+                id: service.service_id,
+                service_id: service.service_id,
+                name: service.name,
+                price: service.price,
+                duration_minutes: service.duration_minutes,
+                is_active: service.is_active ?? true
+            });
+        }
+
+        await batch.commit();
+
+        res.status(201).json(results);
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update an employee's service
+router.put('/:id/employees/:employeeId/services/:serviceId', authenticate, validate(updateEmployeeServiceSchema), async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Verify employee service exists
+        const employeeServiceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .collection('employeeServices')
+            .doc(req.params.serviceId)
+            .get();
+
+        if (!employeeServiceDoc.exists) {
+            return res.status(404).json({ error: 'Employee service not found', error_code: 'EMPLOYEE_SERVICE_NOT_FOUND' });
+        }
+
+        const updateData = {};
+        if (req.validated.price !== undefined) updateData.price = req.validated.price;
+        if (req.validated.duration_minutes !== undefined) updateData.duration_minutes = req.validated.duration_minutes;
+        if (req.validated.is_active !== undefined) updateData.is_active = req.validated.is_active;
+
+        await employeeServiceDoc.ref.update(updateData);
+
+        const updatedData = (await employeeServiceDoc.ref.get()).data();
+
+        res.json({
+            id: req.params.serviceId,
+            service_id: updatedData.service_id,
+            name: updatedData.name,
+            price: updatedData.price,
+            duration_minutes: updatedData.duration_minutes,
+            is_active: updatedData.is_active ?? true
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Delete an employee's service
+router.delete('/:id/employees/:employeeId/services/:serviceId', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Verify employee service exists
+        const employeeServiceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .collection('employeeServices')
+            .doc(req.params.serviceId)
+            .get();
+
+        if (!employeeServiceDoc.exists) {
+            return res.status(404).json({ error: 'Employee service not found', error_code: 'EMPLOYEE_SERVICE_NOT_FOUND' });
+        }
+
+        await employeeServiceDoc.ref.delete();
+
+        res.status(204).send();
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
