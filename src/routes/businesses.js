@@ -1001,25 +1001,26 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
 
         const data = employeeDoc.data();
 
-        // Parallel queries: employee services + business services + business owner lookup (if needed)
+        // Parallel queries: employee services + business services + business owner lookup
         const [employeeServicesSnapshot, businessServicesSnapshot, businessOwnerSnapshot] = await Promise.all([
             db.collection('businesses').doc(req.params.id).collection('employees').doc(req.params.employeeId).collection('employeeServices').get(),
             db.collection('businesses').doc(req.params.id).collection('services').get(),
-            data.is_accepted
-                ? db.collection('business_owners').where('phone_number', '==', data.phone_number).limit(1).get()
-                : Promise.resolve({ empty: true, docs: [] })
+            db.collection('business_owners').where('phone_number', '==', data.phone_number).limit(1).get()
         ]);
 
-        // Get first_name, last_name from business_owners if accepted
+        // Get first_name, last_name, and business_owner_id from business_owners if found
         let first_name = null;
         let last_name = null;
         let phone_number = data.phone_number;
+        let employee_business_owner_id = null;
 
         if (!businessOwnerSnapshot.empty) {
-            const businessOwner = businessOwnerSnapshot.docs[0].data();
+            const businessOwnerDoc = businessOwnerSnapshot.docs[0];
+            const businessOwner = businessOwnerDoc.data();
             first_name = businessOwner.first_name || null;
             last_name = businessOwner.last_name || null;
             phone_number = businessOwner.phone_number || data.phone_number;
+            employee_business_owner_id = businessOwnerDoc.id;
         }
 
         const employeeServices = employeeServicesSnapshot.docs.map(serviceDoc => {
@@ -1049,7 +1050,7 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
         res.json({
             id: employeeDoc.id,
             business_id: req.params.id,
-            business_owner_id: businessDoc.data().business_owner_id,
+            business_owner_id: employee_business_owner_id,
             first_name,
             last_name,
             phone_number,
