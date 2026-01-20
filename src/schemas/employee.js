@@ -1,8 +1,14 @@
 import { z } from 'zod';
-import { dayNameEnum, businessHourSchema } from './business.js';
 
 // Availability type enum
 export const availabilityTypeEnum = z.enum(['flexible', 'fixed']);
+
+// Employee working hours schema (for individual employee)
+export const employeeWorkingHourSchema = z.object({
+    day: z.number().min(0).max(6),
+    start_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'start_time must be in HH:MM 24-hour format'),
+    end_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'end_time must be in HH:MM 24-hour format'),
+});
 
 // Employee schema (for adding to business)
 export const employeeSchema = z.object({
@@ -10,7 +16,9 @@ export const employeeSchema = z.object({
         .min(12, 'phone_number must be at least 12 digits')
         .regex(/^\d+$/, 'phone_number must contain only digits'),
     position: z.string({ required_error: 'position is required' })
-        .min(1, 'position is required')
+        .min(1, 'position is required'),
+    availability_type: availabilityTypeEnum.default('flexible'),
+    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days')
 });
 
 // Accept/deny workplace schema

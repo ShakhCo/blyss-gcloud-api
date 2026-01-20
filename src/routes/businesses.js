@@ -713,6 +713,7 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 position: data.position ?? '',
                 availability_type: data.availability_type ?? 'flexible',
                 working_hours: data.working_hours ?? null,
+                working_days: data.working_days ?? [],
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
                 is_accepted: data.is_accepted ?? false,
                 date_accepted: data.date_accepted ?? null,
@@ -751,7 +752,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { phone_number, position } = req.validated;
+        const { phone_number, position, availability_type, working_hours } = req.validated;
 
         // Check if employee with this phone number already exists
         const existingSnapshot = await db.collection('businesses')
@@ -779,21 +780,26 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
         }
 
         const dateCreated = new Date();
-
         const businessData = businessDoc.data();
-
-        // Map working_graphic_type to availability_type
-        // on_demand -> flexible, fixed_hours -> fixed
-        const availabilityType = businessData.working_graphic_type === 'on_demand' ? 'flexible' : 'fixed';
 
         // If adding yourself as employee, auto-accept
         const isSelf = phone_number === req.user.phone_number;
 
+        // Build working_days helper array for filtering
+        // Extract day numbers from non-null working_hours
+        let workingDays = [];
+        if (availability_type === 'fixed' && working_hours) {
+            workingDays = working_hours
+                .filter(wh => wh !== null)
+                .map(wh => wh.day);
+        }
+
         const employeeData = {
             phone_number,
             position,
-            availability_type: availabilityType,
-            working_hours: availabilityType === 'flexible' ? null : (businessData.working_hours || null),
+            availability_type: availability_type,
+            working_hours: availability_type === 'flexible' ? null : working_hours,
+            working_days: workingDays, // Helper field for filtering
             date_created: dateCreated,
             is_accepted: isSelf,
             date_accepted: isSelf ? dateCreated : null,
@@ -844,8 +850,9 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             id: employeeId,
             phone_number,
             position,
-            availability_type: availabilityType,
+            availability_type: availability_type,
             working_hours: employeeData.working_hours,
+            working_days: workingDays,
             date_created: dateCreated.toISOString(),
             is_accepted: employeeData.is_accepted,
             date_accepted: employeeData.date_accepted?.toISOString() || null,
