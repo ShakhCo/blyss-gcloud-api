@@ -1077,13 +1077,11 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
 
         await employeeDoc.ref.update(updateData);
 
-        const updatedData = (await employeeDoc.ref.get()).data();
-
         res.json({
             id: req.params.employeeId,
-            availability_type: updatedData.availability_type,
-            working_hours: updatedData.working_hours,
-            working_days: updatedData.working_days
+            availability_type: updateData.availability_type,
+            working_hours: updateData.working_hours,
+            working_days: updateData.working_days
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
