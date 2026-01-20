@@ -1049,6 +1049,7 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
         res.json({
             id: employeeDoc.id,
             business_id: req.params.id,
+            business_owner_id: businessDoc.data().business_owner_id,
             first_name,
             last_name,
             phone_number,
