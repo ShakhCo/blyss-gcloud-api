@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema } from '../schemas/employee.js';
+import { sendBusinessInvitationSms } from '../utils/eskiz.js';
 import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
 
 const router = Router();
@@ -681,12 +682,32 @@ router.get('/:id/employees', authenticate, async (req, res) => {
             .collection('employees')
             .get();
 
-        const employees = snapshot.docs.map((doc) => {
+        // Fetch business owner data for accepted employees
+        const employees = await Promise.all(snapshot.docs.map(async (doc) => {
             const data = doc.data();
+
+            let first_name = null;
+            let last_name = null;
+
+            // If accepted, try to get first_name and last_name from business_owners
+            if (data.is_accepted) {
+                const businessOwnerSnapshot = await db.collection('business_owners')
+                    .where('phone_number', '==', data.phone_number)
+                    .limit(1)
+                    .get();
+
+                if (!businessOwnerSnapshot.empty) {
+                    const businessOwner = businessOwnerSnapshot.docs[0].data();
+                    first_name = businessOwner.first_name || null;
+                    last_name = businessOwner.last_name || null;
+                }
+            }
 
             return {
                 id: doc.id,
                 phone_number: data.phone_number,
+                first_name,
+                last_name,
                 position: data.position ?? '',
                 availability_type: data.availability_type ?? 'flexible',
                 working_hours: data.working_hours ?? null,
@@ -695,7 +716,7 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 date_accepted: data.date_accepted ?? null,
                 is_rejected: data.is_rejected ?? false
             };
-        });
+        }));
 
         // Sort: authenticated user (if employee) first, then by date_created
         employees.sort((a, b) => {
@@ -783,9 +804,21 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             .doc(employeeId)
             .set(employeeData);
 
-        // Check if phone number is a registered business owner with telegram_id
+        // Send SMS invitation via Eskiz
         // Skip notification if adding yourself
         if (!isSelf) {
+            if (businessData.employee_invite_token) {
+                // Generate invitation link
+                const inviteLink = `https://blyss.uz/business/join/${businessData.employee_invite_token}`;
+
+                // Send SMS via Eskiz service
+                const smsResult = await sendBusinessInvitationSms(phone_number, businessData.business_name, inviteLink);
+                if (!smsResult.success) {
+                    console.error('Failed to send SMS invitation:', smsResult.error);
+                }
+            }
+
+            // Check if phone number is a registered business owner with telegram_id
             const businessOwnerSnapshot = await db.collection('business_owners')
                 .where('phone_number', '==', phone_number)
                 .limit(1)

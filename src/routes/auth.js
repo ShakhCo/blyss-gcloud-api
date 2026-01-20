@@ -4,6 +4,7 @@ import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../middleware/authenticate.js';
 import { generateTokenPair, getAccessTokenExpiration, getRefreshTokenExpiration, getCookieExpiration, decodeToken, verifyRefreshToken } from '../utils/jwt.js';
+import { sendOtpSms } from '../utils/eskiz.js';
 import {
     sendOtpSchema,
     verifyOtpSchema,
@@ -97,33 +98,11 @@ router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
         });
 
         // Send SMS via Eskiz
-        const eskizToken = process.env.ESKIZ_TOKEN;
-        let smsSent = false;
-
-        if (eskizToken) {
-            try {
-                await fetch('https://notify.eskiz.uz/api/message/sms/send', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${eskizToken}`
-                    },
-                    body: JSON.stringify({
-                        mobile_phone: phone_number,
-                        message: `BLYSS ilovasiga kirish uchun tasdiqlash kodi: ${otpCode}`,
-                        from: '4546',
-                        callback_url: ''
-                    })
-                });
-                smsSent = true;
-            } catch (smsError) {
-                console.error('Failed to send SMS:', smsError);
-            }
-        }
+        const smsResult = await sendOtpSms(phone_number, otpCode);
 
         res.json({
-            message: smsSent ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
-            sms_sent: smsSent
+            message: smsResult.success ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
+            sms_sent: smsResult.success
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
