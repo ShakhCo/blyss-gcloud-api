@@ -714,6 +714,17 @@ router.get('/:id/employees', authenticate, async (req, res) => {
             .collection('employees')
             .get();
 
+        // Fetch business services for name lookup
+        const businessServicesSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .get();
+
+        const businessServicesMap = new Map();
+        businessServicesSnapshot.docs.forEach(doc => {
+            businessServicesMap.set(doc.id, doc.data());
+        });
+
         // Fetch business owner data and services for accepted employees
         const employees = await Promise.all(snapshot.docs.map(async (doc) => {
             const data = doc.data();
@@ -748,10 +759,11 @@ router.get('/:id/employees', authenticate, async (req, res) => {
 
             const services = employeeServicesSnapshot.docs.map(serviceDoc => {
                 const serviceData = serviceDoc.data();
+                const businessService = businessServicesMap.get(serviceData.service_id);
                 return {
                     id: serviceDoc.id,
                     service_id: serviceData.service_id,
-                    name: serviceData.name,
+                    name: businessService?.name || serviceData.name,
                     price: serviceData.price,
                     duration_minutes: serviceData.duration_minutes
                 };
@@ -1125,12 +1137,24 @@ router.get('/:id/employees/:employeeId/services', authenticate, async (req, res)
             .collection('employeeServices')
             .get();
 
+        // Fetch business services to get names
+        const businessServicesSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .get();
+
+        const businessServicesMap = new Map();
+        businessServicesSnapshot.docs.forEach(doc => {
+            businessServicesMap.set(doc.id, doc.data());
+        });
+
         const services = snapshot.docs.map(doc => {
             const data = doc.data();
+            const businessService = businessServicesMap.get(data.service_id);
             return {
                 id: doc.id,
                 service_id: data.service_id,
-                name: data.name,
+                name: businessService?.name || data.name,
                 price: data.price,
                 duration_minutes: data.duration_minutes,
                 is_active: data.is_active ?? true,
@@ -1171,17 +1195,20 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
         const { services } = req.validated;
         const dateCreated = new Date();
 
-        // Validate all service_ids exist in business's services
+        // Fetch all business services to get names and validate service_ids
         const businessServicesSnapshot = await db.collection('businesses')
             .doc(req.params.id)
             .collection('services')
             .get();
 
-        const businessServiceIds = new Set(businessServicesSnapshot.docs.map(doc => doc.id));
+        const businessServicesMap = new Map();
+        businessServicesSnapshot.docs.forEach(doc => {
+            businessServicesMap.set(doc.id, doc.data());
+        });
 
         // Check for invalid service_ids
         const invalidServiceIds = services
-            .filter(s => !businessServiceIds.has(s.service_id))
+            .filter(s => !businessServicesMap.has(s.service_id))
             .map(s => s.service_id);
 
         if (invalidServiceIds.length > 0) {
@@ -1196,6 +1223,7 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
         const results = [];
 
         for (const service of services) {
+            const businessService = businessServicesMap.get(service.service_id);
             const docRef = db.collection('businesses')
                 .doc(req.params.id)
                 .collection('employees')
@@ -1205,7 +1233,7 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
 
             batch.set(docRef, {
                 service_id: service.service_id,
-                name: service.name,
+                name: businessService.name,
                 price: service.price,
                 duration_minutes: service.duration_minutes,
                 is_active: service.is_active ?? true,
@@ -1215,7 +1243,7 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
             results.push({
                 id: service.service_id,
                 service_id: service.service_id,
-                name: service.name,
+                name: businessService.name,
                 price: service.price,
                 duration_minutes: service.duration_minutes,
                 is_active: service.is_active ?? true
@@ -1265,10 +1293,19 @@ router.put('/:id/employees/:employeeId/services/:serviceId', authenticate, valid
 
         const updatedData = (await employeeServiceDoc.ref.get()).data();
 
+        // Fetch business service to get the name
+        const businessServiceDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('services')
+            .doc(req.params.serviceId)
+            .get();
+
+        const serviceName = businessServiceDoc.exists ? businessServiceDoc.data().name : updatedData.name;
+
         res.json({
             id: req.params.serviceId,
             service_id: updatedData.service_id,
-            name: updatedData.name,
+            name: serviceName,
             price: updatedData.price,
             duration_minutes: updatedData.duration_minutes,
             is_active: updatedData.is_active ?? true

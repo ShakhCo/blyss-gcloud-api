@@ -3,7 +3,6 @@ import { z } from 'zod';
 // Employee service schema (for employee's custom version of a service)
 export const employeeServiceSchema = z.object({
     service_id: z.string({ required_error: 'service_id is required' }),
-    name: z.string({ required_error: 'name is required' }).min(1, 'name is required'),
     price: z.number({ required_error: 'price is required' })
         .positive('price must be positive')
         .max(999999.99, 'price is too large'),
