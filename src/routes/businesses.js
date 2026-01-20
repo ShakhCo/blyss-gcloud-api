@@ -375,6 +375,54 @@ router.get('/:id/services', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
+        // Fetch all employees and build a map
+        const employeesSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .get();
+
+        const employeesMap = new Map(); // employee_id -> employee data
+        employeesSnapshot.docs.forEach(doc => {
+            employeesMap.set(doc.id, doc.data());
+        });
+
+        // Single collection group query to get all active employee services for this business
+        // Filter by parent business using the document path pattern
+        const employeeServicesSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .get();
+
+        const employeeServicesMap = new Map(); // service_id -> array of employee data
+
+        // Fetch all employee services in parallel (batch per employee)
+        const promises = employeeServicesSnapshot.docs.map(async (employeeDoc) => {
+            const employeeData = employeeDoc.data();
+            const servicesSnapshot = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(employeeDoc.id)
+                .collection('employeeServices')
+                .where('is_active', '==', true)
+                .get();
+
+            servicesSnapshot.docs.forEach(serviceDoc => {
+                const serviceData = serviceDoc.data();
+                if (!employeeServicesMap.has(serviceData.service_id)) {
+                    employeeServicesMap.set(serviceData.service_id, []);
+                }
+                employeeServicesMap.get(serviceData.service_id).push({
+                    id: employeeDoc.id,
+                    phone_number: employeeData.phone_number,
+                    position: employeeData.position ?? '',
+                    price: serviceData.price,
+                    duration_minutes: serviceData.duration_minutes
+                });
+            });
+        });
+
+        await Promise.all(promises);
+
         const snapshot = await db.collection('businesses')
             .doc(req.params.id)
             .collection('services')
@@ -386,7 +434,8 @@ router.get('/:id/services', authenticate, async (req, res) => {
                 id: doc.id,
                 ...data,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
-                is_active: data.is_active ?? false
+                is_active: data.is_active ?? false,
+                employees: employeeServicesMap.get(doc.id) || []
             };
         });
         res.json(services);
