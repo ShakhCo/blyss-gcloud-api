@@ -880,6 +880,20 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             return res.status(409).json({ error: 'Already an employee', error_code: 'ALREADY_EMPLOYEE' });
         }
 
+        // Check if phone_number is already a confirmed employee in another business
+        const confirmedEmployeeSnapshot = await db.collectionGroup('employees')
+            .where('phone_number', '==', phone_number)
+            .where('is_accepted', '==', true)
+            .limit(1)
+            .get();
+
+        if (!confirmedEmployeeSnapshot.empty) {
+            return res.status(409).json({
+                error: 'This phone number is already a confirmed employee in another business',
+                error_code: 'ALREADY_CONFIRMED_EMPLOYEE'
+            });
+        }
+
         // Generate unique 16 character ID
         let employeeId;
         let employeeExists = true;
