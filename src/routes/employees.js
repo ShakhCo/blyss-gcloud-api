@@ -77,55 +77,96 @@ router.get('/workplaces', authenticate, async (req, res) => {
         const employeesSnapshot = await db.collectionGroup('employees')
             .where('phone_number', '==', req.user.phone_number)
             .where('is_rejected', '==', false)
+            .where('is_accepted', '==', true)
+            .limit(1)
             .get();
 
         if (employeesSnapshot.empty) {
-            return res.json([]);
+            return res.status(404).json({ error: 'No accepted workplace found', error_code: 'WORKPLACE_NOT_FOUND' });
         }
 
-        // Fetch business details for each employee record
-        const workplaces = await Promise.all(employeesSnapshot.docs.map(async (employeeDoc) => {
-            const employeeData = employeeDoc.data();
-            const businessId = employeeDoc.ref.parent.parent.id;
+        const employeeDoc = employeesSnapshot.docs[0];
+        const employeeData = employeeDoc.data();
+        const businessId = employeeDoc.ref.parent.parent.id;
 
-            const businessDoc = await db.collection('businesses').doc(businessId).get();
+        // Fetch business details and services in parallel
+        const [businessDoc, servicesSnapshot, businessOwnerSnapshot] = await Promise.all([
+            db.collection('businesses').doc(businessId).get(),
+            db.collection('businesses').doc(businessId).collection('services').where('is_active', '==', true).get(),
+            db.collection('business_owners').where('phone_number', '==', req.user.phone_number).limit(1).get()
+        ]);
 
-            if (!businessDoc.exists) {
-                return null;
-            }
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
 
-            const businessData = businessDoc.data();
+        const businessData = businessDoc.data();
 
+        // Get first_name and last_name from business_owners
+        let first_name = null;
+        let last_name = null;
+        if (!businessOwnerSnapshot.empty) {
+            const businessOwner = businessOwnerSnapshot.docs[0].data();
+            first_name = businessOwner.first_name || null;
+            last_name = businessOwner.last_name || null;
+        }
+
+        // Fetch employee services
+        const employeeServicesSnapshot = await db.collection('businesses')
+            .doc(businessId)
+            .collection('employees')
+            .doc(employeeDoc.id)
+            .collection('employeeServices')
+            .where('is_active', '==', true)
+            .get();
+
+        const services = employeeServicesSnapshot.docs.map(serviceDoc => {
+            const serviceData = serviceDoc.data();
             return {
-                employee: {
-                    id: employeeDoc.id,
-                    phone_number: employeeData.phone_number,
-                    position: employeeData.position ?? '',
-                    availability_type: employeeData.availability_type ?? 'flexible',
-                    working_hours: employeeData.working_hours ?? null,
-                    is_accepted: employeeData.is_accepted ?? false,
-                    date_accepted: employeeData.date_accepted ?? null,
-                    is_rejected: employeeData.is_rejected ?? false,
-                    date_created: employeeData.date_created?.toDate?.().toISOString() || employeeData.date_created
-                },
-                business: {
-                    id: businessDoc.id,
-                    business_name: businessData.business_name,
-                    business_type: businessData.business_type,
-                    location: businessData.location,
-                    working_graphic_type: businessData.working_graphic_type,
-                    working_hours: businessData.working_hours,
-                    business_phone_number: businessData.business_phone_number,
-                    business_owner_id: businessData.business_owner_id,
-                    business_status: businessData.business_status,
-                    tenant_url: businessData.tenant_url || null,
-                    date_created: businessData.date_created?.toDate?.().toISOString() || businessData.date_created
-                }
+                id: serviceDoc.id,
+                service_id: serviceData.service_id,
+                name: null, // Will be filled from business services
+                price: serviceData.price,
+                duration_minutes: serviceData.duration_minutes
             };
-        }));
+        });
 
-        // Filter out nulls (deleted businesses)
-        res.json(workplaces.filter(wp => wp !== null));
+        res.json({
+            employee: {
+                id: employeeDoc.id,
+                first_name: first_name || '',
+                last_name: last_name || '',
+                phone_number: employeeData.phone_number,
+                position: employeeData.position ?? '',
+                availability_type: employeeData.availability_type ?? 'flexible',
+                working_hours: employeeData.working_hours ?? null,
+                is_accepted: employeeData.is_accepted ?? false,
+                date_accepted: employeeData.date_accepted?.toDate?.().toISOString() || employeeData.date_accepted || '',
+                services: services
+            },
+            business: {
+                id: businessDoc.id,
+                business_name: businessData.business_name,
+                business_type: businessData.business_type,
+                location: businessData.location,
+                working_graphic_type: businessData.working_graphic_type,
+                working_hours: businessData.working_hours,
+                business_phone_number: businessData.business_phone_number,
+                business_owner_id: businessData.business_owner_id,
+                business_status: businessData.business_status,
+                tenant_url: businessData.tenant_url || null,
+                services: servicesSnapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        name: data.name,
+                        price: data.price,
+                        duration_minutes: data.duration_minutes,
+                        is_active: data.is_active ?? false
+                    };
+                })
+            }
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }

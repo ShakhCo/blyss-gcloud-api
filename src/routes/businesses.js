@@ -700,7 +700,7 @@ router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res
             .doc(req.params.serviceId)
             .get();
 
-            
+
         if (!serviceDoc.exists) {
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
