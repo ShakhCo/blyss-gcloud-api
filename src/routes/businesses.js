@@ -574,23 +574,6 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             .doc(req.params.serviceId)
             .update(updateData);
 
-        // Sync service name to all employee services if name changed
-        if (name && name !== currentData.name) {
-            // Query all employee services with matching service_id
-            const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
-                .where('service_id', '==', req.params.serviceId)
-                .get();
-
-            // Batch update all employee service names
-            if (!employeeServicesSnapshot.empty) {
-                const batch = db.batch();
-                employeeServicesSnapshot.docs.forEach(doc => {
-                    batch.update(doc.ref, { name });
-                });
-                await batch.commit();
-            }
-        }
-
         res.json({
             id: req.params.serviceId,
             business_id: req.params.id,
@@ -813,7 +796,7 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 return {
                     id: serviceDoc.id,
                     service_id: serviceData.service_id,
-                    name: businessService?.name || serviceData.name,
+                    name: businessService?.name || null,
                     price: serviceData.price,
                     duration_minutes: serviceData.duration_minutes
                 };
@@ -1040,10 +1023,12 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
 
         const employeeServices = employeeServicesSnapshot.docs.map(serviceDoc => {
             const serviceData = serviceDoc.data();
+            // Get name from business services
+            const businessService = businessServicesSnapshot.docs.find(doc => doc.id === serviceData.service_id);
             return {
                 id: serviceDoc.id,
                 service_id: serviceData.service_id,
-                name: serviceData.name,
+                name: businessService?.data()?.name || null,
                 price: serviceData.price,
                 duration_minutes: serviceData.duration_minutes,
                 is_active: serviceData.is_active ?? true
@@ -1442,7 +1427,6 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
 
             batch.set(docRef, {
                 service_id: service.service_id,
-                name: businessService.name,
                 price: service.price,
                 duration_minutes: service.duration_minutes,
                 is_active: service.is_active ?? true,
