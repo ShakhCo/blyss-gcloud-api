@@ -1058,6 +1058,7 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
             date_joined: data.date_accepted?.toDate?.().toISOString() || data.date_accepted || null,
             availability_type: data.availability_type ?? 'flexible',
             working_hours: data.working_hours ?? null,
+            business_working_hours: businessDoc.data().working_hours ?? null,
             employee_services: employeeServices,
             business_services: businessServices,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
