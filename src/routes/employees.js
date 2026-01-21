@@ -157,6 +157,14 @@ router.post('/workplaces/:employeeId/respond', authenticate, validate(workplaceA
                 date_accepted: now
             });
 
+            // Reject all other pending invites for this user
+            const rejectPromises = employeesSnapshot.docs
+                .filter(doc => doc.id !== employeeId) // Exclude the accepted employee
+                .filter(doc => !doc.data().is_accepted && !doc.data().is_rejected) // Only pending invites
+                .map(doc => doc.ref.update({ is_rejected: true }));
+
+            await Promise.all(rejectPromises);
+
             res.json({
                 id: employeeId,
                 is_accepted: true,
