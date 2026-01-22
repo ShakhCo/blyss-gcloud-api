@@ -379,8 +379,92 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // Update only working_hours
-        await docRef.update({ working_hours });
+        // Create a map of business working hours by day for quick lookup
+        const businessHoursMap = new Map();
+        for (const hours of working_hours) {
+            if (!hours.is_closed) {
+                businessHoursMap.set(hours.day, { start: hours.start_time, end: hours.end_time });
+            }
+        }
+
+        // Get old business hours to compare
+        const oldBusinessHoursMap = new Map();
+        if (currentData.working_hours) {
+            for (const hours of currentData.working_hours) {
+                if (!hours.is_closed) {
+                    oldBusinessHoursMap.set(hours.day, { start: hours.start_time, end: hours.end_time });
+                }
+            }
+        }
+
+        // Fetch all employees for this business
+        const employeesSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .get();
+
+        // Update employees whose working hours need to be clipped
+        const updatePromises = [];
+
+        for (const employeeDoc of employeesSnapshot.docs) {
+            const employeeData = employeeDoc.data();
+            const employeeWorkingHours = employeeData.working_hours;
+
+            if (!employeeWorkingHours) continue;
+
+            let needsUpdate = false;
+            const updatedWorkingHours = employeeWorkingHours.map(empDay => {
+                if (!empDay || empDay === null) return null;
+
+                const businessHours = businessHoursMap.get(empDay.day);
+                const oldBusinessHours = oldBusinessHoursMap.get(empDay.day);
+
+                // Skip if business day is closed (no constraint) or employee day is closed
+                if (!businessHours || !empDay.start_time || !empDay.end_time) {
+                    return empDay;
+                }
+
+                let newStartTime = empDay.start_time;
+                let newEndTime = empDay.end_time;
+
+                // Clip start time: if employee starts before business, move to business start time
+                if (empDay.start_time < businessHours.start) {
+                    newStartTime = businessHours.start;
+                    needsUpdate = true;
+                }
+
+                // Clip end time: if employee ends after business, move to business end time
+                if (empDay.end_time > businessHours.end) {
+                    newEndTime = businessHours.end;
+                    needsUpdate = true;
+                }
+
+                // If clipped, check if hours are still valid (end > start)
+                if (newStartTime >= newEndTime) {
+                    // Mark as closed if invalid after clipping
+                    return { ...empDay, start_time: newStartTime, end_time: newEndTime, is_closed: true };
+                }
+
+                return { ...empDay, start_time: newStartTime, end_time: newEndTime };
+            });
+
+            if (needsUpdate) {
+                // Build working_days helper array
+                const workingDays = updatedWorkingHours
+                    .filter(wh => wh !== null)
+                    .map(wh => wh.day);
+
+                updatePromises.push(
+                    employeeDoc.ref.update({
+                        working_hours: updatedWorkingHours,
+                        working_days: workingDays
+                    })
+                );
+            }
+        }
+
+        // Execute all employee updates and business update in parallel
+        await Promise.all([...updatePromises, docRef.update({ working_hours })]);
 
         res.json({
             id: req.params.id,
