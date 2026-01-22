@@ -3,11 +3,22 @@ import { z } from 'zod';
 // Availability type enum
 export const availabilityTypeEnum = z.enum(['flexible', 'fixed']);
 
-// Employee working hours schema (for individual employee)
-export const employeeWorkingHourSchema = z.object({
-    day: z.number().min(0).max(6),
-    start_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'start_time must be in HH:MM 24-hour format'),
-    end_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'end_time must be in HH:MM 24-hour format'),
+// Single day working hour schema
+const dayWorkingHourSchema = z.object({
+    start: z.number().min(0).max(86399), // 0 to 23:59:59 in seconds
+    end: z.number().min(0).max(86399),   // 0 to 23:59:59 in seconds
+    is_open: z.boolean().default(false)
+});
+
+// Full working hours schema (all 7 days required) - same as business
+export const workingHoursSchema = z.object({
+    monday: dayWorkingHourSchema,
+    tuesday: dayWorkingHourSchema,
+    wednesday: dayWorkingHourSchema,
+    thursday: dayWorkingHourSchema,
+    friday: dayWorkingHourSchema,
+    saturday: dayWorkingHourSchema,
+    sunday: dayWorkingHourSchema
 });
 
 // Employee schema (for adding to business)
@@ -18,14 +29,14 @@ export const employeeSchema = z.object({
     position: z.string({ required_error: 'position is required' })
         .min(1, 'position is required'),
     availability_type: availabilityTypeEnum.default('flexible'),
-    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days'),
+    working_hours: workingHoursSchema,
     is_open_now: z.boolean().default(false)
 });
 
 // Update employee working hours schema
 export const updateEmployeeWorkingHoursSchema = z.object({
     availability_type: availabilityTypeEnum,
-    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days'),
+    working_hours: workingHoursSchema,
     is_open_now: z.boolean().optional()
 });
 
@@ -45,7 +56,7 @@ export const employeeResponseSchema = z.object({
     telegram_id: z.number().nullable(),
     is_confirmed_by_employee: z.boolean(),
     availability_type: z.string().nullable(),
-    working_hours: z.any().nullable(),
+    working_hours: workingHoursSchema,
     is_open_now: z.boolean(),
     date_created: z.string()
 });

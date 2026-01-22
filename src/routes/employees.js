@@ -9,7 +9,7 @@ const router = Router();
 /**
  * Check if employee is currently open based on working hours
  * @param {string|null} availabilityType - 'flexible' or 'fixed'
- * @param {Array|null} workingHours - Array of 7 working hour objects (0-6)
+ * @param {object} workingHours - Working hours object with day names as keys
  * @returns {boolean} - true if currently open, false otherwise
  */
 function isEmployeeOpenNow(availabilityType, workingHours) {
@@ -24,22 +24,20 @@ function isEmployeeOpenNow(availabilityType, workingHours) {
     const uzbekNow = new Date(utcNow + (5 * 3600000)); // GMT+5
 
     const currentDay = uzbekNow.getDay(); // 0 = Sunday, 6 = Saturday
-    const currentMinutes = uzbekNow.getHours() * 60 + uzbekNow.getMinutes();
+    const currentSeconds = uzbekNow.getHours() * 3600 + uzbekNow.getMinutes() * 60 + uzbekNow.getSeconds();
 
-    const todayHours = workingHours[currentDay];
+    // Day number to day name mapping
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const todayName = dayNames[currentDay];
 
-    // If today is null or has no hours, not open
-    if (!todayHours || !todayHours.start_time || !todayHours.end_time) {
+    const todayHours = workingHours[todayName];
+
+    // If today is not open, return false
+    if (!todayHours || !todayHours.is_open) {
         return false;
     }
 
-    // Parse start and end times to minutes
-    const [startHour, startMin] = todayHours.start_time.split(':').map(Number);
-    const [endHour, endMin] = todayHours.end_time.split(':').map(Number);
-    const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
-
-    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+    return currentSeconds >= todayHours.start && currentSeconds <= todayHours.end;
 }
 
 // Get workplaces for a business owner

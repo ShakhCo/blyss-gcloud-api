@@ -15,7 +15,7 @@ const router = Router();
 /**
  * Check if employee is currently open based on working hours
  * @param {string|null} availabilityType - 'flexible' or 'fixed'
- * @param {Array|null} workingHours - Array of 7 working hour objects (0-6)
+ * @param {object} workingHours - Working hours object with day names as keys
  * @returns {boolean} - true if currently open, false otherwise
  */
 function isEmployeeOpenNow(availabilityType, workingHours) {
@@ -30,22 +30,20 @@ function isEmployeeOpenNow(availabilityType, workingHours) {
     const uzbekNow = new Date(utcNow + (5 * 3600000)); // GMT+5
 
     const currentDay = uzbekNow.getDay(); // 0 = Sunday, 6 = Saturday
-    const currentMinutes = uzbekNow.getHours() * 60 + uzbekNow.getMinutes();
+    const currentSeconds = uzbekNow.getHours() * 3600 + uzbekNow.getMinutes() * 60 + uzbekNow.getSeconds();
 
-    const todayHours = workingHours[currentDay];
+    // Day number to day name mapping
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const todayName = dayNames[currentDay];
 
-    // If today is null or has no hours, not open
-    if (!todayHours || !todayHours.start_time || !todayHours.end_time) {
+    const todayHours = workingHours[todayName];
+
+    // If today is not open, return false
+    if (!todayHours || !todayHours.is_open) {
         return false;
     }
 
-    // Parse start and end times to minutes
-    const [startHour, startMin] = todayHours.start_time.split(':').map(Number);
-    const [endHour, endMin] = todayHours.end_time.split(':').map(Number);
-    const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
-
-    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+    return currentSeconds >= todayHours.start && currentSeconds <= todayHours.end;
 }
 
 /**
@@ -407,22 +405,11 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // Day name to day number mapping
-        const dayNameToNumber = {
-            sunday: 0,
-            monday: 1,
-            tuesday: 2,
-            wednesday: 3,
-            thursday: 4,
-            friday: 5,
-            saturday: 6
-        };
-
         // Create a set of closed days (where is_open: false)
         const closedDays = new Set();
         for (const [dayName, dayData] of Object.entries(working_hours)) {
             if (!dayData.is_open) {
-                closedDays.add(dayNameToNumber[dayName]);
+                closedDays.add(dayName);
             }
         }
 
@@ -432,7 +419,7 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             .collection('employees')
             .get();
 
-        // Update employees whose working hours need to be set to null (when business day is closed)
+        // Update employees whose working hours need to be set to closed (when business day is closed)
         const updatePromises = [];
 
         for (const employeeDoc of employeesSnapshot.docs) {
@@ -442,28 +429,23 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             if (!employeeWorkingHours) continue;
 
             let needsUpdate = false;
-            const updatedWorkingHours = employeeWorkingHours.map((empDay, index) => {
-                if (!empDay || empDay === null) return null;
+            const updatedWorkingHours = { ...employeeWorkingHours };
 
-                // If business day is closed (is_open: false), set employee day to null
-                if (closedDays.has(empDay.day)) {
+            // If business day is closed, set employee day is_open to false
+            for (const closedDay of closedDays) {
+                if (updatedWorkingHours[closedDay] && updatedWorkingHours[closedDay].is_open) {
+                    updatedWorkingHours[closedDay] = {
+                        ...updatedWorkingHours[closedDay],
+                        is_open: false
+                    };
                     needsUpdate = true;
-                    return null;
                 }
-
-                return empDay;
-            });
+            }
 
             if (needsUpdate) {
-                // Build working_days helper array
-                const workingDays = updatedWorkingHours
-                    .filter(wh => wh !== null)
-                    .map(wh => wh.day);
-
                 updatePromises.push(
                     employeeDoc.ref.update({
-                        working_hours: updatedWorkingHours,
-                        working_days: workingDays
+                        working_hours: updatedWorkingHours
                     })
                 );
             }
@@ -935,7 +917,6 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 position: data.position ?? '',
                 availability_type: availabilityType,
                 working_hours: workingHours,
-                working_days: data.working_days ?? [],
                 is_open_now: isEmployeeOpenNow(availabilityType, workingHours),
                 services,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
@@ -1023,21 +1004,28 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
         // If adding yourself as employee, auto-accept
         const isSelf = phone_number === req.user.phone_number;
 
-        // Build working_days helper array for filtering
-        // Extract day numbers from non-null working_hours
-        let workingDays = [];
-        if (availability_type === 'fixed' && working_hours) {
-            workingDays = working_hours
-                .filter(wh => wh !== null)
-                .map(wh => wh.day);
+        // Ensure working_hours matches availability_type
+        // For flexible: all days should have is_open: false
+        // For fixed: working_hours are provided with specific open days
+        let finalWorkingHours = working_hours;
+        if (availability_type === 'flexible') {
+            // Create closed working hours for flexible availability
+            finalWorkingHours = {
+                monday: { start: 0, end: 0, is_open: false },
+                tuesday: { start: 0, end: 0, is_open: false },
+                wednesday: { start: 0, end: 0, is_open: false },
+                thursday: { start: 0, end: 0, is_open: false },
+                friday: { start: 0, end: 0, is_open: false },
+                saturday: { start: 0, end: 0, is_open: false },
+                sunday: { start: 0, end: 0, is_open: false }
+            };
         }
 
         const employeeData = {
             phone_number,
             position,
             availability_type: availability_type,
-            working_hours: availability_type === 'flexible' ? null : working_hours,
-            working_days: workingDays, // Helper field for filtering
+            working_hours: finalWorkingHours,
             date_created: dateCreated,
             is_accepted: isSelf,
             date_accepted: isSelf ? dateCreated : null,
@@ -1090,8 +1078,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             phone_number,
             position,
             availability_type: availability_type,
-            working_hours: employeeData.working_hours,
-            working_days: workingDays,
+            working_hours: finalWorkingHours,
             date_created: dateCreated.toISOString(),
             is_accepted: employeeData.is_accepted,
             date_accepted: employeeData.date_accepted?.toISOString() || null,
@@ -1285,19 +1272,24 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
 
         const { availability_type, working_hours } = req.validated;
 
-        // Build working_days helper array for filtering
-        // Extract day numbers from non-null working_hours
-        let workingDays = [];
-        if (availability_type === 'fixed' && working_hours) {
-            workingDays = working_hours
-                .filter(wh => wh !== null)
-                .map(wh => wh.day);
+        // Ensure working_hours matches availability_type
+        let finalWorkingHours = working_hours;
+        if (availability_type === 'flexible') {
+            // Create closed working hours for flexible availability
+            finalWorkingHours = {
+                monday: { start: 0, end: 0, is_open: false },
+                tuesday: { start: 0, end: 0, is_open: false },
+                wednesday: { start: 0, end: 0, is_open: false },
+                thursday: { start: 0, end: 0, is_open: false },
+                friday: { start: 0, end: 0, is_open: false },
+                saturday: { start: 0, end: 0, is_open: false },
+                sunday: { start: 0, end: 0, is_open: false }
+            };
         }
 
         const updateData = {
             availability_type,
-            working_hours: availability_type === 'flexible' ? null : working_hours,
-            working_days: workingDays
+            working_hours: finalWorkingHours
         };
 
         await employeeDoc.ref.update(updateData);
@@ -1305,8 +1297,7 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
         res.json({
             id: req.params.employeeId,
             availability_type: updateData.availability_type,
-            working_hours: updateData.working_hours,
-            working_days: updateData.working_days
+            working_hours: updateData.working_hours
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -1397,9 +1388,19 @@ router.post('/join/:token', authenticate, async (req, res) => {
 
         const dateCreated = new Date();
 
-        // Create employee record
+        // Create employee record with flexible working hours (all days closed)
         const employeeData = {
             phone_number: req.user.phone_number,
+            availability_type: 'flexible',
+            working_hours: {
+                monday: { start: 0, end: 0, is_open: false },
+                tuesday: { start: 0, end: 0, is_open: false },
+                wednesday: { start: 0, end: 0, is_open: false },
+                thursday: { start: 0, end: 0, is_open: false },
+                friday: { start: 0, end: 0, is_open: false },
+                saturday: { start: 0, end: 0, is_open: false },
+                sunday: { start: 0, end: 0, is_open: false }
+            },
             date_created: dateCreated,
             is_accepted: false,
             date_accepted: null,
@@ -1424,6 +1425,8 @@ router.post('/join/:token', authenticate, async (req, res) => {
             business_id: businessId,
             business_name: businessData.business_name,
             phone_number: req.user.phone_number,
+            availability_type: 'flexible',
+            working_hours: employeeData.working_hours,
             date_created: dateCreated.toISOString(),
             is_accepted: false
         });
