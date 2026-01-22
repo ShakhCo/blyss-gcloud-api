@@ -172,6 +172,64 @@ router.get('/workplaces', authenticate, async (req, res) => {
     }
 });
 
+// Get pending workplace invitations for authenticated user
+router.get('/workplaces/pending', authenticate, async (req, res) => {
+    try {
+        // Use collection group query to search across all employee subcollections
+        const employeesSnapshot = await db.collectionGroup('employees')
+            .where('phone_number', '==', req.user.phone_number)
+            .where('is_rejected', '==', false)
+            .where('is_accepted', '==', false)
+            .get();
+
+        if (employeesSnapshot.empty) {
+            return res.json([]);
+        }
+
+        // Fetch business details in parallel
+        const pendingInvites = await Promise.all(employeesSnapshot.docs.map(async (employeeDoc) => {
+            const employeeData = employeeDoc.data();
+            const businessId = employeeDoc.ref.parent.parent.id;
+
+            const businessDoc = await db.collection('businesses').doc(businessId).get();
+
+            if (!businessDoc.exists) {
+                return null;
+            }
+
+            const businessData = businessDoc.data();
+
+            return {
+                id: employeeDoc.id,
+                business: {
+                    id: businessDoc.id,
+                    business_name: businessData.business_name,
+                    business_type: businessData.business_type,
+                    location: businessData.location,
+                    working_graphic_type: businessData.working_graphic_type,
+                    working_hours: businessData.working_hours,
+                    business_phone_number: businessData.business_phone_number,
+                    business_owner_id: businessData.business_owner_id,
+                    business_status: businessData.business_status,
+                    tenant_url: businessData.tenant_url || null,
+                    date_created: businessData.date_created?.toDate?.().toISOString() || businessData.date_created
+                },
+                employee: {
+                    phone_number: employeeData.phone_number,
+                    position: employeeData.position ?? '',
+                    is_accepted: employeeData.is_accepted ?? false,
+                    date_created: employeeData.date_created?.toDate?.().toISOString() || employeeData.date_created
+                }
+            };
+        }));
+
+        // Filter out nulls (deleted businesses)
+        res.json(pendingInvites.filter(invite => invite !== null));
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 // Accept or deny workplace invitation
 router.post('/workplaces/:employeeId/respond', authenticate, validate(workplaceActionSchema), async (req, res) => {
     try {

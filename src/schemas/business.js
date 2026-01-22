@@ -71,6 +71,11 @@ export const updateBusinessSchema = z.object({
         .min(12, 'business_phone_number must be at least 12 digits')
 });
 
+// Working hours update schema (for PATCH /:id/working-hours)
+export const updateWorkingHoursSchema = z.object({
+    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days')
+});
+
 // Output schema (for responses)
 export const businessResponseSchema = z.object({
     id: z.string(),

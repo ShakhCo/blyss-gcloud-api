@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
-import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema } from '../schemas/business.js';
+import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
@@ -354,6 +354,37 @@ router.patch('/:id/name', authenticate, async (req, res) => {
         res.json({
             id: req.params.id,
             business_name
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update business working hours
+router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSchema), async (req, res) => {
+    try {
+        const { working_hours } = req.validated;
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Update only working_hours
+        await docRef.update({ working_hours });
+
+        res.json({
+            id: req.params.id,
+            working_hours
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
