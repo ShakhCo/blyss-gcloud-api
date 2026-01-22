@@ -25,8 +25,12 @@ function isEmployeeOpenNow(availabilityType, workingHours) {
     }
 
     const now = new Date();
-    const currentDay = now.getDay(); // 0 = Sunday, 6 = Saturday
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    // Convert to Uzbekistan timezone (GMT+5)
+    const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const uzbekNow = new Date(utcNow + (5 * 3600000)); // GMT+5
+
+    const currentDay = uzbekNow.getDay(); // 0 = Sunday, 6 = Saturday
+    const currentMinutes = uzbekNow.getHours() * 60 + uzbekNow.getMinutes();
 
     const todayHours = workingHours[currentDay];
 
