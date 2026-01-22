@@ -18,13 +18,15 @@ export const employeeSchema = z.object({
     position: z.string({ required_error: 'position is required' })
         .min(1, 'position is required'),
     availability_type: availabilityTypeEnum.default('flexible'),
-    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days')
+    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days'),
+    is_open_now: z.boolean().default(false)
 });
 
 // Update employee working hours schema
 export const updateEmployeeWorkingHoursSchema = z.object({
     availability_type: availabilityTypeEnum,
-    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days')
+    working_hours: z.array(z.nullable(employeeWorkingHourSchema)).length(7, 'working_hours must have exactly 7 days (0-6), use null for off days'),
+    is_open_now: z.boolean().optional()
 });
 
 // Accept/deny workplace schema
@@ -44,5 +46,6 @@ export const employeeResponseSchema = z.object({
     is_confirmed_by_employee: z.boolean(),
     availability_type: z.string().nullable(),
     working_hours: z.any().nullable(),
+    is_open_now: z.boolean(),
     date_created: z.string()
 });

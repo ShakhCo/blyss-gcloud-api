@@ -13,6 +13,38 @@ import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } f
 const router = Router();
 
 /**
+ * Check if employee is currently open based on working hours
+ * @param {string|null} availabilityType - 'flexible' or 'fixed'
+ * @param {Array|null} workingHours - Array of 7 working hour objects (0-6)
+ * @returns {boolean} - true if currently open, false otherwise
+ */
+function isEmployeeOpenNow(availabilityType, workingHours) {
+    // If flexible, always considered open
+    if (availabilityType === 'flexible' || !workingHours) {
+        return true;
+    }
+
+    const now = new Date();
+    const currentDay = now.getDay(); // 0 = Sunday, 6 = Saturday
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const todayHours = workingHours[currentDay];
+
+    // If today is null or has no hours, not open
+    if (!todayHours || !todayHours.start_time || !todayHours.end_time) {
+        return false;
+    }
+
+    // Parse start and end times to minutes
+    const [startHour, startMin] = todayHours.start_time.split(':').map(Number);
+    const [endHour, endMin] = todayHours.end_time.split(':').map(Number);
+    const startMinutes = startHour * 60 + startMin;
+    const endMinutes = endHour * 60 + endMin;
+
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+}
+
+/**
  * Generate a tenant URL from business name (without creating DNS record)
  * @param {string} businessName - The business name
  * @param {string} businessId - The unique business ID
@@ -897,15 +929,20 @@ router.get('/:id/employees', authenticate, async (req, res) => {
                 };
             });
 
+            // Calculate is_open_now
+            const availabilityType = data.availability_type ?? 'flexible';
+            const workingHours = data.working_hours ?? null;
+
             return {
                 id: doc.id,
                 phone_number,
                 first_name,
                 last_name,
                 position: data.position ?? '',
-                availability_type: data.availability_type ?? 'flexible',
-                working_hours: data.working_hours ?? null,
+                availability_type: availabilityType,
+                working_hours: workingHours,
                 working_days: data.working_days ?? [],
+                is_open_now: isEmployeeOpenNow(availabilityType, workingHours),
                 services,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
                 is_accepted: data.is_accepted ?? false,
@@ -1010,7 +1047,8 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             date_created: dateCreated,
             is_accepted: isSelf,
             date_accepted: isSelf ? dateCreated : null,
-            is_rejected: false
+            is_rejected: false,
+            is_open_now: false
         };
 
         await db.collection('businesses')
@@ -1142,6 +1180,10 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
             };
         });
 
+        // Calculate is_open_now
+        const availabilityType = data.availability_type ?? 'flexible';
+        const workingHours = data.working_hours ?? null;
+
         res.json({
             id: employeeDoc.id,
             business_id: req.params.id,
@@ -1151,8 +1193,9 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
             phone_number,
             position: data.position ?? '',
             date_joined: data.date_accepted?.toDate?.().toISOString() || data.date_accepted || null,
-            availability_type: data.availability_type ?? 'flexible',
-            working_hours: data.working_hours ?? null,
+            availability_type: availabilityType,
+            working_hours: workingHours,
+            is_open_now: isEmployeeOpenNow(availabilityType, workingHours),
             business_working_hours: businessDoc.data().working_hours ?? null,
             employee_services: employeeServices,
             business_services: businessServices,
@@ -1365,7 +1408,8 @@ router.post('/join/:token', authenticate, async (req, res) => {
             phone_number: req.user.phone_number,
             date_created: dateCreated,
             is_accepted: false,
-            date_accepted: null
+            date_accepted: null,
+            is_open_now: false
         };
 
         await db.collection('businesses')

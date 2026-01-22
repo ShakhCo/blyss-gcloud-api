@@ -6,6 +6,38 @@ import { workplaceActionSchema } from '../schemas/employee.js';
 
 const router = Router();
 
+/**
+ * Check if employee is currently open based on working hours
+ * @param {string|null} availabilityType - 'flexible' or 'fixed'
+ * @param {Array|null} workingHours - Array of 7 working hour objects (0-6)
+ * @returns {boolean} - true if currently open, false otherwise
+ */
+function isEmployeeOpenNow(availabilityType, workingHours) {
+    // If flexible, always considered open
+    if (availabilityType === 'flexible' || !workingHours) {
+        return true;
+    }
+
+    const now = new Date();
+    const currentDay = now.getDay(); // 0 = Sunday, 6 = Saturday
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const todayHours = workingHours[currentDay];
+
+    // If today is null or has no hours, not open
+    if (!todayHours || !todayHours.start_time || !todayHours.end_time) {
+        return false;
+    }
+
+    // Parse start and end times to minutes
+    const [startHour, startMin] = todayHours.start_time.split(':').map(Number);
+    const [endHour, endMin] = todayHours.end_time.split(':').map(Number);
+    const startMinutes = startHour * 60 + startMin;
+    const endMinutes = endHour * 60 + endMin;
+
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+}
+
 // Get workplaces for a business owner
 router.get('/business-owner/:businessOwnerId/workplaces', async (req, res) => {
     try {
@@ -131,6 +163,11 @@ router.get('/workplaces', authenticate, async (req, res) => {
             };
         });
 
+        // Calculate is_open_now
+        const availabilityType = employeeData.availability_type ?? 'flexible';
+        const workingHours = employeeData.working_hours ?? null;
+        const isOpenNow = isEmployeeOpenNow(availabilityType, workingHours);
+
         res.json({
             employee: {
                 id: employeeDoc.id,
@@ -138,8 +175,9 @@ router.get('/workplaces', authenticate, async (req, res) => {
                 last_name: last_name || '',
                 phone_number: employeeData.phone_number,
                 position: employeeData.position ?? '',
-                availability_type: employeeData.availability_type ?? 'flexible',
-                working_hours: employeeData.working_hours ?? null,
+                availability_type: availabilityType,
+                working_hours: workingHours,
+                is_open_now: isOpenNow,
                 is_accepted: employeeData.is_accepted ?? false,
                 date_accepted: employeeData.date_accepted?.toDate?.().toISOString() || employeeData.date_accepted || '',
                 services: services
