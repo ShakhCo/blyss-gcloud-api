@@ -3,11 +3,29 @@ import { z } from 'zod';
 // Business status enum
 export const businessStatusEnum = z.enum(['verified', 'unverified', 'active', 'inactive']);
 
-// Working graphic type enum
-export const workingGraphicTypeEnum = z.enum(['on_demand', 'fixed_hours']);
+// Firestore timestamp schema (seconds from midnight)
+const firestoreTimestampSchema = z.object({
+    _seconds: z.number(),
+    _nanoseconds: z.number().default(0)
+});
 
-// Time format regex (HH:MM 24-hour)
-const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+// Single day working hour schema
+const dayWorkingHourSchema = z.object({
+    start: z.number().min(0).max(86399), // 0 to 23:59:59 in seconds
+    end: z.number().min(0).max(86399),   // 0 to 23:59:59 in seconds
+    is_open: z.boolean().default(false)
+});
+
+// Full working hours schema (all 7 days required)
+export const businessWorkingHoursSchema = z.object({
+    monday: dayWorkingHourSchema,
+    tuesday: dayWorkingHourSchema,
+    wednesday: dayWorkingHourSchema,
+    thursday: dayWorkingHourSchema,
+    friday: dayWorkingHourSchema,
+    saturday: dayWorkingHourSchema,
+    sunday: dayWorkingHourSchema
+});
 
 // Location schema
 const locationSchema = z.object({
@@ -15,23 +33,14 @@ const locationSchema = z.object({
     lng: z.number({ required_error: 'lng is required' })
 });
 
-// Business hours schema (single day)
-export const businessHourSchema = z.object({
-    day: z.number().min(0).max(6),
-    start_time: z.string().regex(timeRegex, 'start_time must be in HH:MM 24-hour format'),
-    end_time: z.string().regex(timeRegex, 'end_time must be in HH:MM 24-hour format'),
-    is_closed: z.boolean().default(false)
-});
-
-// Input schema (for creating/updating business)
+// Input schema (for creating/updating business) - with working_graphic_type for backward compatibility
 export const businessSchema = z.object({
     business_name: z.string({ required_error: 'business_name is required' })
         .min(1, 'business_name is required'),
     business_type: z.string({ required_error: 'business_type is required' })
         .min(1, 'business_type is required'),
     location: locationSchema,
-    working_graphic_type: workingGraphicTypeEnum,
-    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days').nullable().optional(),
+    working_hours: businessWorkingHoursSchema,
     business_phone_number: z.string({ required_error: 'business_phone_number is required' })
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
         .min(12, 'business_phone_number must be at least 12 digits'),
@@ -46,8 +55,7 @@ export const createBusinessSchema = z.object({
     business_type: z.string({ required_error: 'business_type is required' })
         .min(1, 'business_type is required'),
     location: locationSchema,
-    working_graphic_type: workingGraphicTypeEnum,
-    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days').nullable().optional(),
+    working_hours: businessWorkingHoursSchema,
     business_phone_number: z.string({ required_error: 'business_phone_number is required' })
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
         .min(12, 'business_phone_number must be at least 12 digits')
@@ -60,8 +68,7 @@ export const updateBusinessSchema = z.object({
     business_type: z.string({ required_error: 'business_type is required' })
         .min(1, 'business_type is required'),
     location: locationSchema,
-    working_graphic_type: workingGraphicTypeEnum,
-    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days').nullable().optional(),
+    working_hours: businessWorkingHoursSchema,
     business_phone_number: z.string({ required_error: 'business_phone_number is required' })
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
         .min(12, 'business_phone_number must be at least 12 digits')
@@ -69,7 +76,7 @@ export const updateBusinessSchema = z.object({
 
 // Working hours update schema (for PATCH /:id/working-hours)
 export const updateWorkingHoursSchema = z.object({
-    working_hours: z.array(businessHourSchema).length(7, 'working_hours must have exactly 7 days')
+    working_hours: businessWorkingHoursSchema
 });
 
 // Output schema (for responses)
@@ -81,13 +88,7 @@ export const businessResponseSchema = z.object({
         lat: z.number(),
         lng: z.number()
     }),
-    working_graphic_type: workingGraphicTypeEnum,
-    working_hours: z.array(z.object({
-        day: z.number(),
-        start_time: z.string(),
-        end_time: z.string(),
-        is_closed: z.boolean()
-    })).optional(),
+    working_hours: businessWorkingHoursSchema,
     business_phone_number: z.string(),
     business_owner_id: z.string(),
     business_status: businessStatusEnum,

@@ -92,7 +92,6 @@ router.get('/', authenticate, async (req, res) => {
                 business_name: data.business_name,
                 business_type: data.business_type,
                 location: data.location,
-                working_graphic_type: data.working_graphic_type,
                 working_hours: data.working_hours,
                 business_phone_number: data.business_phone_number,
                 business_owner_id: data.business_owner_id,
@@ -128,7 +127,6 @@ router.get('/:id', authenticate, async (req, res) => {
             business_name: data.business_name,
             business_type: data.business_type,
             location: data.location,
-            working_graphic_type: data.working_graphic_type,
             working_hours: data.working_hours,
             business_phone_number: data.business_phone_number,
             business_owner_id: data.business_owner_id,
@@ -162,7 +160,6 @@ router.get('/owner/:ownerId', async (req, res) => {
                 business_name: data.business_name,
                 business_type: data.business_type,
                 location: data.location,
-                working_graphic_type: data.working_graphic_type,
                 working_hours: data.working_hours,
                 business_phone_number: data.business_phone_number,
                 business_owner_id: data.business_owner_id,
@@ -192,7 +189,6 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             business_name,
             business_type,
             location,
-            working_graphic_type,
             working_hours,
             business_phone_number
         } = req.validated;
@@ -225,8 +221,7 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             business_name,
             business_type,
             location,
-            working_graphic_type,
-            working_hours: working_hours || null,
+            working_hours,
             business_phone_number,
             business_owner_id,
             business_status: 'unverified',
@@ -261,7 +256,6 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             business_name,
             business_type,
             location,
-            working_graphic_type,
             working_hours,
             business_phone_number
         } = req.validated;
@@ -277,8 +271,7 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             business_name,
             business_type,
             location,
-            working_graphic_type,
-            working_hours: working_hours || null,
+            working_hours,
             business_phone_number
         };
 
@@ -289,7 +282,6 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             business_name: updateData.business_name,
             business_type: updateData.business_type,
             location: updateData.location,
-            working_graphic_type: updateData.working_graphic_type,
             working_hours: updateData.working_hours,
             business_phone_number: updateData.business_phone_number,
             business_owner_id: currentData.business_owner_id,
@@ -415,24 +407,22 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // Create a map of business working hours by day for quick lookup
-        const businessHoursMap = new Map();
-        const closedDays = new Set();
-        for (const hours of working_hours) {
-            if (hours.is_closed) {
-                closedDays.add(hours.day);
-            } else {
-                businessHoursMap.set(hours.day, { start: hours.start_time, end: hours.end_time });
-            }
-        }
+        // Day name to day number mapping
+        const dayNameToNumber = {
+            sunday: 0,
+            monday: 1,
+            tuesday: 2,
+            wednesday: 3,
+            thursday: 4,
+            friday: 5,
+            saturday: 6
+        };
 
-        // Get old business hours to compare
-        const oldClosedDays = new Set();
-        if (currentData.working_hours) {
-            for (const hours of currentData.working_hours) {
-                if (hours.is_closed) {
-                    oldClosedDays.add(hours.day);
-                }
+        // Create a set of closed days (where is_open: false)
+        const closedDays = new Set();
+        for (const [dayName, dayData] of Object.entries(working_hours)) {
+            if (!dayData.is_open) {
+                closedDays.add(dayNameToNumber[dayName]);
             }
         }
 
@@ -455,7 +445,7 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             const updatedWorkingHours = employeeWorkingHours.map((empDay, index) => {
                 if (!empDay || empDay === null) return null;
 
-                // If business day is closed (is_closed: true), set employee day to null
+                // If business day is closed (is_open: false), set employee day to null
                 if (closedDays.has(empDay.day)) {
                     needsUpdate = true;
                     return null;
