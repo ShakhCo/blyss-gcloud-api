@@ -6,9 +6,6 @@ export const businessStatusEnum = z.enum(['verified', 'unverified', 'active', 'i
 // Working graphic type enum
 export const workingGraphicTypeEnum = z.enum(['on_demand', 'fixed_hours']);
 
-// Day names enum
-export const dayNameEnum = z.enum(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
-
 // Time format regex (HH:MM 24-hour)
 const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -21,7 +18,6 @@ const locationSchema = z.object({
 // Business hours schema (single day)
 export const businessHourSchema = z.object({
     day: z.number().min(0).max(6),
-    day_name: dayNameEnum,
     start_time: z.string().regex(timeRegex, 'start_time must be in HH:MM 24-hour format'),
     end_time: z.string().regex(timeRegex, 'end_time must be in HH:MM 24-hour format'),
     is_closed: z.boolean().default(false)
@@ -88,7 +84,6 @@ export const businessResponseSchema = z.object({
     working_graphic_type: workingGraphicTypeEnum,
     working_hours: z.array(z.object({
         day: z.number(),
-        day_name: dayNameEnum,
         start_time: z.string(),
         end_time: z.string(),
         is_closed: z.boolean()
