@@ -381,18 +381,21 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
 
         // Create a map of business working hours by day for quick lookup
         const businessHoursMap = new Map();
+        const closedDays = new Set();
         for (const hours of working_hours) {
-            if (!hours.is_closed) {
+            if (hours.is_closed) {
+                closedDays.add(hours.day);
+            } else {
                 businessHoursMap.set(hours.day, { start: hours.start_time, end: hours.end_time });
             }
         }
 
         // Get old business hours to compare
-        const oldBusinessHoursMap = new Map();
+        const oldClosedDays = new Set();
         if (currentData.working_hours) {
             for (const hours of currentData.working_hours) {
-                if (!hours.is_closed) {
-                    oldBusinessHoursMap.set(hours.day, { start: hours.start_time, end: hours.end_time });
+                if (hours.is_closed) {
+                    oldClosedDays.add(hours.day);
                 }
             }
         }
@@ -403,7 +406,7 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             .collection('employees')
             .get();
 
-        // Update employees whose working hours need to be clipped
+        // Update employees whose working hours need to be set to null (when business day is closed)
         const updatePromises = [];
 
         for (const employeeDoc of employeesSnapshot.docs) {
@@ -413,39 +416,16 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             if (!employeeWorkingHours) continue;
 
             let needsUpdate = false;
-            const updatedWorkingHours = employeeWorkingHours.map(empDay => {
+            const updatedWorkingHours = employeeWorkingHours.map((empDay, index) => {
                 if (!empDay || empDay === null) return null;
 
-                const businessHours = businessHoursMap.get(empDay.day);
-                const oldBusinessHours = oldBusinessHoursMap.get(empDay.day);
-
-                // Skip if business day is closed (no constraint) or employee day is closed
-                if (!businessHours || !empDay.start_time || !empDay.end_time) {
-                    return empDay;
-                }
-
-                let newStartTime = empDay.start_time;
-                let newEndTime = empDay.end_time;
-
-                // Clip start time: if employee starts before business, move to business start time
-                if (empDay.start_time < businessHours.start) {
-                    newStartTime = businessHours.start;
+                // If business day is closed (is_closed: true), set employee day to null
+                if (closedDays.has(empDay.day)) {
                     needsUpdate = true;
+                    return null;
                 }
 
-                // Clip end time: if employee ends after business, move to business end time
-                if (empDay.end_time > businessHours.end) {
-                    newEndTime = businessHours.end;
-                    needsUpdate = true;
-                }
-
-                // If clipped, check if hours are still valid (end > start)
-                if (newStartTime >= newEndTime) {
-                    // Mark as closed if invalid after clipping
-                    return { ...empDay, start_time: newStartTime, end_time: newEndTime, is_closed: true };
-                }
-
-                return { ...empDay, start_time: newStartTime, end_time: newEndTime };
+                return empDay;
             });
 
             if (needsUpdate) {
