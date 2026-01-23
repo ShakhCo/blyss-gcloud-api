@@ -176,7 +176,7 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
             formatted_address: result.formatted_address || null,
             location,
             address,
-            working_hours
+            working_hours: workingHours
         });
 
     } catch (error) {
