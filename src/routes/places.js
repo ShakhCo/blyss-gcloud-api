@@ -72,7 +72,8 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
         const params = new URLSearchParams({
             place_id: placeId,
             key: apiKey,
-            fields: 'opening_hours'
+            language: 'uz',
+            fields: 'opening_hours,international_phone_number,geometry,address_components,formatted_address'
         });
 
         const url = `https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`;
@@ -87,8 +88,50 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
             });
         }
 
-        const openingHours = data.result?.opening_hours;
+        const result = data.result;
+        const openingHours = result?.opening_hours;
 
+        /** ---------------- ADDRESS PARSING (UZ) ---------------- */
+        const getComponent = (type) =>
+            result.address_components?.find(c => c.types.includes(type))?.long_name || null;
+
+        let region =
+            getComponent('administrative_area_level_1') ||
+            getComponent('administrative_area_level_2');
+
+        let city =
+            getComponent('locality') ||
+            getComponent('administrative_area_level_3') ||
+            getComponent('sublocality');
+
+        const street_name = [getComponent('route'), getComponent('street_number')]
+            .filter(Boolean)
+            .join(' ') || null;
+
+        const country = getComponent('country');
+
+        const display_name = result.formatted_address || null;
+
+        // Special case: Tashkent city
+        if (region?.includes('Tashkent') && !city) {
+            city = 'Tashkent';
+        }
+
+        const address = {
+            street_name,
+            city,
+            region,
+            country,
+            display_name
+        };
+
+        /** ---------------- LOCATION ---------------- */
+        const location = {
+            lat: result.geometry?.location?.lat || null,
+            lng: result.geometry?.location?.lng || null
+        };
+
+        /** ---------------- OPENING HOURS ---------------- */
         // Day order: Sunday=0, Monday=1, ..., Saturday=6
         const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
@@ -129,7 +172,11 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
 
         res.json({
             place_id: placeId,
-            working_hours: workingHours
+            international_phone_number: result.international_phone_number || null,
+            formatted_address: result.formatted_address || null,
+            location,
+            address,
+            working_hours
         });
 
     } catch (error) {
