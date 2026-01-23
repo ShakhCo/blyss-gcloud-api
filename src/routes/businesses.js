@@ -1005,19 +1005,20 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
         const isSelf = phone_number === req.user.phone_number;
 
         // Ensure working_hours matches availability_type
-        // For flexible: all days should have is_open: false
+        // For flexible: copy business hours but all days is_open: false
         // For fixed: working_hours are provided with specific open days
         let finalWorkingHours = working_hours;
         if (availability_type === 'flexible') {
-            // Create closed working hours for flexible availability
+            // Copy business working hours but set all days to closed
+            const businessHours = businessData.working_hours || {};
             finalWorkingHours = {
-                monday: { start: 0, end: 0, is_open: false },
-                tuesday: { start: 0, end: 0, is_open: false },
-                wednesday: { start: 0, end: 0, is_open: false },
-                thursday: { start: 0, end: 0, is_open: false },
-                friday: { start: 0, end: 0, is_open: false },
-                saturday: { start: 0, end: 0, is_open: false },
-                sunday: { start: 0, end: 0, is_open: false }
+                monday: { ...(businessHours.monday || { start: 0, end: 0 }), is_open: false },
+                tuesday: { ...(businessHours.tuesday || { start: 0, end: 0 }), is_open: false },
+                wednesday: { ...(businessHours.wednesday || { start: 0, end: 0 }), is_open: false },
+                thursday: { ...(businessHours.thursday || { start: 0, end: 0 }), is_open: false },
+                friday: { ...(businessHours.friday || { start: 0, end: 0 }), is_open: false },
+                saturday: { ...(businessHours.saturday || { start: 0, end: 0 }), is_open: false },
+                sunday: { ...(businessHours.sunday || { start: 0, end: 0 }), is_open: false }
             };
         }
 
@@ -1275,15 +1276,20 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
         // Ensure working_hours matches availability_type
         let finalWorkingHours = working_hours;
         if (availability_type === 'flexible') {
-            // Create closed working hours for flexible availability
+            // Get business working hours to copy
+            const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+            const businessData = businessDoc.data();
+            const businessHours = businessData.working_hours || {};
+
+            // Copy business working hours but set all days to closed
             finalWorkingHours = {
-                monday: { start: 0, end: 0, is_open: false },
-                tuesday: { start: 0, end: 0, is_open: false },
-                wednesday: { start: 0, end: 0, is_open: false },
-                thursday: { start: 0, end: 0, is_open: false },
-                friday: { start: 0, end: 0, is_open: false },
-                saturday: { start: 0, end: 0, is_open: false },
-                sunday: { start: 0, end: 0, is_open: false }
+                monday: { ...(businessHours.monday || { start: 0, end: 0 }), is_open: false },
+                tuesday: { ...(businessHours.tuesday || { start: 0, end: 0 }), is_open: false },
+                wednesday: { ...(businessHours.wednesday || { start: 0, end: 0 }), is_open: false },
+                thursday: { ...(businessHours.thursday || { start: 0, end: 0 }), is_open: false },
+                friday: { ...(businessHours.friday || { start: 0, end: 0 }), is_open: false },
+                saturday: { ...(businessHours.saturday || { start: 0, end: 0 }), is_open: false },
+                sunday: { ...(businessHours.sunday || { start: 0, end: 0 }), is_open: false }
             };
         }
 
@@ -1388,19 +1394,22 @@ router.post('/join/:token', authenticate, async (req, res) => {
 
         const dateCreated = new Date();
 
-        // Create employee record with flexible working hours (all days closed)
+        // Create employee record with flexible working hours (copy business hours, all days closed)
+        const businessHours = businessData.working_hours || {};
+        const flexibleWorkingHours = {
+            monday: { ...(businessHours.monday || { start: 0, end: 0 }), is_open: false },
+            tuesday: { ...(businessHours.tuesday || { start: 0, end: 0 }), is_open: false },
+            wednesday: { ...(businessHours.wednesday || { start: 0, end: 0 }), is_open: false },
+            thursday: { ...(businessHours.thursday || { start: 0, end: 0 }), is_open: false },
+            friday: { ...(businessHours.friday || { start: 0, end: 0 }), is_open: false },
+            saturday: { ...(businessHours.saturday || { start: 0, end: 0 }), is_open: false },
+            sunday: { ...(businessHours.sunday || { start: 0, end: 0 }), is_open: false }
+        };
+
         const employeeData = {
             phone_number: req.user.phone_number,
             availability_type: 'flexible',
-            working_hours: {
-                monday: { start: 0, end: 0, is_open: false },
-                tuesday: { start: 0, end: 0, is_open: false },
-                wednesday: { start: 0, end: 0, is_open: false },
-                thursday: { start: 0, end: 0, is_open: false },
-                friday: { start: 0, end: 0, is_open: false },
-                saturday: { start: 0, end: 0, is_open: false },
-                sunday: { start: 0, end: 0, is_open: false }
-            },
+            working_hours: flexibleWorkingHours,
             date_created: dateCreated,
             is_accepted: false,
             date_accepted: null,
@@ -1426,7 +1435,7 @@ router.post('/join/:token', authenticate, async (req, res) => {
             business_name: businessData.business_name,
             phone_number: req.user.phone_number,
             availability_type: 'flexible',
-            working_hours: employeeData.working_hours,
+            working_hours: flexibleWorkingHours,
             date_created: dateCreated.toISOString(),
             is_accepted: false
         });

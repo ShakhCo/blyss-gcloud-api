@@ -189,7 +189,6 @@ router.get('/workplaces', authenticate, async (req, res) => {
                 business_name: businessData.business_name,
                 business_type: businessData.business_type,
                 location: businessData.location,
-                working_graphic_type: businessData.working_graphic_type,
                 working_hours: businessData.working_hours,
                 business_phone_number: businessData.business_phone_number,
                 business_owner_id: businessData.business_owner_id,

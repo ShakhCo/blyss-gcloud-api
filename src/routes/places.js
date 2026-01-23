@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../middleware/validate.js';
+import { authenticate } from '../middleware/authenticate.js';
 import { placeSearchSchema } from '../schemas/places.js';
 
 const router = Router();
@@ -55,8 +56,8 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
     }
 });
 
-// Get place opening hours by place_id
-router.get('/:placeId/details', async (req, res) => {
+// Get place opening hours by place_id (authenticated)
+router.get('/:placeId/details', authenticate, async (req, res) => {
     try {
         const { placeId } = req.params;
 
@@ -71,8 +72,7 @@ router.get('/:placeId/details', async (req, res) => {
         const params = new URLSearchParams({
             place_id: placeId,
             key: apiKey,
-            language: 'uz',
-            fields: 'name,opening_hours,photos,international_phone_number,address_components,formatted_address,geometry'
+            fields: 'opening_hours'
         });
 
         const url = `https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`;
@@ -87,83 +87,49 @@ router.get('/:placeId/details', async (req, res) => {
             });
         }
 
-        const result = data.result;
+        const openingHours = data.result?.opening_hours;
 
-        /** ---------------- ADDRESS PARSING (UZ) ---------------- */
-        const getComponent = (type) =>
-            result.address_components?.find(c => c.types.includes(type))?.long_name || null;
+        // Day order: Sunday=0, Monday=1, ..., Saturday=6
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
-        let region =
-            getComponent('administrative_area_level_1') ||
-            getComponent('administrative_area_level_2');
+        // Convert "HHMM" format to seconds from midnight
+        const timeToSeconds = (timeStr) => {
+            if (!timeStr) return null;
+            const hours = parseInt(timeStr.slice(0, 2), 10);
+            const minutes = parseInt(timeStr.slice(2), 10);
+            return hours * 3600 + minutes * 60;
+        };
 
-        let city =
-            getComponent('locality') ||
-            getComponent('administrative_area_level_3') ||
-            getComponent('sublocality');
+        // Initialize all days as closed
+        const workingHours = {
+            monday: { start: 0, end: 86399, is_open: false },
+            tuesday: { start: 0, end: 86399, is_open: false },
+            wednesday: { start: 0, end: 86399, is_open: false },
+            thursday: { start: 0, end: 86399, is_open: false },
+            friday: { start: 0, end: 86399, is_open: false },
+            saturday: { start: 0, end: 86399, is_open: false },
+            sunday: { start: 0, end: 86399, is_open: false }
+        };
 
-        const street_name = [getComponent('route'), getComponent('street_number')]
-            .filter(Boolean)
-            .join(' ') || null;
+        // Fill in opening hours from Google Places API
+        if (openingHours?.periods) {
+            for (const period of openingHours.periods) {
+                const dayIndex = period.open.day; // 0=Sunday, 1=Monday, etc.
+                const dayName = dayNames[dayIndex];
+                const start = timeToSeconds(period.open.time);
+                const end = timeToSeconds(period.close?.time);
 
-        const display_name = `${result.name}, ${result.formatted_address}`;
-
-        // Special case: Toshkent city
-        if (region?.includes('Tashkent') && !city) {
-            city = 'Tashkent';
+                workingHours[dayName] = {
+                    start,
+                    end,
+                    is_open: true
+                };
+            }
         }
 
-        const address = {
-            region,
-            city,
-            street_name,
-            display_name
-        };
-
-        /** ---------------- OPENING HOURS ---------------- */
-        const openingHours = result.opening_hours || null;
-
-        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-        const formatTime = (time) =>
-            time ? `${time.slice(0, 2)}:${time.slice(2)}` : null;
-
-        const schedule = openingHours?.periods?.map(period => ({
-            day: period.open.day,
-            day_name: dayNames[period.open.day],
-            working_hours: {
-                start_time: formatTime(period.open.time),
-                end_time: formatTime(period.close?.time)
-            }
-        })) || [];
-
-        /** ---------------- PHOTOS ---------------- */
-        const photos = (result.photos || []).map(photo => ({
-            height: photo.height,
-            width: photo.width,
-            photo_reference: photo.photo_reference,
-            photo_url: `/places/photo/${photo.photo_reference}`
-        }));
-
-        /** ---------------- LAT/LNG ---------------- */
-        const location = {
-            lat: result.geometry?.location?.lat || null,
-            lng: result.geometry?.location?.lng || null
-        };
-
-        /** ---------------- RESPONSE ---------------- */
         res.json({
             place_id: placeId,
-            name: result.name,
-            international_phone_number: result.international_phone_number || null,
-
-            address,
-            location,
-
-            open_now: openingHours?.open_now ?? null,
-            weekday_text: openingHours?.weekday_text || [],
-            schedule,
-            photos
+            working_hours: workingHours
         });
 
     } catch (error) {
