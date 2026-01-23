@@ -140,7 +140,9 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
             if (!timeStr) return null;
             const hours = parseInt(timeStr.slice(0, 2), 10);
             const minutes = parseInt(timeStr.slice(2), 10);
-            return hours * 3600 + minutes * 60;
+            const seconds = hours * 3600 + minutes * 60;
+            // Handle midnight (0000) as end of day (86400 seconds)
+            return seconds === 0 ? 86399 : seconds;
         };
 
         // Initialize all days as closed
