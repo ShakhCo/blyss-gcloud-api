@@ -291,6 +291,7 @@ router.get('/:id', authenticate, async (req, res) => {
             business_owner_id: data.business_owner_id,
             business_status: data.business_status,
             tenant_url: data.tenant_url || null,
+            avatar_url: data.avatar_url || null,
             employee_invite_token: data.employee_invite_token || null,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
         });
