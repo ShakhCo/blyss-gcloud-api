@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { db } from '../db/db.js';
+import { authenticate } from '../middleware/authenticate.js';
 
 const router = Router();
 
@@ -213,6 +214,85 @@ router.get('/businesses/:slug/services', async (req, res) => {
 
         res.json({
             business: {
+                name: businessData.business_name,
+                business_type: businessData.business_type,
+                location: businessData.location,
+                working_hours: formatWorkingHours(businessData.working_hours),
+                business_phone_number: businessData.business_phone_number,
+                tenant_url: businessData.tenant_url
+            },
+            services
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * Get business details with services by business ID (authenticated users only)
+ * Example: GET /public/businesses-auth/abc123xyz/services
+ * Requires authentication with user type 'user'
+ * Returns business with id field
+ */
+router.get('/businesses/:businessId/services', authenticate, async (req, res) => {
+    try {
+        // Only users can access this endpoint
+        if (req.user.user_type !== 'user') {
+            return res.status(403).json({
+                error: 'Only users can access this endpoint',
+                error_code: 'FORBIDDEN'
+            });
+        }
+
+        const { businessId } = req.params;
+
+        // Find business by ID
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+
+        if (!businessDoc.exists) {
+            return res.status(404).json({
+                error: 'Business not found',
+                error_code: 'BUSINESS_NOT_FOUND'
+            });
+        }
+
+        const businessData = businessDoc.data();
+
+        // Get active services for this business
+        const servicesSnapshot = await db.collection('businesses')
+            .doc(businessId)
+            .collection('services')
+            .where('is_active', '==', true)
+            .get();
+
+        const services = servicesSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                name: data.name,
+                price: data.price,
+                duration_minutes: data.duration_minutes
+            };
+        });
+
+        // Format working_hours - use default structure if null or undefined
+        const formatWorkingHours = (hours) => {
+            const defaultHours = {
+                monday: { start: 0, end: 86399, is_open: false },
+                tuesday: { start: 0, end: 86399, is_open: false },
+                wednesday: { start: 0, end: 86399, is_open: false },
+                thursday: { start: 0, end: 86399, is_open: false },
+                friday: { start: 0, end: 86399, is_open: false },
+                saturday: { start: 0, end: 86399, is_open: false },
+                sunday: { start: 0, end: 86399, is_open: false }
+            };
+            if (!hours) return defaultHours;
+            return { ...defaultHours, ...hours };
+        };
+
+        res.json({
+            business: {
+                id: businessId,
                 name: businessData.business_name,
                 business_type: businessData.business_type,
                 location: businessData.location,
