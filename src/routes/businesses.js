@@ -273,7 +273,79 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             business_phone_number
         };
 
-        await docRef.update(updateData);
+        // Clip employee working hours to business hours range if working_hours are being updated
+        let employeeUpdatePromises = [];
+        if (working_hours) {
+            const employeesSnapshot = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .get();
+
+            for (const employeeDoc of employeesSnapshot.docs) {
+                const employeeData = employeeDoc.data();
+                const employeeWorkingHours = employeeData.working_hours;
+
+                if (!employeeWorkingHours) continue;
+
+                let needsUpdate = false;
+                const updatedWorkingHours = { ...employeeWorkingHours };
+
+                // Process each day
+                for (const [dayName, businessDay] of Object.entries(working_hours)) {
+                    const employeeDay = updatedWorkingHours[dayName];
+
+                    if (!employeeDay) continue;
+
+                    // If business day is closed, set employee day is_open to false
+                    if (!businessDay.is_open && employeeDay.is_open) {
+                        updatedWorkingHours[dayName] = {
+                            ...employeeDay,
+                            is_open: false
+                        };
+                        needsUpdate = true;
+                    }
+
+                    // If both business and employee day are open, clip employee hours to business hours range
+                    if (businessDay.is_open && employeeDay.is_open) {
+                        let dayNeedsUpdate = false;
+                        const updatedDay = { ...employeeDay };
+
+                        // Clip start time: employee start should not be earlier than business start
+                        if (employeeDay.start < businessDay.start) {
+                            updatedDay.start = businessDay.start;
+                            dayNeedsUpdate = true;
+                        }
+
+                        // Clip end time: employee end should not be later than business end
+                        if (employeeDay.end > businessDay.end) {
+                            updatedDay.end = businessDay.end;
+                            dayNeedsUpdate = true;
+                        }
+
+                        // If employee hours are now invalid (start >= end), close the day
+                        if (updatedDay.start >= updatedDay.end) {
+                            updatedDay.is_open = false;
+                            dayNeedsUpdate = true;
+                        }
+
+                        if (dayNeedsUpdate) {
+                            updatedWorkingHours[dayName] = updatedDay;
+                            needsUpdate = true;
+                        }
+                    }
+                }
+
+                if (needsUpdate) {
+                    employeeUpdatePromises.push(
+                        employeeDoc.ref.update({
+                            working_hours: updatedWorkingHours
+                        })
+                    );
+                }
+            }
+        }
+
+        await Promise.all([...employeeUpdatePromises, docRef.update(updateData)]);
 
         res.json({
             id: req.params.id,
@@ -419,7 +491,7 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             .collection('employees')
             .get();
 
-        // Update employees whose working hours need to be set to closed (when business day is closed)
+        // Update employees whose working hours need to be clipped to business hours range
         const updatePromises = [];
 
         for (const employeeDoc of employeesSnapshot.docs) {
@@ -431,14 +503,48 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             let needsUpdate = false;
             const updatedWorkingHours = { ...employeeWorkingHours };
 
-            // If business day is closed, set employee day is_open to false
-            for (const closedDay of closedDays) {
-                if (updatedWorkingHours[closedDay] && updatedWorkingHours[closedDay].is_open) {
-                    updatedWorkingHours[closedDay] = {
-                        ...updatedWorkingHours[closedDay],
+            // Process each day
+            for (const [dayName, businessDay] of Object.entries(working_hours)) {
+                const employeeDay = updatedWorkingHours[dayName];
+
+                if (!employeeDay) continue;
+
+                // If business day is closed, set employee day is_open to false
+                if (!businessDay.is_open && employeeDay.is_open) {
+                    updatedWorkingHours[dayName] = {
+                        ...employeeDay,
                         is_open: false
                     };
                     needsUpdate = true;
+                }
+
+                // If both business and employee day are open, clip employee hours to business hours range
+                if (businessDay.is_open && employeeDay.is_open) {
+                    let dayNeedsUpdate = false;
+                    const updatedDay = { ...employeeDay };
+
+                    // Clip start time: employee start should not be earlier than business start
+                    if (employeeDay.start < businessDay.start) {
+                        updatedDay.start = businessDay.start;
+                        dayNeedsUpdate = true;
+                    }
+
+                    // Clip end time: employee end should not be later than business end
+                    if (employeeDay.end > businessDay.end) {
+                        updatedDay.end = businessDay.end;
+                        dayNeedsUpdate = true;
+                    }
+
+                    // If employee hours are now invalid (start >= end), close the day
+                    if (updatedDay.start >= updatedDay.end) {
+                        updatedDay.is_open = false;
+                        dayNeedsUpdate = true;
+                    }
+
+                    if (dayNeedsUpdate) {
+                        updatedWorkingHours[dayName] = updatedDay;
+                        needsUpdate = true;
+                    }
                 }
             }
 
