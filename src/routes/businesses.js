@@ -231,6 +231,7 @@ router.get('/nearest', authenticate, validate(nearestBusinessesQuerySchema, 'que
                     business_owner_id: business.business_owner_id,
                     business_status: business.business_status,
                     tenant_url: business.tenant_url || null,
+                    avatar_url: business.avatar_url || null,
                     distance: Math.round(distance * 100) / 100,
                     services
                 });
