@@ -40,6 +40,38 @@ function isEmployeeOpenNow(availabilityType, workingHours) {
     return currentSeconds >= todayHours.start && currentSeconds <= todayHours.end;
 }
 
+/**
+ * Check if business is currently open based on working hours
+ * @param {object} workingHours - Working hours object with day names as keys
+ * @returns {boolean} - true if currently open, false otherwise
+ */
+function isBusinessOpenNow(workingHours) {
+    if (!workingHours) {
+        return false;
+    }
+
+    const now = new Date();
+    // Convert to Uzbekistan timezone (GMT+5)
+    const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const uzbekNow = new Date(utcNow + (5 * 3600000)); // GMT+5
+
+    const currentDay = uzbekNow.getDay(); // 0 = Sunday, 6 = Saturday
+    const currentSeconds = uzbekNow.getHours() * 3600 + uzbekNow.getMinutes() * 60 + uzbekNow.getSeconds();
+
+    // Day number to day name mapping
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const todayName = dayNames[currentDay];
+
+    const todayHours = workingHours[todayName];
+
+    // If today is not open, return false
+    if (!todayHours || !todayHours.is_open) {
+        return false;
+    }
+
+    return currentSeconds >= todayHours.start && currentSeconds <= todayHours.end;
+}
+
 // Get workplaces for a business owner
 router.get('/business-owner/:businessOwnerId/workplaces', async (req, res) => {
     try {
@@ -165,10 +197,24 @@ router.get('/workplaces', authenticate, async (req, res) => {
             };
         });
 
-        // Calculate is_open_now
+        // Determine is_open_now: use stored value for flexible, calculate for fixed
         const availabilityType = employeeData.availability_type ?? 'flexible';
         const workingHours = employeeData.working_hours ?? null;
-        const isOpenNow = isEmployeeOpenNow(availabilityType, workingHours);
+        let isOpenNow;
+
+        if (availabilityType === 'flexible') {
+            // For flexible, check if business is open first
+            const businessIsOpen = isBusinessOpenNow(businessData.working_hours);
+            if (!businessIsOpen) {
+                isOpenNow = false;
+            } else {
+                // Business is open, use the manually set value from DB
+                isOpenNow = employeeData.is_open_now ?? false;
+            }
+        } else {
+            // For fixed, calculate based on working hours
+            isOpenNow = isEmployeeOpenNow(availabilityType, workingHours);
+        }
 
         res.json({
             employee: {
