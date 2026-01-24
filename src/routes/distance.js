@@ -41,11 +41,31 @@ function setCache(key, value) {
 }
 
 /**
+ * Middleware to parse nested query parameters like user_location[lat]=41.2995
+ * into nested objects { user_location: { lat: 41.2995 } }
+ */
+function parseNestedQuery(req, res, next) {
+    const parsed = {};
+    for (const [key, value] of Object.entries(req.query)) {
+        const match = key.match(/^(\w+)\[(\w+)\]$/);
+        if (match) {
+            const [, parent, child] = match;
+            if (!parsed[parent]) parsed[parent] = {};
+            parsed[parent][child] = value;
+        } else {
+            parsed[key] = value;
+        }
+    }
+    req.query = { ...req.query, ...parsed };
+    next();
+}
+
+/**
  * Calculate road distance between two locations using OpenRouteService Matrix API
  * Query params: user_location (required), business_location (required)
  * Returns: { distance: number, metric: 'km' | 'm' }
  */
-router.get('/', validate(distanceQuerySchema, 'query'), async (req, res) => {
+router.get('/', parseNestedQuery, validate(distanceQuerySchema, 'query'), async (req, res) => {
     try {
         const { user_location, business_location } = req.validated;
 

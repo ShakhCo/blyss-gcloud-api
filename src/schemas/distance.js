@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
-// Location schema
+// Location schema - use coerce to convert strings to numbers
 const locationSchema = z.object({
-    lat: z.number({
+    lat: z.coerce.number({
         required_error: 'lat is required',
         invalid_type_error: 'lat must be a number'
     }).min(-90, 'lat must be between -90 and 90')
      .max(90, 'lat must be between -90 and 90'),
-    lng: z.number({
+    lng: z.coerce.number({
         required_error: 'lng is required',
         invalid_type_error: 'lng must be a number'
     }).min(-180, 'lng must be between -180 and 180')
