@@ -12,7 +12,8 @@ const upload = multer();
 app.use(cors({
     origin: [
         'https://business-miniapp.blyss.uz',
-        'https://barbershop-miniapp-beta.automations.uz'
+        'https://barbershop-miniapp-beta.automations.uz',
+        "https://barbershop-miniapp.automations.uz"
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
