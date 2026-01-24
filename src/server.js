@@ -7,7 +7,15 @@ import routes from './routes/index.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Multer for parsing form data without files
 const upload = multer();
+
+// Multer for single file uploads (stored in memory)
+export const uploadSingle = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
 
 app.use(cors({
     origin: [

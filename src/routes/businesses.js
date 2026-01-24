@@ -3,12 +3,14 @@ import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
+import { uploadSingle } from '../server.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, nearestBusinessesQuerySchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
 import { sendBusinessInvitationSms } from '../utils/eskiz.js';
 import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
+import { uploadFile, deleteFile, getFilenameFromUrl } from '../utils/storage.js';
 
 const router = Router();
 
@@ -722,6 +724,59 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
         res.json({
             id: req.params.id,
             working_hours
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Upload business avatar
+router.post('/:id/avatar', authenticate, uploadSingle.single('avatar'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded', error_code: 'NO_FILE' });
+        }
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Delete old avatar if exists
+        if (currentData.avatar_url) {
+            const oldFilename = getFilenameFromUrl(currentData.avatar_url);
+            if (oldFilename) {
+                try {
+                    await deleteFile(oldFilename);
+                } catch (err) {
+                    // Log but don't fail if old file deletion fails
+                    console.error('Failed to delete old avatar:', err.message);
+                }
+            }
+        }
+
+        // Generate unique filename
+        const extension = req.file.mimetype.split('/')[1] || 'jpg';
+        const filename = `avatars/${req.params.id}/${Date.now()}.${extension}`;
+
+        // Upload to GCS
+        const avatarUrl = await uploadFile(req.file.buffer, filename, req.file.mimetype);
+
+        // Update business document
+        await docRef.update({ avatar_url: avatarUrl });
+
+        res.json({
+            id: req.params.id,
+            avatar_url: avatarUrl
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
