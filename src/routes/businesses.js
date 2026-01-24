@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
-import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema } from '../schemas/business.js';
+import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, nearestBusinessesQuerySchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
@@ -131,6 +131,107 @@ router.get('/', authenticate, async (req, res) => {
             };
         });
         res.json(businesses);
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * Calculate distance between two coordinates using Haversine formula
+ * @param {number} lat1 - Latitude of first point
+ * @param {number} lng1 - Longitude of first point
+ * @param {number} lat2 - Latitude of second point
+ * @param {number} lng2 - Longitude of second point
+ * @returns {number} - Distance in kilometers
+ */
+function calculateDistance(lat1, lng1, lat2, lng2) {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = toRadians(lat2 - lat1);
+    const dLng = toRadians(lng2 - lng1);
+
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+function toRadians(degrees) {
+    return degrees * (Math.PI / 180);
+}
+
+/**
+ * Get nearest businesses based on user's location with pagination
+ * Query params: lat (required), lng (required), radius (optional, default 10km), page (optional, default 1), page_size (optional, default 5)
+ * Only authenticated users can access this endpoint
+ */
+router.get('/nearest', authenticate, validate(nearestBusinessesQuerySchema, 'query'), async (req, res) => {
+    try {
+        const { lat, lng, radius = 10, page = 1, page_size = 5 } = req.validated;
+
+        // Fetch all active businesses with locations
+        const businessesSnapshot = await db.collection('businesses')
+            .where('business_status', '==', 'active')
+            .get();
+
+        if (businessesSnapshot.empty) {
+            return res.json({
+                data: [],
+                pagination: {
+                    page: 1,
+                    page_size,
+                    total: 0,
+                    total_pages: 0
+                }
+            });
+        }
+
+        // Calculate distances for each business
+        const businessesWithDistance = [];
+
+        for (const doc of businessesSnapshot.docs) {
+            const business = { id: doc.id, ...doc.data() };
+
+            // Skip if location is missing
+            if (!business.location || !business.location.lat || !business.location.lng) {
+                continue;
+            }
+
+            const distance = calculateDistance(lat, lng, business.location.lat, business.location.lng);
+
+            // Only include businesses within the specified radius
+            if (distance <= radius) {
+                businessesWithDistance.push({
+                    ...business,
+                    distance: Math.round(distance * 100) / 100 // Round to 2 decimal places
+                });
+            }
+        }
+
+        // Sort by distance
+        businessesWithDistance.sort((a, b) => a.distance - b.distance);
+
+        // Calculate pagination
+        const total = businessesWithDistance.length;
+        const total_pages = Math.ceil(total / page_size);
+        const start_index = (page - 1) * page_size;
+        const end_index = start_index + page_size;
+
+        // Get paginated results
+        const paginatedBusinesses = businessesWithDistance.slice(start_index, end_index);
+
+        res.json({
+            data: paginatedBusinesses,
+            pagination: {
+                page,
+                page_size,
+                total,
+                total_pages,
+                has_next: page < total_pages,
+                has_prev: page > 1
+            }
+        });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
