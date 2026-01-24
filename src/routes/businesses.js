@@ -232,6 +232,7 @@ router.get('/nearest', authenticate, validate(nearestBusinessesQuerySchema, 'que
                     business_status: business.business_status,
                     tenant_url: business.tenant_url || null,
                     avatar_url: business.avatar_url || null,
+                    avatar_updated_at: business.avatar_updated_at?.toDate?.().toISOString() || business.avatar_updated_at || null,
                     distance: Math.round(distance * 100) / 100,
                     services
                 });
@@ -293,6 +294,7 @@ router.get('/:id', authenticate, async (req, res) => {
             business_status: data.business_status,
             tenant_url: data.tenant_url || null,
             avatar_url: data.avatar_url || null,
+            avatar_updated_at: data.avatar_updated_at?.toDate?.().toISOString() || data.avatar_updated_at || null,
             employee_invite_token: data.employee_invite_token || null,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
         });
@@ -783,12 +785,58 @@ router.post('/:id/avatar', authenticate, uploadSingle.single('avatar'), async (r
         const avatarUrl = await uploadFile(req.file.buffer, filename, req.file.mimetype);
 
         // Update business document
-        await docRef.update({ avatar_url: avatarUrl });
+        await docRef.update({
+            avatar_url: avatarUrl,
+            avatar_updated_at: new Date()
+        });
 
         res.json({
             id: req.params.id,
-            avatar_url: avatarUrl
+            avatar_url: avatarUrl,
+            avatar_updated_at: new Date().toISOString()
         });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Delete business avatar
+router.delete('/:id/avatar', authenticate, async (req, res) => {
+    try {
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Delete avatar file from GCS if exists
+        if (currentData.avatar_url) {
+            const filename = getFilenameFromUrl(currentData.avatar_url);
+            if (filename) {
+                try {
+                    await deleteFile(filename);
+                } catch (err) {
+                    // Log but don't fail if file deletion fails
+                    console.error('Failed to delete avatar file:', err.message);
+                }
+            }
+        }
+
+        // Remove avatar_url from business document
+        await docRef.update({
+            avatar_url: null,
+            avatar_updated_at: new Date()
+        });
+
+        res.status(204).send();
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }

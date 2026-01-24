@@ -117,6 +117,7 @@ router.get('/business-owner/:businessOwnerId/workplaces', async (req, res) => {
                     business_owner_id: businessData.business_owner_id,
                     business_status: businessData.business_status,
                     avatar_url: businessData.avatar_url || null,
+                    avatar_updated_at: businessData.avatar_updated_at?.toDate?.().toISOString() || businessData.avatar_updated_at || null,
                     date_created: businessData.date_created?.toDate?.().toISOString() || businessData.date_created
                 },
                 employee: {
@@ -242,6 +243,7 @@ router.get('/workplaces', authenticate, async (req, res) => {
                 business_status: businessData.business_status,
                 tenant_url: businessData.tenant_url || null,
                 avatar_url: businessData.avatar_url || null,
+                avatar_updated_at: businessData.avatar_updated_at?.toDate?.().toISOString() || businessData.avatar_updated_at || null,
                 services: servicesSnapshot.docs.map(doc => {
                     const data = doc.data();
                     return {
@@ -300,6 +302,7 @@ router.get('/workplaces/pending', authenticate, async (req, res) => {
                     business_status: businessData.business_status,
                     tenant_url: businessData.tenant_url || null,
                     avatar_url: businessData.avatar_url || null,
+                    avatar_updated_at: businessData.avatar_updated_at?.toDate?.().toISOString() || businessData.avatar_updated_at || null,
                     date_created: businessData.date_created?.toDate?.().toISOString() || businessData.date_created
                 },
                 employee: {
