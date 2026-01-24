@@ -102,29 +102,29 @@ export const nearestBusinessesQuerySchema = z.object({
         required_error: 'lat is required',
         invalid_type_error: 'lat must be a number'
     }).min(-90, 'lat must be between -90 and 90')
-     .max(90, 'lat must be between -90 and 90'),
+        .max(90, 'lat must be between -90 and 90'),
     lng: z.coerce.number({
         required_error: 'lng is required',
         invalid_type_error: 'lng must be a number'
     }).min(-180, 'lng must be between -180 and 180')
-     .max(180, 'lng must be between -180 and 180'),
+        .max(180, 'lng must be between -180 and 180'),
     radius: z.coerce.number({
         invalid_type_error: 'radius must be a number'
     }).positive('radius must be positive')
-     .max(100, 'radius must be at most 100 km')
-     .default(10)
-     .optional(),
+        .max(1000, 'radius must be at most 100 km')
+        .default(10)
+        .optional(),
     page: z.coerce.number({
         invalid_type_error: 'page must be a number'
     }).positive('page must be positive')
-     .int('page must be an integer')
-     .default(1)
-     .optional(),
+        .int('page must be an integer')
+        .default(1)
+        .optional(),
     page_size: z.coerce.number({
         invalid_type_error: 'page_size must be a number'
     }).positive('page_size must be positive')
-     .int('page_size must be an integer')
-     .max(100, 'page_size must be at most 100')
-     .default(5)
-     .optional()
+        .int('page_size must be an integer')
+        .max(100, 'page_size must be at most 100')
+        .default(5)
+        .optional()
 });
