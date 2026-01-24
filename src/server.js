@@ -24,16 +24,30 @@ app.use(cors({
 
 app.use(cookieParser());
 
-// Parse JSON bodies (must come before any routes)
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Handle text/plain for testing/debugging
-app.use(express.text());
+// IMPORTANT: Parse JSON and URL-encoded bodies BEFORE routes
+// Remove express.text() - it interferes with JSON parsing
+app.use(express.json({ limit: '10mb' })); // Added limit for larger payloads
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.get('/', (req, res) => {
     res.send('Hello world');
 });
+
+// Debug endpoint to test body parsing
+app.post('/debug-body', (req, res) => {
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body);
+    res.json({
+        'content-type': req.headers['content-type'],
+        'body-exists': !!req.body,
+        'body-type': typeof req.body,
+        'body-keys': Object.keys(req.body || {}),
+        'body': req.body
+    });
+});
+
+// For multipart/form-data with files, use multer on specific routes
+// Example: app.post('/upload', upload.single('file'), (req, res) => { ... })
 
 app.use(routes);
 
