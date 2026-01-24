@@ -24,8 +24,12 @@ app.use(cors({
 
 app.use(cookieParser());
 
+// Parse JSON bodies (must come before any routes)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Handle text/plain for testing/debugging
+app.use(express.text());
 
 app.get('/', (req, res) => {
     res.send('Hello world');

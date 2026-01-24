@@ -589,6 +589,15 @@ router.patch('/:id/tenant-url', authenticate, async (req, res) => {
 // Update business name
 router.patch('/:id/name', authenticate, async (req, res) => {
     try {
+        // Debug logging
+        console.log('PATCH /:id/name - Headers:', req.headers['content-type']);
+        console.log('PATCH /:id/name - Body exists:', !!req.body);
+        console.log('PATCH /:id/name - Raw body:', req.body);
+
+        if (!req.body || Object.keys(req.body).length === 0) {
+            return res.status(400).json({ error: 'Request body is required with Content-Type: application/json', error_code: 'NO_BODY' });
+        }
+
         const { business_name } = req.body;
 
         if (!business_name) {
