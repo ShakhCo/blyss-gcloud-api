@@ -196,12 +196,27 @@ router.get('/businesses/:slug/services', async (req, res) => {
             };
         });
 
+        // Format working_hours - use default structure if null or undefined
+        const formatWorkingHours = (hours) => {
+            const defaultHours = {
+                monday: { start: 0, end: 86399, is_open: false },
+                tuesday: { start: 0, end: 86399, is_open: false },
+                wednesday: { start: 0, end: 86399, is_open: false },
+                thursday: { start: 0, end: 86399, is_open: false },
+                friday: { start: 0, end: 86399, is_open: false },
+                saturday: { start: 0, end: 86399, is_open: false },
+                sunday: { start: 0, end: 86399, is_open: false }
+            };
+            if (!hours) return defaultHours;
+            return { ...defaultHours, ...hours };
+        };
+
         res.json({
             business: {
                 name: businessData.business_name,
                 business_type: businessData.business_type,
                 location: businessData.location,
-                working_hours: businessData.working_hours,
+                working_hours: formatWorkingHours(businessData.working_hours),
                 business_phone_number: businessData.business_phone_number,
                 tenant_url: businessData.tenant_url
             },
