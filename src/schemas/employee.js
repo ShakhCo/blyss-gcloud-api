@@ -40,6 +40,11 @@ export const updateEmployeeWorkingHoursSchema = z.object({
     is_open_now: z.boolean().optional()
 });
 
+// Update employee is_open_now schema
+export const updateEmployeeIsOpenNowSchema = z.object({
+    is_open_now: z.boolean({ required_error: 'is_open_now is required' })
+});
+
 // Accept/deny workplace schema
 export const workplaceActionSchema = z.object({
     accept: z.boolean({ required_error: 'accept is required' })

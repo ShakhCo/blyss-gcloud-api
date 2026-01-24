@@ -5,7 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
-import { employeeSchema, updateEmployeeWorkingHoursSchema } from '../schemas/employee.js';
+import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
 import { sendBusinessInvitationSms } from '../utils/eskiz.js';
 import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
@@ -22,6 +22,38 @@ function isEmployeeOpenNow(availabilityType, workingHours) {
     // If flexible, always considered open
     if (availabilityType === 'flexible' || !workingHours) {
         return true;
+    }
+
+    const now = new Date();
+    // Convert to Uzbekistan timezone (GMT+5)
+    const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const uzbekNow = new Date(utcNow + (5 * 3600000)); // GMT+5
+
+    const currentDay = uzbekNow.getDay(); // 0 = Sunday, 6 = Saturday
+    const currentSeconds = uzbekNow.getHours() * 3600 + uzbekNow.getMinutes() * 60 + uzbekNow.getSeconds();
+
+    // Day number to day name mapping
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const todayName = dayNames[currentDay];
+
+    const todayHours = workingHours[todayName];
+
+    // If today is not open, return false
+    if (!todayHours || !todayHours.is_open) {
+        return false;
+    }
+
+    return currentSeconds >= todayHours.start && currentSeconds <= todayHours.end;
+}
+
+/**
+ * Check if business is currently open based on working hours
+ * @param {object} workingHours - Working hours object with day names as keys
+ * @returns {boolean} - true if currently open, false otherwise
+ */
+function isBusinessOpenNow(workingHours) {
+    if (!workingHours) {
+        return false;
     }
 
     const now = new Date();
@@ -1410,6 +1442,52 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
             id: req.params.employeeId,
             availability_type: updateData.availability_type,
             working_hours: updateData.working_hours
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update employee is_open_now
+router.patch('/:id/employees/:employeeId/is-open-now', authenticate, validate(updateEmployeeIsOpenNowSchema), async (req, res) => {
+    try {
+        const employeeDoc = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
+            .doc(req.params.employeeId)
+            .get();
+
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const employeeData = employeeDoc.data();
+
+        // Verify that authenticated user's phone number matches employee's phone number
+        if (employeeData.phone_number !== req.user.phone_number) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const { is_open_now } = req.validated;
+
+        // If setting is_open_now to true, verify that business is currently open
+        if (is_open_now) {
+            const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+            if (!businessDoc.exists) {
+                return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+            }
+
+            const businessData = businessDoc.data();
+            if (!isBusinessOpenNow(businessData.working_hours)) {
+                return res.status(400).json({ error: 'Business is currently closed', error_code: 'BUSINESS_CLOSED' });
+            }
+        }
+
+        await employeeDoc.ref.update({ is_open_now });
+
+        res.json({
+            id: req.params.employeeId,
+            is_open_now
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
