@@ -8,6 +8,9 @@ import routes from './routes/index.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust proxy for rate limiting (behind Cloudflare/Google Cloud)
+app.set('trust proxy', true);
+
 // Multer for parsing form data without files
 const upload = multer();
 
