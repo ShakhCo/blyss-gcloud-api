@@ -26,7 +26,6 @@ app.use(cookieParser());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(upload.none());
 
 app.get('/', (req, res) => {
     res.send('Hello world');
