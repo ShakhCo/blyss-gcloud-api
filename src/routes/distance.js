@@ -10,6 +10,36 @@ if (!OPENROUTESERVICE_API_KEY) {
     console.warn('WARNING: OPENROUTESERVICE_API_KEY not set in environment variables');
 }
 
+// Simple in-memory cache for distance calculations
+// Key format: "lat1,lng1-lat2,lng2" (rounded to 4 decimal places)
+const distanceCache = new Map();
+const MAX_CACHE_SIZE = 1000;
+
+/**
+ * Generate cache key from two locations
+ * Rounds coordinates to 4 decimal places (~11m precision) for better cache hits
+ */
+function getCacheKey(lat1, lng1, lat2, lng2) {
+    const precision = 10000;
+    const rLat1 = Math.round(lat1 * precision) / precision;
+    const rLng1 = Math.round(lng1 * precision) / precision;
+    const rLat2 = Math.round(lat2 * precision) / precision;
+    const rLng2 = Math.round(lng2 * precision) / precision;
+    return `${rLat1},${rLng1}-${rLat2},${rLng2}`;
+}
+
+/**
+ * Add item to cache with LRU eviction if cache is full
+ */
+function setCache(key, value) {
+    if (distanceCache.size >= MAX_CACHE_SIZE) {
+        // Delete first (oldest) entry
+        const firstKey = distanceCache.keys().next().value;
+        distanceCache.delete(firstKey);
+    }
+    distanceCache.set(key, value);
+}
+
 /**
  * Calculate road distance between two locations using OpenRouteService Matrix API
  * Query params: user_location (required), business_location (required)
@@ -18,6 +48,14 @@ if (!OPENROUTESERVICE_API_KEY) {
 router.get('/', validate(distanceQuerySchema, 'query'), async (req, res) => {
     try {
         const { user_location, business_location } = req.validated;
+
+        // Check cache first
+        const cacheKey = getCacheKey(user_location.lat, user_location.lng, business_location.lat, business_location.lng);
+        const cachedResult = distanceCache.get(cacheKey);
+
+        if (cachedResult) {
+            return res.json(cachedResult);
+        }
 
         if (!OPENROUTESERVICE_API_KEY) {
             return res.status(500).json({
@@ -65,16 +103,22 @@ router.get('/', validate(distanceQuerySchema, 'query'), async (req, res) => {
             });
         }
 
-        // Return in meters if less than 1km, otherwise in kilometers
+        // Format response
+        let result;
         if (distanceInKm < 1) {
             // Convert to meters and round to nearest meter
             const distanceInMeters = Math.round(distanceInKm * 1000);
-            res.json({ distance: distanceInMeters, metric: 'm' });
+            result = { distance: distanceInMeters, metric: 'm' };
         } else {
             // Round to 1 decimal place for km
             const roundedKm = Math.round(distanceInKm * 10) / 10;
-            res.json({ distance: roundedKm, metric: 'km' });
+            result = { distance: roundedKm, metric: 'km' };
         }
+
+        // Cache the result
+        setCache(cacheKey, result);
+
+        res.json(result);
 
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
