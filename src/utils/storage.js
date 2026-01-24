@@ -1,7 +1,14 @@
 import { Storage } from '@google-cloud/storage';
 
-const storage = new Storage();
+let storage = null;
 const bucketName = process.env.GCS_BUCKET_NAME || 'blyss';
+
+function getStorage() {
+    if (!storage) {
+        storage = new Storage();
+    }
+    return storage;
+}
 
 /**
  * Upload a file to Google Cloud Storage
@@ -11,7 +18,7 @@ const bucketName = process.env.GCS_BUCKET_NAME || 'blyss';
  * @returns {Promise<string>} - Public URL of the uploaded file
  */
 export async function uploadFile(buffer, filename, contentType = 'image/jpeg') {
-    const bucket = storage.bucket(bucketName);
+    const bucket = getStorage().bucket(bucketName);
     const file = bucket.file(filename);
 
     await file.save(buffer, {
@@ -31,7 +38,7 @@ export async function uploadFile(buffer, filename, contentType = 'image/jpeg') {
  * @returns {Promise<void>}
  */
 export async function deleteFile(filename) {
-    const bucket = storage.bucket(bucketName);
+    const bucket = getStorage().bucket(bucketName);
     const file = bucket.file(filename);
     await file.delete();
 }
