@@ -186,7 +186,7 @@ router.get('/nearest', authenticate, validate(nearestBusinessesQuerySchema, 'que
             });
         }
 
-        // Calculate distances for each business
+        // Calculate distances for each business and fetch services
         const businessesWithDistance = [];
 
         for (const doc of businessesSnapshot.docs) {
@@ -201,9 +201,36 @@ router.get('/nearest', authenticate, validate(nearestBusinessesQuerySchema, 'que
 
             // Only include businesses within the specified radius
             if (distance <= radius) {
+                // Fetch services for this business
+                const servicesSnapshot = await db.collection('businesses')
+                    .doc(doc.id)
+                    .collection('services')
+                    .where('is_active', '==', true)
+                    .get();
+
+                const services = servicesSnapshot.docs.map(serviceDoc => {
+                    const serviceData = serviceDoc.data();
+                    return {
+                        id: serviceDoc.id,
+                        name: serviceData.name,
+                        price: serviceData.price,
+                        duration_minutes: serviceData.duration_minutes,
+                        is_active: serviceData.is_active ?? false
+                    };
+                });
+
                 businessesWithDistance.push({
-                    ...business,
-                    distance: Math.round(distance * 100) / 100 // Round to 2 decimal places
+                    id: doc.id,
+                    business_name: business.business_name,
+                    business_type: business.business_type,
+                    location: business.location,
+                    working_hours: business.working_hours,
+                    business_phone_number: business.business_phone_number,
+                    business_owner_id: business.business_owner_id,
+                    business_status: business.business_status,
+                    tenant_url: business.tenant_url || null,
+                    distance: Math.round(distance * 100) / 100,
+                    services
                 });
             }
         }

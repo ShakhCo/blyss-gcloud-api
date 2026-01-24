@@ -78,6 +78,7 @@ router.get('/', parseNestedQuery, validate(distanceQuerySchema, 'query'), async 
         }
 
         if (!OPENROUTESERVICE_API_KEY) {
+            console.error('OPENROUTESERVICE_API_KEY is not set in environment variables');
             return res.status(500).json({
                 error: 'OpenRouteService API key not configured',
                 error_code: 'API_KEY_MISSING'
