@@ -2,23 +2,14 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import multer from 'multer';
 import routes from './routes/index.js';
+import { upload } from './config/multer.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Trust proxy for rate limiting (behind Cloudflare/Google Cloud)
 app.set('trust proxy', true);
-
-// Multer for parsing form data without files
-const upload = multer();
-
-// Multer for single file uploads (stored in memory)
-export const uploadSingle = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
-});
 
 app.use(cors({
     origin: [
