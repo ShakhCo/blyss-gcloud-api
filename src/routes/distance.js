@@ -43,6 +43,7 @@ function setCache(key, value) {
 /**
  * Middleware to parse nested query parameters like user_location[lat]=41.2995
  * into nested objects { user_location: { lat: 41.2995 } }
+ * Stores result in req.parsedQuery for validation middleware to use
  */
 function parseNestedQuery(req, res, next) {
     const parsed = {};
@@ -52,11 +53,13 @@ function parseNestedQuery(req, res, next) {
             const [, parent, child] = match;
             if (!parsed[parent]) parsed[parent] = {};
             parsed[parent][child] = value;
-        } else {
+        } else if (!parsed[key]) {
+            // Only add non-nested params if not already added
             parsed[key] = value;
         }
     }
-    req.query = { ...req.query, ...parsed };
+    // Store parsed query for validation middleware
+    req.parsedQuery = { ...req.query, ...parsed };
     next();
 }
 

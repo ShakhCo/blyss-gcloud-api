@@ -1,5 +1,5 @@
 export const validate = (schema, source = 'body') => (req, res, next) => {
-    const data = source === 'query' ? req.query : req.body;
+    const data = source === 'query' ? (req.parsedQuery || req.query) : req.body;
 
     if (!data || Object.keys(data).length === 0) {
         const errorMsg = source === 'query' ? 'Query parameters are required' : 'Request body is required';
