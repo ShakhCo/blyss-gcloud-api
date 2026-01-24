@@ -234,7 +234,7 @@ router.get('/businesses/:slug/services', async (req, res) => {
  * Requires authentication with user type 'user'
  * Returns business with id field
  */
-router.get('/businesses/:businessId/services', authenticate, async (req, res) => {
+router.get('/businesses/:businessId/details', authenticate, async (req, res) => {
     try {
         // Only users can access this endpoint
         if (req.user.user_type !== 'user') {
