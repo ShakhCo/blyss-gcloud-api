@@ -30,9 +30,15 @@ const verifyHmacSignature = (body, timestamp, signature) => {
 /**
  * Verify request signature and timestamp
  * @param {Object} req - Express request object
- * @returns {{ valid: boolean, error?: string, error_code?: string, debug?: object }}
+ * @returns {{ valid: boolean, error?: string, error_code?: string }}
  */
 const verifyRequestSignature = (req) => {
+    const invalidSignatureResponse = {
+        valid: false,
+        error: 'Invalid signature',
+        error_code: 'INVALID_SIGNATURE'
+    };
+
     // Skip signature verification if API_SECRET is not configured
     if (!API_SECRET) {
         return { valid: true };
@@ -41,28 +47,8 @@ const verifyRequestSignature = (req) => {
     const timestamp = req.headers['x-timestamp'];
     const signature = req.headers['x-signature'];
 
-    if (!timestamp && !signature) {
-        return {
-            valid: false,
-            error: 'Missing both X-Timestamp and X-Signature headers',
-            error_code: 'MISSING_SIGNATURE'
-        };
-    }
-
-    if (!timestamp) {
-        return {
-            valid: false,
-            error: 'Missing X-Timestamp header',
-            error_code: 'MISSING_TIMESTAMP'
-        };
-    }
-
-    if (!signature) {
-        return {
-            valid: false,
-            error: 'Missing X-Signature header',
-            error_code: 'MISSING_SIGNATURE'
-        };
+    if (!timestamp || !signature) {
+        return invalidSignatureResponse;
     }
 
     // Check timestamp is not too old or in the future
@@ -70,26 +56,12 @@ const verifyRequestSignature = (req) => {
     const requestTime = parseInt(timestamp, 10);
 
     if (isNaN(requestTime)) {
-        return {
-            valid: false,
-            error: 'X-Timestamp is not a valid number',
-            error_code: 'INVALID_TIMESTAMP',
-            debug: { received_timestamp: timestamp }
-        };
+        return invalidSignatureResponse;
     }
 
     const timeDiff = now - requestTime;
     if (Math.abs(timeDiff) > MAX_TIMESTAMP_DIFF) {
-        return {
-            valid: false,
-            error: `Request timestamp expired. Difference: ${timeDiff}s (max allowed: ${MAX_TIMESTAMP_DIFF}s)`,
-            error_code: 'TIMESTAMP_EXPIRED',
-            debug: {
-                server_time: now,
-                request_time: requestTime,
-                difference_seconds: timeDiff
-            }
-        };
+        return invalidSignatureResponse;
     }
 
     // Get raw body for signature verification
@@ -108,31 +80,10 @@ const verifyRequestSignature = (req) => {
             crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
 
         if (!isValid) {
-            return {
-                valid: false,
-                error: 'Signature mismatch. Check that body and timestamp match on client and server',
-                error_code: 'SIGNATURE_MISMATCH',
-                debug: {
-                    body_used: body,
-                    timestamp_used: timestamp,
-                    message_signed: message,
-                    expected_signature: expectedSignature,
-                    received_signature: signature
-                }
-            };
+            return invalidSignatureResponse;
         }
     } catch (error) {
-        return {
-            valid: false,
-            error: `Signature verification error: ${error.message}`,
-            error_code: 'SIGNATURE_ERROR',
-            debug: {
-                body_used: body,
-                timestamp_used: timestamp,
-                expected_length: expectedSignature.length,
-                received_length: signature.length
-            }
-        };
+        return invalidSignatureResponse;
     }
 
     return { valid: true };
@@ -174,8 +125,7 @@ export const authenticate = async (req, res, next) => {
         if (!signatureResult.valid) {
             return res.status(401).json({
                 error: signatureResult.error,
-                error_code: signatureResult.error_code,
-                ...(signatureResult.debug && { debug: signatureResult.debug })
+                error_code: signatureResult.error_code
             });
         }
 
@@ -234,8 +184,7 @@ export const optionalAuthenticate = async (req, res, next) => {
         if (!signatureResult.valid) {
             return res.status(401).json({
                 error: signatureResult.error,
-                error_code: signatureResult.error_code,
-                ...(signatureResult.debug && { debug: signatureResult.debug })
+                error_code: signatureResult.error_code
             });
         }
 
