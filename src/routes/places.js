@@ -8,7 +8,7 @@ const router = Router();
 // Search places using Google Places Autocomplete API (restricted to Uzbekistan)
 router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => {
     try {
-        const { query } = req.validated;
+        const { query, lang } = req.validated;
 
         const apiKey = process.env.GOOGLE_PLACES_API_KEY;
         if (!apiKey) {
@@ -16,7 +16,7 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
         }
 
         // Use autocomplete with strict country filter
-        const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&components=country:uz&key=${apiKey}`;
+        const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&components=country:uz&language=${lang}&key=${apiKey}`;
 
         const response = await fetch(url);
         const data = await response.json();
