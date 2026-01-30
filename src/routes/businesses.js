@@ -1095,18 +1095,28 @@ router.delete('/:id/services/:serviceId', authenticate, async (req, res) => {
         }
 
         // Delete all employee services that reference this service_id
-        const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
-            .where('service_id', '==', req.params.serviceId)
+        // First get all employees of this business
+        const employeesSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('employees')
             .get();
 
-        // Batch delete all employee services
-        if (!employeeServicesSnapshot.empty) {
-            const batch = db.batch();
-            employeeServicesSnapshot.docs.forEach(doc => {
+        // For each employee, delete their service reference if it exists
+        const batch = db.batch();
+        for (const employeeDoc of employeesSnapshot.docs) {
+            const employeeServiceDoc = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(employeeDoc.id)
+                .collection('employeeServices')
+                .where('service_id', '==', req.params.serviceId)
+                .get();
+
+            employeeServiceDoc.docs.forEach(doc => {
                 batch.delete(doc.ref);
             });
-            await batch.commit();
         }
+        await batch.commit();
 
         // Delete the business service
         await db.collection('businesses')
