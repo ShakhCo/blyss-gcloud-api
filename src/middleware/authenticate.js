@@ -117,18 +117,10 @@ const extractAccessToken = (req) => {
  * Authentication middleware to verify JWT tokens
  * and attach user data to the request
  * Supports both cookie-based and header-based authentication
+ * Note: Signature verification is handled at the router level via verifySignature middleware
  */
 export const authenticate = async (req, res, next) => {
     try {
-        // Verify HMAC signature first
-        const signatureResult = verifyRequestSignature(req);
-        if (!signatureResult.valid) {
-            return res.status(401).json({
-                error: signatureResult.error,
-                error_code: signatureResult.error_code
-            });
-        }
-
         const token = extractAccessToken(req);
 
         if (!token) {
@@ -176,18 +168,10 @@ export const authenticate = async (req, res, next) => {
 /**
  * Optional authentication middleware - attaches user if token exists,
  * but doesn't require it
+ * Note: Signature verification is handled at the router level via verifySignature middleware
  */
 export const optionalAuthenticate = async (req, res, next) => {
     try {
-        // Verify HMAC signature first
-        const signatureResult = verifyRequestSignature(req);
-        if (!signatureResult.valid) {
-            return res.status(401).json({
-                error: signatureResult.error,
-                error_code: signatureResult.error_code
-            });
-        }
-
         const token = extractAccessToken(req);
 
         if (!token) {

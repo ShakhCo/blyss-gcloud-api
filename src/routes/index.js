@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { verifySignature } from '../middleware/authenticate.js';
 import authRouter from './auth.js';
 import usersRouter from './users.js';
 import otpRouter from './otp.js';
@@ -13,16 +14,19 @@ import aiRouter from './ai.js';
 
 const router = Router();
 
-router.use('/auth', authRouter);
-router.use('/users', usersRouter);
-router.use('/otp', otpRouter);
-router.use('/business-owners', businessOwnersRouter);
-router.use('/businesses', businessesRouter);
-router.use('/places', placesRouter);
-router.use('/employees', employeesRouter);
+// Public routes (no signature verification required)
 router.use('/public', publicRouter);
-router.use('/notifications', notificationsRouter);
-router.use('/distance', distanceRouter);
-router.use('/ai', aiRouter);
+
+// All other routes require signature verification
+router.use('/auth', verifySignature, authRouter);
+router.use('/users', verifySignature, usersRouter);
+router.use('/otp', verifySignature, otpRouter);
+router.use('/business-owners', verifySignature, businessOwnersRouter);
+router.use('/businesses', verifySignature, businessesRouter);
+router.use('/places', verifySignature, placesRouter);
+router.use('/employees', verifySignature, employeesRouter);
+router.use('/notifications', verifySignature, notificationsRouter);
+router.use('/distance', verifySignature, distanceRouter);
+router.use('/ai', verifySignature, aiRouter);
 
 export default router;

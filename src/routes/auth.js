@@ -2,7 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
-import { authenticate, verifySignature, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../middleware/authenticate.js';
+import { authenticate, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../middleware/authenticate.js';
 import { generateTokenPair, getAccessTokenExpiration, getRefreshTokenExpiration, getCookieExpiration, decodeToken, verifyRefreshToken } from '../utils/jwt.js';
 import { sendOtpSms } from '../utils/eskiz.js';
 import {
@@ -55,7 +55,7 @@ const clearAuthCookies = (res) => {
 };
 
 // POST /auth/send-otp
-router.post('/send-otp', verifySignature, validate(sendOtpSchema), async (req, res) => {
+router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
     try {
         const { phone_number, user_type } = req.validated;
 
@@ -110,7 +110,7 @@ router.post('/send-otp', verifySignature, validate(sendOtpSchema), async (req, r
 });
 
 // POST /auth/verify-otp
-router.post('/verify-otp', verifySignature, validate(verifyOtpSchema), async (req, res) => {
+router.post('/verify-otp', validate(verifyOtpSchema), async (req, res) => {
     try {
         const { phone_number, otp_code, user_type } = req.validated;
 
@@ -175,7 +175,7 @@ router.post('/verify-otp', verifySignature, validate(verifyOtpSchema), async (re
 });
 
 // POST /auth/login
-router.post('/login', verifySignature, validate(loginSchema), async (req, res) => {
+router.post('/login', validate(loginSchema), async (req, res) => {
     try {
         const { otp_id, phone_number, user_type } = req.validated;
 
@@ -272,7 +272,7 @@ router.post('/login', verifySignature, validate(loginSchema), async (req, res) =
 });
 
 // POST /auth/register
-router.post('/register', verifySignature, validate(registerSchema), async (req, res) => {
+router.post('/register', validate(registerSchema), async (req, res) => {
     try {
         const { otp_id, user_type, ...userData } = req.validated;
 
@@ -358,7 +358,7 @@ router.post('/register', verifySignature, validate(registerSchema), async (req, 
 });
 
 // POST /auth/refresh
-router.post('/refresh', verifySignature, async (req, res) => {
+router.post('/refresh', async (req, res) => {
     try {
         // Get refresh token from cookie or body
         let refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
