@@ -1044,13 +1044,14 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
 
-        const { name, price, duration_minutes } = req.validated;
+        const { name, price, duration_minutes, description } = req.validated;
         const currentData = serviceDoc.data();
 
         const updateData = {
             name,
             price,
-            duration_minutes
+            duration_minutes,
+            description
         };
 
         await db.collection('businesses')
