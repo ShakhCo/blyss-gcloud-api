@@ -30,7 +30,7 @@ const verifyHmacSignature = (body, timestamp, signature) => {
 /**
  * Verify request signature and timestamp
  * @param {Object} req - Express request object
- * @returns {{ valid: boolean, error?: string, error_code?: string }}
+ * @returns {{ valid: boolean, error?: string, error_code?: string, debug?: object }}
  */
 const verifyRequestSignature = (req) => {
     // Skip signature verification if API_SECRET is not configured
@@ -41,10 +41,26 @@ const verifyRequestSignature = (req) => {
     const timestamp = req.headers['x-timestamp'];
     const signature = req.headers['x-signature'];
 
-    if (!timestamp || !signature) {
+    if (!timestamp && !signature) {
         return {
             valid: false,
-            error: 'Missing X-Timestamp or X-Signature header',
+            error: 'Missing both X-Timestamp and X-Signature headers',
+            error_code: 'MISSING_SIGNATURE'
+        };
+    }
+
+    if (!timestamp) {
+        return {
+            valid: false,
+            error: 'Missing X-Timestamp header',
+            error_code: 'MISSING_TIMESTAMP'
+        };
+    }
+
+    if (!signature) {
+        return {
+            valid: false,
+            error: 'Missing X-Signature header',
             error_code: 'MISSING_SIGNATURE'
         };
     }
@@ -52,11 +68,27 @@ const verifyRequestSignature = (req) => {
     // Check timestamp is not too old or in the future
     const now = Math.floor(Date.now() / 1000);
     const requestTime = parseInt(timestamp, 10);
-    if (isNaN(requestTime) || Math.abs(now - requestTime) > MAX_TIMESTAMP_DIFF) {
+
+    if (isNaN(requestTime)) {
         return {
             valid: false,
-            error: 'Request timestamp is invalid or expired',
-            error_code: 'INVALID_TIMESTAMP'
+            error: 'X-Timestamp is not a valid number',
+            error_code: 'INVALID_TIMESTAMP',
+            debug: { received_timestamp: timestamp }
+        };
+    }
+
+    const timeDiff = now - requestTime;
+    if (Math.abs(timeDiff) > MAX_TIMESTAMP_DIFF) {
+        return {
+            valid: false,
+            error: `Request timestamp expired. Difference: ${timeDiff}s (max allowed: ${MAX_TIMESTAMP_DIFF}s)`,
+            error_code: 'TIMESTAMP_EXPIRED',
+            debug: {
+                server_time: now,
+                request_time: requestTime,
+                difference_seconds: timeDiff
+            }
         };
     }
 
@@ -65,19 +97,41 @@ const verifyRequestSignature = (req) => {
         ? JSON.stringify(req.body)
         : '{}';
 
+    const message = body + timestamp;
+    const expectedSignature = crypto
+        .createHmac('sha256', API_SECRET)
+        .update(message)
+        .digest('hex');
+
     try {
-        if (!verifyHmacSignature(body, timestamp, signature)) {
+        const isValid = signature.length === expectedSignature.length &&
+            crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+
+        if (!isValid) {
             return {
                 valid: false,
-                error: 'Invalid request signature',
-                error_code: 'INVALID_SIGNATURE'
+                error: 'Signature mismatch. Check that body and timestamp match on client and server',
+                error_code: 'SIGNATURE_MISMATCH',
+                debug: {
+                    body_used: body,
+                    timestamp_used: timestamp,
+                    message_signed: message,
+                    expected_signature: expectedSignature,
+                    received_signature: signature
+                }
             };
         }
     } catch (error) {
         return {
             valid: false,
-            error: 'Invalid request signature',
-            error_code: 'INVALID_SIGNATURE'
+            error: `Signature verification error: ${error.message}`,
+            error_code: 'SIGNATURE_ERROR',
+            debug: {
+                body_used: body,
+                timestamp_used: timestamp,
+                expected_length: expectedSignature.length,
+                received_length: signature.length
+            }
         };
     }
 
@@ -120,7 +174,8 @@ export const authenticate = async (req, res, next) => {
         if (!signatureResult.valid) {
             return res.status(401).json({
                 error: signatureResult.error,
-                error_code: signatureResult.error_code
+                error_code: signatureResult.error_code,
+                ...(signatureResult.debug && { debug: signatureResult.debug })
             });
         }
 
@@ -179,7 +234,8 @@ export const optionalAuthenticate = async (req, res, next) => {
         if (!signatureResult.valid) {
             return res.status(401).json({
                 error: signatureResult.error,
-                error_code: signatureResult.error_code
+                error_code: signatureResult.error_code,
+                ...(signatureResult.debug && { debug: signatureResult.debug })
             });
         }
 
