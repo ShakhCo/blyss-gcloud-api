@@ -1,5 +1,88 @@
+import crypto from 'crypto';
 import { verifyAccessToken } from '../utils/jwt.js';
 import { db } from '../db/db.js';
+
+// API secret for HMAC verification
+const API_SECRET = process.env.API_SECRET;
+
+// Max allowed timestamp difference (30 seconds)
+const MAX_TIMESTAMP_DIFF = 30;
+
+/**
+ * Verify HMAC-SHA256 signature
+ * @param {string} body - Request body as string
+ * @param {string} timestamp - Timestamp from header
+ * @param {string} signature - Signature from header
+ * @returns {boolean} Whether the signature is valid
+ */
+const verifyHmacSignature = (body, timestamp, signature) => {
+    const message = body + timestamp;
+    const expectedSignature = crypto
+        .createHmac('sha256', API_SECRET)
+        .update(message)
+        .digest('hex');
+    return crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expectedSignature)
+    );
+};
+
+/**
+ * Verify request signature and timestamp
+ * @param {Object} req - Express request object
+ * @returns {{ valid: boolean, error?: string, error_code?: string }}
+ */
+const verifyRequestSignature = (req) => {
+    // Skip signature verification if API_SECRET is not configured
+    if (!API_SECRET) {
+        return { valid: true };
+    }
+
+    const timestamp = req.headers['x-timestamp'];
+    const signature = req.headers['x-signature'];
+
+    if (!timestamp || !signature) {
+        return {
+            valid: false,
+            error: 'Missing X-Timestamp or X-Signature header',
+            error_code: 'MISSING_SIGNATURE'
+        };
+    }
+
+    // Check timestamp is not too old or in the future
+    const now = Math.floor(Date.now() / 1000);
+    const requestTime = parseInt(timestamp, 10);
+    if (isNaN(requestTime) || Math.abs(now - requestTime) > MAX_TIMESTAMP_DIFF) {
+        return {
+            valid: false,
+            error: 'Request timestamp is invalid or expired',
+            error_code: 'INVALID_TIMESTAMP'
+        };
+    }
+
+    // Get raw body for signature verification
+    const body = req.body && Object.keys(req.body).length > 0
+        ? JSON.stringify(req.body)
+        : '{}';
+
+    try {
+        if (!verifyHmacSignature(body, timestamp, signature)) {
+            return {
+                valid: false,
+                error: 'Invalid request signature',
+                error_code: 'INVALID_SIGNATURE'
+            };
+        }
+    } catch (error) {
+        return {
+            valid: false,
+            error: 'Invalid request signature',
+            error_code: 'INVALID_SIGNATURE'
+        };
+    }
+
+    return { valid: true };
+};
 
 // Cookie names
 const ACCESS_TOKEN_COOKIE = 'access_token';
@@ -32,6 +115,15 @@ const extractAccessToken = (req) => {
  */
 export const authenticate = async (req, res, next) => {
     try {
+        // Verify HMAC signature first
+        const signatureResult = verifyRequestSignature(req);
+        if (!signatureResult.valid) {
+            return res.status(401).json({
+                error: signatureResult.error,
+                error_code: signatureResult.error_code
+            });
+        }
+
         const token = extractAccessToken(req);
 
         if (!token) {
@@ -82,6 +174,15 @@ export const authenticate = async (req, res, next) => {
  */
 export const optionalAuthenticate = async (req, res, next) => {
     try {
+        // Verify HMAC signature first
+        const signatureResult = verifyRequestSignature(req);
+        if (!signatureResult.valid) {
+            return res.status(401).json({
+                error: signatureResult.error,
+                error_code: signatureResult.error_code
+            });
+        }
+
         const token = extractAccessToken(req);
 
         if (!token) {

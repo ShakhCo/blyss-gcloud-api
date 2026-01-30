@@ -6,7 +6,7 @@ import { placeSearchSchema } from '../schemas/places.js';
 const router = Router();
 
 // Search places using Google Places Autocomplete API (restricted to Uzbekistan)
-router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => {
+router.get('/search', authenticate, validate(placeSearchSchema, 'query'), async (req, res) => {
     try {
         const { query, lang } = req.validated;
 
@@ -191,7 +191,7 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
 });
 
 // Photo proxy endpoint (hides API key from client)
-router.get('/photo/:photoReference', async (req, res) => {
+router.get('/photo/:photoReference', authenticate, async (req, res) => {
     try {
         const { photoReference } = req.params;
         const maxwidth = req.query.maxwidth || 400;
