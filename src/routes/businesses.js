@@ -998,7 +998,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             name,
             price,
             duration_minutes,
-            description,
+            ...(description && { description }),
             is_active: false,
             date_created: dateCreated
         };
@@ -1051,7 +1051,7 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             name,
             price,
             duration_minutes,
-            description
+            ...(description && { description })
         };
 
         await db.collection('businesses')
