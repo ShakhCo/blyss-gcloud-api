@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
-import { translateSchema, TranslateResponse } from '../schemas/ai.js';
+import { translateSchema, TranslateResponse, validateTextSchema, ValidateResponse } from '../schemas/ai.js';
 
 const router = Router();
 
@@ -44,6 +44,39 @@ router.post('/translate', authenticate, validate(translateSchema), async (req, r
             original_text,
             translated_text: result.translated_text,
             translate_to
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Validate text
+router.post('/validate', authenticate, validate(validateTextSchema), async (req, res) => {
+    try {
+        const { text, instruction } = req.validated;
+
+        let systemPrompt = 'You are a content validator. Analyze the given text and determine if it is valid. Return true if the text is appropriate, meaningful, and not spam/gibberish. Return false otherwise.';
+
+        if (instruction) {
+            systemPrompt = `You are a content validator. ${instruction}`;
+        }
+
+        const response = await openai.responses.parse({
+            model: 'gpt-4o-2024-08-06',
+            input: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: text }
+            ],
+            text: {
+                format: zodTextFormat(ValidateResponse, 'validation')
+            }
+        });
+
+        const result = response.output_parsed;
+
+        res.json({
+            text,
+            is_valid: result.is_valid
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });

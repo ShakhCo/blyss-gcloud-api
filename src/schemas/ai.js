@@ -12,3 +12,15 @@ export const translateSchema = z.object({
 export const TranslateResponse = z.object({
     translated_text: z.string()
 });
+
+// Validate request schema
+export const validateTextSchema = z.object({
+    text: z.string({ required_error: 'text is required' })
+        .min(1, 'text is required'),
+    instruction: z.string().optional()
+});
+
+// Validate response schema (for OpenAI structured output)
+export const ValidateResponse = z.object({
+    is_valid: z.boolean()
+});
