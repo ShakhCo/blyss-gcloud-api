@@ -95,7 +95,7 @@ const verifyRequestSignature = (req) => {
     // Get raw body for signature verification
     const body = req.body && Object.keys(req.body).length > 0
         ? JSON.stringify(req.body)
-        : '{}';
+        : '';
 
     const message = body + timestamp;
     const expectedSignature = crypto
