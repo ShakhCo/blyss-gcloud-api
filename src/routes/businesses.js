@@ -1531,12 +1531,14 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
 
         const employeeServices = employeeServicesSnapshot.docs.map(serviceDoc => {
             const serviceData = serviceDoc.data();
-            // Get name from business services
+            // Get name and description from business services
             const businessService = businessServicesSnapshot.docs.find(doc => doc.id === serviceData.service_id);
+            const businessServiceData = businessService?.data();
             return {
                 id: serviceDoc.id,
                 service_id: serviceData.service_id,
-                name: businessService?.data()?.name || null,
+                name: businessServiceData?.name || null,
+                description: businessServiceData?.description || null,
                 price: serviceData.price,
                 duration_minutes: serviceData.duration_minutes,
                 is_active: serviceData.is_active ?? true
@@ -1548,6 +1550,7 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
             return {
                 id: doc.id,
                 name: serviceData.name,
+                description: serviceData.description || null,
                 price: serviceData.price,
                 duration_minutes: serviceData.duration_minutes,
                 is_active: serviceData.is_active ?? false,
