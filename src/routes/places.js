@@ -60,6 +60,7 @@ router.get('/search', validate(placeSearchSchema, 'query'), async (req, res) => 
 router.get('/:placeId/details', authenticate, async (req, res) => {
     try {
         const { placeId } = req.params;
+        const lang = req.query.lang || 'uz';
 
         const apiKey = process.env.GOOGLE_PLACES_API_KEY;
         if (!apiKey) {
@@ -72,7 +73,7 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
         const params = new URLSearchParams({
             place_id: placeId,
             key: apiKey,
-            language: 'uz',
+            language: lang,
             fields: 'opening_hours,international_phone_number,geometry,address_components,formatted_address'
         });
 
