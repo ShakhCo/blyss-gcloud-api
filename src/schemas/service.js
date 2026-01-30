@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+// Description schema (multilingual)
+const descriptionSchema = z.object({
+    uz: z.string({ required_error: 'uz description is required' })
+        .min(1, 'uz description is required'),
+    ru: z.string({ required_error: 'ru description is required' })
+        .min(1, 'ru description is required')
+});
+
 // Service schema
 export const serviceSchema = z.object({
     name: z.string({ required_error: 'name is required' })
@@ -12,7 +20,8 @@ export const serviceSchema = z.object({
         ),
     duration_minutes: z.number({ required_error: 'duration_minutes is required' })
         .int('duration_minutes must be an integer')
-        .positive('duration_minutes must be positive')
+        .positive('duration_minutes must be positive'),
+    description: descriptionSchema
 });
 
 // Response schema

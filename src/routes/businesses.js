@@ -353,7 +353,8 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             business_type,
             location,
             working_hours,
-            business_phone_number
+            business_phone_number,
+            place_id
         } = req.validated;
 
         const business_owner_id = req.user.id;
@@ -390,6 +391,7 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             business_status: 'unverified',
             tenant_url: tenantUrl,
             employee_invite_token: employeeInviteToken,
+            place_id,
             date_created: dateCreated
         };
 
@@ -975,7 +977,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { name, price, duration_minutes } = req.validated;
+        const { name, price, duration_minutes, description } = req.validated;
 
         // Generate unique 16 character ID
         let serviceId;
@@ -996,6 +998,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             name,
             price,
             duration_minutes,
+            description,
             is_active: false,
             date_created: dateCreated
         };

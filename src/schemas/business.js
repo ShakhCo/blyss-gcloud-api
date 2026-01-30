@@ -60,7 +60,8 @@ export const createBusinessSchema = z.object({
     business_phone_number: z.string({ required_error: 'business_phone_number is required' })
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
         .min(12, 'business_phone_number must be at least 12 digits'),
-    avatar_url: z.string().url('Invalid avatar URL').optional()
+    avatar_url: z.string().url('Invalid avatar URL').optional(),
+    place_id: z.string().default('')
 });
 
 // Input schema for updating business (without business_owner_id - cannot be changed)
