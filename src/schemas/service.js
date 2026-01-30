@@ -20,7 +20,7 @@ export const serviceSchema = z.object({
     duration_minutes: z.number({ required_error: 'duration_minutes is required' })
         .int('duration_minutes must be an integer')
         .positive('duration_minutes must be positive'),
-    description: multilingualSchema
+    description: multilingualSchema.optional()
 });
 
 // Response schema
