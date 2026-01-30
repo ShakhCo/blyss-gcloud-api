@@ -9,6 +9,7 @@ import employeesRouter from './employees.js';
 import publicRouter from './public.js';
 import notificationsRouter from './notifications.js';
 import distanceRouter from './distance.js';
+import aiRouter from './ai.js';
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use('/employees', employeesRouter);
 router.use('/public', publicRouter);
 router.use('/notifications', notificationsRouter);
 router.use('/distance', distanceRouter);
+router.use('/ai', aiRouter);
 
 export default router;
