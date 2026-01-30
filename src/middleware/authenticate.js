@@ -226,4 +226,19 @@ export const optionalAuthenticate = async (req, res, next) => {
     }
 };
 
+/**
+ * Signature verification middleware (without JWT authentication)
+ * Use this for public routes that still need request signing
+ */
+export const verifySignature = (req, res, next) => {
+    const signatureResult = verifyRequestSignature(req);
+    if (!signatureResult.valid) {
+        return res.status(401).json({
+            error: signatureResult.error,
+            error_code: signatureResult.error_code
+        });
+    }
+    next();
+};
+
 export { ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE };
