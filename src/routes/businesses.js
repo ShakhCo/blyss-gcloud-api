@@ -1146,28 +1146,21 @@ router.delete('/:id/services/:serviceId', authenticate, async (req, res) => {
         }
 
         // Delete all employee services that reference this service_id
-        // First get all employees of this business
-        const employeesSnapshot = await db.collection('businesses')
-            .doc(req.params.id)
-            .collection('employees')
+        // Use collection group query to find all employeeServices with this service_id
+        const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
+            .where('service_id', '==', req.params.serviceId)
             .get();
 
-        // For each employee, delete their service reference if it exists
+        // Filter to only employee services belonging to this business (check document path)
         const batch = db.batch();
         let batchHasOperations = false;
-        for (const employeeDoc of employeesSnapshot.docs) {
-            const employeeServiceDoc = await db.collection('businesses')
-                .doc(req.params.id)
-                .collection('employees')
-                .doc(employeeDoc.id)
-                .collection('employeeServices')
-                .where('service_id', '==', req.params.serviceId)
-                .get();
-
-            employeeServiceDoc.docs.forEach(doc => {
+        for (const doc of employeeServicesSnapshot.docs) {
+            // Path format: businesses/{businessId}/employees/{employeeId}/employeeServices/{serviceId}
+            const pathParts = doc.ref.path.split('/');
+            if (pathParts[1] === req.params.id) {
                 batch.delete(doc.ref);
                 batchHasOperations = true;
-            });
+            }
         }
         if (batchHasOperations) {
             await batch.commit();
