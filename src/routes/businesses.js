@@ -296,6 +296,7 @@ router.get('/:id', authenticate, async (req, res) => {
             avatar_url: data.avatar_url || null,
             avatar_updated_at: data.avatar_updated_at?.toDate?.().toISOString() || data.avatar_updated_at || null,
             employee_invite_token: data.employee_invite_token || null,
+            telegram_bot: data.telegram_bot || null,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
         });
     } catch (error) {
@@ -584,6 +585,55 @@ router.patch('/:id/tenant-url', authenticate, async (req, res) => {
         res.json({
             id: req.params.id,
             tenant_url
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update telegram bot settings
+router.patch('/:id/telegram-bot', authenticate, async (req, res) => {
+    try {
+        const { token, is_active } = req.body;
+
+        if (token === undefined && is_active === undefined) {
+            return res.status(400).json({ error: 'At least one of token or is_active is required', error_code: 'MISSING_FIELDS' });
+        }
+
+        if (token !== undefined && typeof token !== 'string') {
+            return res.status(400).json({ error: 'token must be a string', error_code: 'INVALID_TOKEN' });
+        }
+
+        if (is_active !== undefined && typeof is_active !== 'boolean') {
+            return res.status(400).json({ error: 'is_active must be a boolean', error_code: 'INVALID_IS_ACTIVE' });
+        }
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        // Verify ownership
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Build update object
+        const currentTelegramBot = currentData.telegram_bot || {};
+        const updatedTelegramBot = {
+            token: token !== undefined ? token : (currentTelegramBot.token || null),
+            is_active: is_active !== undefined ? is_active : (currentTelegramBot.is_active || false)
+        };
+
+        await docRef.update({ telegram_bot: updatedTelegramBot });
+
+        res.json({
+            id: req.params.id,
+            telegram_bot: updatedTelegramBot
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
