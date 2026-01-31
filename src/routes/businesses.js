@@ -1647,24 +1647,32 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
 // Update employee working hours
 router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(updateEmployeeWorkingHoursSchema), async (req, res) => {
     try {
-        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        const [businessDoc, employeeDoc] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .get()
+        ]);
+
         if (!businessDoc.exists) {
             return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
         }
 
-        // Verify ownership
-        if (businessDoc.data().business_owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
-        }
-
-        const employeeDoc = await db.collection('businesses')
-            .doc(req.params.id)
-            .collection('employees')
-            .doc(req.params.employeeId)
-            .get();
-
         if (!employeeDoc.exists) {
             return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const businessData = businessDoc.data();
+        const employeeData = employeeDoc.data();
+
+        // Allow access if: business owner OR the employee themselves (accepted)
+        const isBusinessOwner = businessData.business_owner_id === req.user.id;
+        const isEmployee = employeeData.phone_number === req.user.phone_number && employeeData.is_accepted === true;
+
+        if (!isBusinessOwner && !isEmployee) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         const { availability_type, working_hours } = req.validated;
@@ -1673,8 +1681,6 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
         let finalWorkingHours = working_hours;
         if (availability_type === 'flexible') {
             // Get business working hours to copy
-            const businessDoc = await db.collection('businesses').doc(req.params.id).get();
-            const businessData = businessDoc.data();
             const businessHours = businessData.working_hours || {};
 
             // Copy business working hours but set all days to closed
