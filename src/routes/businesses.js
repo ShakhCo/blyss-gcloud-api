@@ -960,6 +960,7 @@ router.get('/:id/services', authenticate, async (req, res) => {
         const snapshot = await db.collection('businesses')
             .doc(req.params.id)
             .collection('services')
+            .orderBy('date_created', 'desc')
             .get();
 
         const services = snapshot.docs.map(doc => {
@@ -969,6 +970,7 @@ router.get('/:id/services', authenticate, async (req, res) => {
                 ...data,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
                 is_active: data.is_active ?? false,
+                allow_employee_customization: data.allow_employee_customization ?? true,
                 employees: employeeServicesMap.get(doc.id) || []
             };
         });
@@ -1007,7 +1009,8 @@ router.get('/:id/services/:serviceId', authenticate, async (req, res) => {
             business_id: req.params.id,
             ...data,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
-            is_active: data.is_active ?? false
+            is_active: data.is_active ?? false,
+            allow_employee_customization: data.allow_employee_customization ?? true
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -1027,7 +1030,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { name, price, duration_minutes, description } = req.validated;
+        const { name, price, duration_minutes, description, allow_employee_customization } = req.validated;
 
         // Generate unique 16 character ID
         let serviceId;
@@ -1050,6 +1053,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             duration_minutes,
             ...(description && { description }),
             is_active: false,
+            allow_employee_customization,
             date_created: dateCreated
         };
 
@@ -1094,13 +1098,14 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
 
-        const { name, price, duration_minutes, description } = req.validated;
+        const { name, price, duration_minutes, description, allow_employee_customization } = req.validated;
         const currentData = serviceDoc.data();
 
         const updateData = {
             name,
             price,
             duration_minutes,
+            allow_employee_customization,
             ...(description && { description })
         };
 
@@ -1218,6 +1223,7 @@ router.post('/:id/services/:serviceId/activate', authenticate, async (req, res) 
             price: currentData.price,
             duration_minutes: currentData.duration_minutes,
             is_active: true,
+            allow_employee_customization: currentData.allow_employee_customization ?? true,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
@@ -1264,6 +1270,7 @@ router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res
             price: currentData.price,
             duration_minutes: currentData.duration_minutes,
             is_active: false,
+            allow_employee_customization: currentData.allow_employee_customization ?? true,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
