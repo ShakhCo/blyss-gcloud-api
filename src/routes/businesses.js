@@ -1182,6 +1182,7 @@ router.delete('/:id/services/:serviceId', authenticate, async (req, res) => {
 
         res.status(204).send();
     } catch (error) {
+        console.error('Delete service error:', error);
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
 });
