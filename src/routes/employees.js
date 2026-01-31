@@ -188,12 +188,19 @@ router.get('/workplaces', authenticate, async (req, res) => {
             .where('is_active', '==', true)
             .get();
 
+        // Build a map of business service IDs to names
+        const businessServicesMap = new Map();
+        servicesSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            businessServicesMap.set(doc.id, data.name);
+        });
+
         const services = employeeServicesSnapshot.docs.map(serviceDoc => {
             const serviceData = serviceDoc.data();
             return {
                 id: serviceDoc.id,
                 service_id: serviceData.service_id,
-                name: null, // Will be filled from business services
+                name: businessServicesMap.get(serviceData.service_id) || null,
                 price: serviceData.price,
                 duration_minutes: serviceData.duration_minutes
             };
