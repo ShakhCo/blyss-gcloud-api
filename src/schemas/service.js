@@ -22,7 +22,8 @@ export const serviceSchema = z.object({
         .positive('duration_minutes must be positive'),
     description: multilingualSchema.optional(),
     allow_employee_customization: z.boolean().optional().default(true),
-    overwrite_employee_settings: z.boolean().optional().default(false)
+    overwrite_employees_price: z.boolean().optional().default(false),
+    overwrite_employees_duration: z.boolean().optional().default(false)
 });
 
 // Response schema

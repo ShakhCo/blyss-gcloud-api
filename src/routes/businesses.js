@@ -1098,7 +1098,7 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
 
-        const { name, price, duration_minutes, description, allow_employee_customization, overwrite_employee_settings } = req.validated;
+        const { name, price, duration_minutes, description, allow_employee_customization, overwrite_employees_price, overwrite_employees_duration } = req.validated;
         const currentData = serviceDoc.data();
 
         const updateData = {
@@ -1115,9 +1115,9 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             .doc(req.params.serviceId)
             .update(updateData);
 
-        // If allow_employee_customization is false and overwrite_employee_settings is true,
-        // update all employee services with the business service price and duration
-        if (allow_employee_customization === false && overwrite_employee_settings === true) {
+        // If overwrite_employees_price or overwrite_employees_duration is true,
+        // update employee services accordingly
+        if (overwrite_employees_price || overwrite_employees_duration) {
             const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
                 .where('service_id', '==', req.params.serviceId)
                 .get();
@@ -1129,10 +1129,14 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
                 // Path format: businesses/{businessId}/employees/{employeeId}/employeeServices/{serviceId}
                 const pathParts = doc.ref.path.split('/');
                 if (pathParts[1] === req.params.id) {
-                    batch.update(doc.ref, {
-                        price,
-                        duration_minutes
-                    });
+                    const employeeUpdateData = {};
+                    if (overwrite_employees_price) {
+                        employeeUpdateData.price = price;
+                    }
+                    if (overwrite_employees_duration) {
+                        employeeUpdateData.duration_minutes = duration_minutes;
+                    }
+                    batch.update(doc.ref, employeeUpdateData);
                     batchHasOperations = true;
                 }
             }
