@@ -1947,25 +1947,32 @@ router.post('/join/:token', authenticate, async (req, res) => {
 // Get all services for an employee
 router.get('/:id/employees/:employeeId/services', authenticate, async (req, res) => {
     try {
-        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        const [businessDoc, employeeDoc] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .get()
+        ]);
+
         if (!businessDoc.exists) {
             return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
         }
 
-        // Verify ownership
-        if (businessDoc.data().business_owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
-        }
-
-        // Verify employee exists
-        const employeeDoc = await db.collection('businesses')
-            .doc(req.params.id)
-            .collection('employees')
-            .doc(req.params.employeeId)
-            .get();
-
         if (!employeeDoc.exists) {
             return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const businessData = businessDoc.data();
+        const employeeData = employeeDoc.data();
+
+        // Allow access if: business owner OR the employee themselves (accepted)
+        const isBusinessOwner = businessData.business_owner_id === req.user.id;
+        const isEmployee = employeeData.phone_number === req.user.phone_number && employeeData.is_accepted === true;
+
+        if (!isBusinessOwner && !isEmployee) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         const snapshot = await db.collection('businesses')
@@ -2009,25 +2016,32 @@ router.get('/:id/employees/:employeeId/services', authenticate, async (req, res)
 // Add services to an employee
 router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmployeeServicesSchema), async (req, res) => {
     try {
-        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        const [businessDoc, employeeDoc] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .get()
+        ]);
+
         if (!businessDoc.exists) {
             return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
         }
 
-        // Verify ownership
-        if (businessDoc.data().business_owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
-        }
-
-        // Verify employee exists
-        const employeeDoc = await db.collection('businesses')
-            .doc(req.params.id)
-            .collection('employees')
-            .doc(req.params.employeeId)
-            .get();
-
         if (!employeeDoc.exists) {
             return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const businessData = businessDoc.data();
+        const employeeData = employeeDoc.data();
+
+        // Allow access if: business owner OR the employee themselves (accepted)
+        const isBusinessOwner = businessData.business_owner_id === req.user.id;
+        const isEmployee = employeeData.phone_number === req.user.phone_number && employeeData.is_accepted === true;
+
+        if (!isBusinessOwner && !isEmployee) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         const { services } = req.validated;
@@ -2098,27 +2112,43 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
 // Update an employee's service
 router.put('/:id/employees/:employeeId/services/:serviceId', authenticate, validate(updateEmployeeServiceSchema), async (req, res) => {
     try {
-        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        const [businessDoc, employeeDoc, employeeServiceDoc] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .collection('employeeServices')
+                .doc(req.params.serviceId)
+                .get()
+        ]);
+
         if (!businessDoc.exists) {
             return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
         }
 
-        // Verify ownership
-        if (businessDoc.data().business_owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
         }
-
-        // Verify employee service exists
-        const employeeServiceDoc = await db.collection('businesses')
-            .doc(req.params.id)
-            .collection('employees')
-            .doc(req.params.employeeId)
-            .collection('employeeServices')
-            .doc(req.params.serviceId)
-            .get();
 
         if (!employeeServiceDoc.exists) {
             return res.status(404).json({ error: 'Employee service not found', error_code: 'EMPLOYEE_SERVICE_NOT_FOUND' });
+        }
+
+        const businessData = businessDoc.data();
+        const employeeData = employeeDoc.data();
+
+        // Allow access if: business owner OR the employee themselves (accepted)
+        const isBusinessOwner = businessData.business_owner_id === req.user.id;
+        const isEmployee = employeeData.phone_number === req.user.phone_number && employeeData.is_accepted === true;
+
+        if (!isBusinessOwner && !isEmployee) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         const updateData = {};
@@ -2155,27 +2185,43 @@ router.put('/:id/employees/:employeeId/services/:serviceId', authenticate, valid
 // Delete an employee's service
 router.delete('/:id/employees/:employeeId/services/:serviceId', authenticate, async (req, res) => {
     try {
-        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        const [businessDoc, employeeDoc, employeeServiceDoc] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .collection('employeeServices')
+                .doc(req.params.serviceId)
+                .get()
+        ]);
+
         if (!businessDoc.exists) {
             return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
         }
 
-        // Verify ownership
-        if (businessDoc.data().business_owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
         }
-
-        // Verify employee service exists
-        const employeeServiceDoc = await db.collection('businesses')
-            .doc(req.params.id)
-            .collection('employees')
-            .doc(req.params.employeeId)
-            .collection('employeeServices')
-            .doc(req.params.serviceId)
-            .get();
 
         if (!employeeServiceDoc.exists) {
             return res.status(404).json({ error: 'Employee service not found', error_code: 'EMPLOYEE_SERVICE_NOT_FOUND' });
+        }
+
+        const businessData = businessDoc.data();
+        const employeeData = employeeDoc.data();
+
+        // Allow access if: business owner OR the employee themselves (accepted)
+        const isBusinessOwner = businessData.business_owner_id === req.user.id;
+        const isEmployee = employeeData.phone_number === req.user.phone_number && employeeData.is_accepted === true;
+
+        if (!isBusinessOwner && !isEmployee) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         await employeeServiceDoc.ref.delete();
