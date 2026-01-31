@@ -160,7 +160,7 @@ router.get('/workplaces', authenticate, async (req, res) => {
         // Fetch business details and services in parallel
         const [businessDoc, servicesSnapshot, businessOwnerSnapshot] = await Promise.all([
             db.collection('businesses').doc(businessId).get(),
-            db.collection('businesses').doc(businessId).collection('services').where('is_active', '==', true).get(),
+            db.collection('businesses').doc(businessId).collection('services').where('is_active', '==', true).orderBy('date_created', 'desc').get(),
             db.collection('business_owners').where('phone_number', '==', req.user.phone_number).limit(1).get()
         ]);
 
@@ -258,7 +258,9 @@ router.get('/workplaces', authenticate, async (req, res) => {
                         name: data.name,
                         price: data.price,
                         duration_minutes: data.duration_minutes,
-                        is_active: data.is_active ?? false
+                        is_active: data.is_active ?? false,
+                        allow_employee_customization: data.allow_employee_customization ?? true,
+                        date_created: data.date_created?.toDate?.().toISOString() || data.date_created
                     };
                 })
             }
