@@ -920,17 +920,31 @@ router.get('/:id/services', authenticate, async (req, res) => {
             employeesMap.set(doc.id, doc.data());
         });
 
-        // Single collection group query to get all active employee services for this business
-        // Filter by parent business using the document path pattern
-        const employeeServicesSnapshot = await db.collection('businesses')
-            .doc(req.params.id)
-            .collection('employees')
-            .get();
+        // Collect all unique business_owner_ids from accepted employees
+        const businessOwnerIds = new Set();
+        employeesSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (data.business_owner_id) {
+                businessOwnerIds.add(data.business_owner_id);
+            }
+        });
+
+        // Fetch business owners data in parallel
+        const businessOwnersMap = new Map();
+        if (businessOwnerIds.size > 0) {
+            const ownerPromises = Array.from(businessOwnerIds).map(async (ownerId) => {
+                const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
+                if (ownerDoc.exists) {
+                    businessOwnersMap.set(ownerId, ownerDoc.data());
+                }
+            });
+            await Promise.all(ownerPromises);
+        }
 
         const employeeServicesMap = new Map(); // service_id -> array of employee data
 
         // Fetch all employee services in parallel (batch per employee)
-        const promises = employeeServicesSnapshot.docs.map(async (employeeDoc) => {
+        const promises = employeesSnapshot.docs.map(async (employeeDoc) => {
             const employeeData = employeeDoc.data();
             const servicesSnapshot = await db.collection('businesses')
                 .doc(req.params.id)
@@ -940,17 +954,26 @@ router.get('/:id/services', authenticate, async (req, res) => {
                 .where('is_active', '==', true)
                 .get();
 
+            // Get first_name and last_name from business_owners if employee is accepted
+            let firstName = '';
+            let lastName = '';
+            if (employeeData.business_owner_id && businessOwnersMap.has(employeeData.business_owner_id)) {
+                const ownerData = businessOwnersMap.get(employeeData.business_owner_id);
+                firstName = ownerData.first_name || '';
+                lastName = ownerData.last_name || '';
+            }
+
             servicesSnapshot.docs.forEach(serviceDoc => {
                 const serviceData = serviceDoc.data();
                 if (!employeeServicesMap.has(serviceData.service_id)) {
                     employeeServicesMap.set(serviceData.service_id, []);
                 }
                 employeeServicesMap.get(serviceData.service_id).push({
-                    id: employeeDoc.id,
-                    phone_number: employeeData.phone_number,
-                    position: employeeData.position ?? '',
                     price: serviceData.price,
-                    duration_minutes: serviceData.duration_minutes
+                    duration_minutes: serviceData.duration_minutes,
+                    employee_first_name: firstName,
+                    employee_last_name: lastName,
+                    employee_phone_number: employeeData.phone_number
                 });
             });
         });
