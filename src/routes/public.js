@@ -131,6 +131,7 @@ router.get('/business/services', async (req, res) => {
             return {
                 id: doc.id,
                 name: data.name,
+                description: data.description || null,
                 price: data.price,
                 duration_minutes: data.duration_minutes
             };
@@ -192,6 +193,7 @@ router.get('/businesses/:slug/services', async (req, res) => {
             return {
                 id: doc.id,
                 name: data.name,
+                description: data.description || null,
                 price: data.price,
                 duration_minutes: data.duration_minutes
             };
@@ -270,6 +272,7 @@ router.get('/businesses/:businessId/details', authenticate, async (req, res) => 
             return {
                 id: doc.id,
                 name: data.name,
+                description: data.description || null,
                 price: data.price,
                 duration_minutes: data.duration_minutes
             };
