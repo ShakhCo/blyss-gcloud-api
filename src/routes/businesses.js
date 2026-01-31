@@ -1098,7 +1098,7 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
 
-        const { name, price, duration_minutes, description, allow_employee_customization } = req.validated;
+        const { name, price, duration_minutes, description, allow_employee_customization, overwrite_employee_settings } = req.validated;
         const currentData = serviceDoc.data();
 
         const updateData = {
@@ -1114,6 +1114,33 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             .collection('services')
             .doc(req.params.serviceId)
             .update(updateData);
+
+        // If allow_employee_customization is false and overwrite_employee_settings is true,
+        // update all employee services with the business service price and duration
+        if (allow_employee_customization === false && overwrite_employee_settings === true) {
+            const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
+                .where('service_id', '==', req.params.serviceId)
+                .get();
+
+            const batch = db.batch();
+            let batchHasOperations = false;
+
+            for (const doc of employeeServicesSnapshot.docs) {
+                // Path format: businesses/{businessId}/employees/{employeeId}/employeeServices/{serviceId}
+                const pathParts = doc.ref.path.split('/');
+                if (pathParts[1] === req.params.id) {
+                    batch.update(doc.ref, {
+                        price,
+                        duration_minutes
+                    });
+                    batchHasOperations = true;
+                }
+            }
+
+            if (batchHasOperations) {
+                await batch.commit();
+            }
+        }
 
         res.json({
             id: req.params.serviceId,
