@@ -65,9 +65,12 @@ const verifyRequestSignature = (req) => {
     }
 
     // Get raw body for signature verification
-    const body = req.body && Object.keys(req.body).length > 0
-        ? JSON.stringify(req.body)
-        : '';
+    // For multipart/form-data (file uploads), use empty string to match frontend
+    const contentType = req.headers['content-type'] || '';
+    const isMultipart = contentType.includes('multipart/form-data');
+    const body = isMultipart
+        ? ''
+        : (req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : '');
 
     const message = body + timestamp;
     const expectedSignature = crypto
