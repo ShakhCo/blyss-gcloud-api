@@ -396,6 +396,12 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
                     };
                 });
 
+                // Convert to meters if less than 1km
+                const distanceValue = distance < 1
+                    ? Math.round(distance * 1000)
+                    : Math.round(distance * 100) / 100;
+                const distanceMetric = distance < 1 ? 'm' : 'km';
+
                 businessesWithDistance.push({
                     business_name: business.business_name,
                     location: {
@@ -408,7 +414,8 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
                         street_name: business.location.street_name || ''
                     },
                     services,
-                    distance: Math.round(distance * 100) / 100,
+                    distance: distanceValue,
+                    distance_metric: distanceMetric,
                     avatar_url: business.avatar_url || '',
                     business_type: business.business_type,
                     working_hours: business.working_hours
