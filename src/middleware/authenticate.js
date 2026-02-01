@@ -6,7 +6,7 @@ import { db } from '../db/db.js';
 const API_SECRET = process.env.API_SECRET;
 
 // Max allowed timestamp difference (30 seconds)
-const MAX_TIMESTAMP_DIFF = 60;
+const MAX_TIMESTAMP_DIFF = 120;
 
 /**
  * Verify HMAC-SHA256 signature

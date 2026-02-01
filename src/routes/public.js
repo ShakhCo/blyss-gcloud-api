@@ -234,21 +234,12 @@ router.get('/businesses/:slug/services', async (req, res) => {
 });
 
 /**
- * Get business details with services by business ID (authenticated users only)
- * Example: GET /public/businesses-auth/abc123xyz/services
- * Requires authentication with user type 'user'
- * Returns business with id field
+ * Get business details with services by business ID
+ * Example: GET /public/businesses/abc123xyz/details
+ * Public endpoint - only requires signature verification
  */
-router.get('/businesses/:businessId/details', authenticate, async (req, res) => {
+router.get('/businesses/:businessId/details', verifySignature, async (req, res) => {
     try {
-        // Only users can access this endpoint
-        if (req.user.user_type !== 'user') {
-            return res.status(403).json({
-                error: 'Only users can access this endpoint',
-                error_code: 'FORBIDDEN'
-            });
-        }
-
         const { businessId } = req.params;
 
         // Find business by ID
