@@ -1533,7 +1533,8 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             is_accepted: isSelf,
             date_accepted: isSelf ? dateCreated : null,
             is_rejected: false,
-            is_open_now: false
+            is_open_now: false,
+            business_owner_id: businessData.business_owner_id
         };
 
         await db.collection('businesses')
@@ -1585,7 +1586,8 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             date_created: dateCreated.toISOString(),
             is_accepted: employeeData.is_accepted,
             date_accepted: employeeData.date_accepted?.toISOString() || null,
-            is_rejected: employeeData.is_rejected
+            is_rejected: employeeData.is_rejected,
+            business_owner_id: businessData.business_owner_id
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
