@@ -389,6 +389,11 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
                     .where('is_active', '==', true)
                     .get();
 
+                // Skip businesses with no services
+                if (servicesSnapshot.empty) {
+                    continue;
+                }
+
                 const services = servicesSnapshot.docs.map(serviceDoc => {
                     const serviceData = serviceDoc.data();
                     return {
