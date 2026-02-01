@@ -221,7 +221,8 @@ router.get('/businesses/:slug/services', async (req, res) => {
                 location: businessData.location,
                 working_hours: formatWorkingHours(businessData.working_hours),
                 business_phone_number: businessData.business_phone_number,
-                tenant_url: businessData.tenant_url
+                tenant_url: businessData.tenant_url,
+                avatar_url: businessData.avatar_url || null
             },
             services
         });
