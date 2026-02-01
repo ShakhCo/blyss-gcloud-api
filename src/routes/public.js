@@ -404,6 +404,7 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
             const distanceMetric = business.distance < 1 ? 'm' : 'km';
 
             businessesWithDistance.push({
+                business_id: business.id,
                 business_name: business.business_name,
                 location: {
                     lat: business.location.lat,
