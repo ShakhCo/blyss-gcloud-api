@@ -393,7 +393,8 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
             const services = servicesSnapshot.docs.map(serviceDoc => {
                 const serviceData = serviceDoc.data();
                 return {
-                    name: serviceData.name || { ru: '', uz: '' }
+                    name: serviceData.name || { ru: '', uz: '' },
+                    duration_minutes: serviceData.duration_minutes || 0
                 };
             });
 
