@@ -242,8 +242,15 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
     try {
         const { businessId } = req.params;
 
-        // Find business by ID
-        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        // Fetch business and services in parallel
+        const [businessDoc, servicesSnapshot] = await Promise.all([
+            db.collection('businesses').doc(businessId).get(),
+            db.collection('businesses')
+                .doc(businessId)
+                .collection('services')
+                .where('is_active', '==', true)
+                .get()
+        ]);
 
         if (!businessDoc.exists) {
             return res.status(404).json({
@@ -253,51 +260,34 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
         }
 
         const businessData = businessDoc.data();
-
-        // Get active services for this business
-        const servicesSnapshot = await db.collection('businesses')
-            .doc(businessId)
-            .collection('services')
-            .where('is_active', '==', true)
-            .get();
+        const location = businessData.location || {};
 
         const services = servicesSnapshot.docs.map(doc => {
             const data = doc.data();
             return {
                 id: doc.id,
-                name: data.name,
-                description: data.description || null,
-                price: data.price,
-                duration_minutes: data.duration_minutes
+                name: data.name || { ru: '', uz: '' },
+                description: data.description || { ru: '', uz: '' },
+                price: data.price
             };
         });
 
-        // Format working_hours - use default structure if null or undefined
-        const formatWorkingHours = (hours) => {
-            const defaultHours = {
-                monday: { start: 0, end: 86399, is_open: false },
-                tuesday: { start: 0, end: 86399, is_open: false },
-                wednesday: { start: 0, end: 86399, is_open: false },
-                thursday: { start: 0, end: 86399, is_open: false },
-                friday: { start: 0, end: 86399, is_open: false },
-                saturday: { start: 0, end: 86399, is_open: false },
-                sunday: { start: 0, end: 86399, is_open: false }
-            };
-            if (!hours) return defaultHours;
-            return { ...defaultHours, ...hours };
-        };
-
         res.json({
-            business: {
-                id: businessId,
-                name: businessData.business_name,
-                business_type: businessData.business_type,
-                location: businessData.location,
-                working_hours: formatWorkingHours(businessData.working_hours),
-                business_phone_number: businessData.business_phone_number,
-                tenant_url: businessData.tenant_url,
-                avatar_url: businessData.avatar_url || null
+            business_id: businessId,
+            business_name: businessData.business_name,
+            business_location: {
+                city: location.city || '',
+                country: location.country || '',
+                street_name: location.street_name || '',
+                display_address: location.display_address || '',
+                lat: location.lat || 0,
+                lng: location.lng || 0
             },
+            avatar_url: businessData.avatar_url || '',
+            business_type: businessData.business_type,
+            working_hours: businessData.working_hours,
+            business_phone_number: businessData.business_phone_number || '',
+            tenant_url: businessData.tenant_url || '',
             services
         });
     } catch (error) {
@@ -358,9 +348,8 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
             });
         }
 
-        // Calculate distances for each business and fetch services
-        const businessesWithDistance = [];
-
+        // Step 1: Filter businesses by distance (no DB calls yet)
+        const businessesInRadius = [];
         for (const doc of businessesSnapshot.docs) {
             const business = { id: doc.id, ...doc.data() };
 
@@ -371,56 +360,68 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
 
             const distance = calculateDistance(lat, lng, business.location.lat, business.location.lng);
 
-            // Only include businesses within the specified radius
             if (distance <= radius) {
-                // Fetch services for this business
-                const servicesSnapshot = await db.collection('businesses')
-                    .doc(doc.id)
-                    .collection('services')
-                    .where('is_active', '==', true)
-                    .get();
-
-                // Skip businesses with no services
-                if (servicesSnapshot.empty) {
-                    continue;
-                }
-
-                const services = servicesSnapshot.docs.map(serviceDoc => {
-                    const serviceData = serviceDoc.data();
-                    return {
-                        name: serviceData.name || { ru: '', uz: '' }
-                    };
-                });
-
-                // Convert to meters if less than 1km
-                const distanceValue = distance < 1
-                    ? Math.round(distance * 1000)
-                    : Math.round(distance * 100) / 100;
-                const distanceMetric = distance < 1 ? 'm' : 'km';
-
-                businessesWithDistance.push({
-                    business_name: business.business_name,
-                    location: {
-                        lat: business.location.lat,
-                        lng: business.location.lng,
-                        display_address: business.location.display_address || '',
-                        country: business.location.country || '',
-                        region: business.location.region || '',
-                        city: business.location.city || '',
-                        street_name: business.location.street_name || ''
-                    },
-                    services,
-                    distance: distanceValue,
-                    distance_metric: distanceMetric,
-                    avatar_url: business.avatar_url || '',
-                    business_type: business.business_type,
-                    working_hours: business.working_hours
-                });
+                businessesInRadius.push({ ...business, distance });
             }
         }
 
-        // Sort by distance
-        businessesWithDistance.sort((a, b) => a.distance - b.distance);
+        // Sort by distance first
+        businessesInRadius.sort((a, b) => a.distance - b.distance);
+
+        // Step 2: Fetch services for all businesses in parallel
+        const servicesPromises = businessesInRadius.map(business =>
+            db.collection('businesses')
+                .doc(business.id)
+                .collection('services')
+                .where('is_active', '==', true)
+                .get()
+        );
+
+        const servicesSnapshots = await Promise.all(servicesPromises);
+
+        // Step 3: Combine businesses with their services, filter out those with no services
+        const businessesWithDistance = [];
+        for (let i = 0; i < businessesInRadius.length; i++) {
+            const business = businessesInRadius[i];
+            const servicesSnapshot = servicesSnapshots[i];
+
+            // Skip businesses with no services
+            if (servicesSnapshot.empty) {
+                continue;
+            }
+
+            const services = servicesSnapshot.docs.map(serviceDoc => {
+                const serviceData = serviceDoc.data();
+                return {
+                    name: serviceData.name || { ru: '', uz: '' }
+                };
+            });
+
+            // Convert to meters if less than 1km
+            const distanceValue = business.distance < 1
+                ? Math.round(business.distance * 1000)
+                : Math.round(business.distance * 100) / 100;
+            const distanceMetric = business.distance < 1 ? 'm' : 'km';
+
+            businessesWithDistance.push({
+                business_name: business.business_name,
+                location: {
+                    lat: business.location.lat,
+                    lng: business.location.lng,
+                    display_address: business.location.display_address || '',
+                    country: business.location.country || '',
+                    region: business.location.region || '',
+                    city: business.location.city || '',
+                    street_name: business.location.street_name || ''
+                },
+                services,
+                distance: distanceValue,
+                distance_metric: distanceMetric,
+                avatar_url: business.avatar_url || '',
+                business_type: business.business_type,
+                working_hours: business.working_hours
+            });
+        }
 
         // Calculate pagination
         const total = businessesWithDistance.length;
