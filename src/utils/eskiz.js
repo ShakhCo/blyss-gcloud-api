@@ -60,10 +60,13 @@ export async function sendSms(phoneNumber, message) {
  * Send OTP SMS
  * @param {string} phoneNumber - The recipient's phone number
  * @param {string} otpCode - The OTP code to send
+ * @param {string} userType - The user type ('user' or 'business_owner')
  * @returns {Promise<{success: boolean, error?: string}>}
  */
-export async function sendOtpSms(phoneNumber, otpCode) {
-    const message = `BLYSS ilovasiga kirish uchun tasdiqlash kodi: ${otpCode}`;
+export async function sendOtpSms(phoneNumber, otpCode, userType = 'user') {
+    const message = userType === 'business_owner'
+        ? `${otpCode} BLYSS BUSINESS ga kirish kodi. Код входа в BLYSS BUSINESS.`
+        : `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`;
     return sendSms(phoneNumber, message);
 }
 
@@ -75,6 +78,6 @@ export async function sendOtpSms(phoneNumber, otpCode) {
  * @returns {Promise<{success: boolean, error?: string}>}
  */
 export async function sendBusinessInvitationSms(phoneNumber, businessName, inviteLink) {
-    const message = `${businessName} sizni jamoaga qo'shilishga taklif qildi. Quyidagi havola orqali qo'shilishingiz mumkin: ${inviteLink}`;
+    const message = `${businessName} sizni jamoaga taklif qildi. ${businessName} пригласил(а) в команду. ${inviteLink}`;
     return sendSms(phoneNumber, message);
 }

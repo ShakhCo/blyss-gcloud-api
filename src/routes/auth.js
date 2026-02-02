@@ -98,7 +98,7 @@ router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
         });
 
         // Send SMS via Eskiz
-        const smsResult = await sendOtpSms(phone_number, otpCode);
+        const smsResult = await sendOtpSms(phone_number, otpCode, user_type);
 
         res.json({
             message: smsResult.success ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
