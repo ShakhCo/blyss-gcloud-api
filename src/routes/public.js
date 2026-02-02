@@ -236,13 +236,15 @@ router.get('/businesses/:slug/services', async (req, res) => {
         const employees = await Promise.all(employeesSnapshot.docs.map(async (doc) => {
             const data = doc.data();
 
-            // Get name from business_owners
+            // Get name and phone from business_owners
             let first_name = null;
             let last_name = null;
+            let phone_number = null;
             if (data.business_owner_id && businessOwnersMap.has(data.business_owner_id)) {
                 const ownerData = businessOwnersMap.get(data.business_owner_id);
                 first_name = ownerData.first_name || null;
                 last_name = ownerData.last_name || null;
+                phone_number = ownerData.phone_number || null;
             }
 
             // Fetch employee services
@@ -270,6 +272,7 @@ router.get('/businesses/:slug/services', async (req, res) => {
                 id: doc.id,
                 first_name,
                 last_name,
+                phone_number,
                 position: data.position ?? '',
                 availability_type: data.availability_type ?? 'flexible',
                 working_hours: data.working_hours ?? null,
