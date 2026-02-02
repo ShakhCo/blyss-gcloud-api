@@ -78,6 +78,6 @@ export async function sendOtpSms(phoneNumber, otpCode, userType = 'user') {
  * @returns {Promise<{success: boolean, error?: string}>}
  */
 export async function sendBusinessInvitationSms(phoneNumber, businessName, inviteLink) {
-    const message = `${businessName} sizni jamoaga taklif qildi. ${businessName} пригласил(а) в команду. ${inviteLink}`;
+    const message = `${businessName} sizni jamoaga taklif qildi. ${businessName} пригласил в команду. ${inviteLink}`;
     return sendSms(phoneNumber, message);
 }
