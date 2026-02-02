@@ -7,10 +7,18 @@ import { translateSchema, TranslateResponse, validateTextSchema, ValidateRespons
 
 const router = Router();
 
-const openai = new OpenAI();
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI();
+} else {
+    console.warn('WARNING: OPENAI_API_KEY not set - AI routes will be disabled');
+}
 
 // Translate text
 router.post('/translate', authenticate, validate(translateSchema), async (req, res) => {
+    if (!openai) {
+        return res.status(503).json({ error: 'AI service not configured', error_code: 'SERVICE_UNAVAILABLE' });
+    }
     try {
         const { original_text, translate_to, instruction } = req.validated;
 
@@ -52,6 +60,9 @@ router.post('/translate', authenticate, validate(translateSchema), async (req, r
 
 // Validate text
 router.post('/validate', authenticate, validate(validateTextSchema), async (req, res) => {
+    if (!openai) {
+        return res.status(503).json({ error: 'AI service not configured', error_code: 'SERVICE_UNAVAILABLE' });
+    }
     try {
         const { text, instruction } = req.validated;
 
