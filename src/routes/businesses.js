@@ -138,6 +138,30 @@ router.get('/', authenticate, async (req, res) => {
     }
 });
 
+// Get businesses with active telegram bot (public, signature required)
+router.get('/telegram-enabled', async (req, res) => {
+    try {
+        const snapshot = await db.collection('businesses')
+            .where('telegram_bot.is_active', '==', true)
+            .get();
+
+        // Filter to only include businesses with a non-empty token
+        const businesses = snapshot.docs
+            .filter(doc => {
+                const data = doc.data();
+                return data.telegram_bot?.token;
+            })
+            .map(doc => ({
+                business_id: doc.id,
+                tenant_url: doc.data().tenant_url || null
+            }));
+
+        res.json(businesses);
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 // Get business by ID
 router.get('/:id', authenticate, async (req, res) => {
     try {
@@ -170,30 +194,6 @@ router.get('/:id', authenticate, async (req, res) => {
             telegram_bot: data.telegram_bot || null,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created
         });
-    } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
-    }
-});
-
-// Get businesses with active telegram bot (public, signature required)
-router.get('/telegram-enabled', async (req, res) => {
-    try {
-        const snapshot = await db.collection('businesses')
-            .where('telegram_bot.is_active', '==', true)
-            .get();
-
-        // Filter to only include businesses with a non-empty token
-        const businesses = snapshot.docs
-            .filter(doc => {
-                const data = doc.data();
-                return data.telegram_bot?.token;
-            })
-            .map(doc => ({
-                business_id: doc.id,
-                tenant_url: doc.data().tenant_url || null
-            }));
-
-        res.json(businesses);
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }
