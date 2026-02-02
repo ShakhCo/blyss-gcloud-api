@@ -151,10 +151,14 @@ router.get('/telegram-enabled', async (req, res) => {
                 const data = doc.data();
                 return data.telegram_bot?.token;
             })
-            .map(doc => ({
-                business_id: doc.id,
-                tenant_url: doc.data().tenant_url || null
-            }));
+            .map(doc => {
+                const data = doc.data();
+                return {
+                    business_id: doc.id,
+                    tenant_url: data.tenant_url || null,
+                    token: data.telegram_bot.token
+                };
+            });
 
         res.json(businesses);
     } catch (error) {
