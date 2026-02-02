@@ -11,6 +11,7 @@ import publicRouter from './public.js';
 import notificationsRouter from './notifications.js';
 import distanceRouter from './distance.js';
 import aiRouter from './ai.js';
+import conversationsRouter from './conversations.js';
 
 const router = Router();
 
@@ -28,5 +29,6 @@ router.use('/employees', verifySignature, employeesRouter);
 router.use('/notifications', verifySignature, notificationsRouter);
 router.use('/distance', verifySignature, distanceRouter);
 router.use('/ai', verifySignature, aiRouter);
+router.use('/businesses/:businessId/conversations', verifySignature, conversationsRouter);
 
 export default router;
