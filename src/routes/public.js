@@ -156,7 +156,7 @@ router.get('/business/services', async (req, res) => {
 });
 
 /**
- * Get services by business slug
+ * Get services and employees by business slug
  * Alternative endpoint that accepts slug as a path parameter
  * Example: GET /public/businesses/my-salon/services
  */
@@ -183,15 +183,25 @@ router.get('/businesses/:slug/services', async (req, res) => {
         const businessId = businessDoc.id;
         const businessData = businessDoc.data();
 
-        // Get active services for this business
-        const servicesSnapshot = await db.collection('businesses')
-            .doc(businessId)
-            .collection('services')
-            .where('is_active', '==', true)
-            .get();
+        // Get active services and accepted employees in parallel
+        const [servicesSnapshot, employeesSnapshot] = await Promise.all([
+            db.collection('businesses')
+                .doc(businessId)
+                .collection('services')
+                .where('is_active', '==', true)
+                .get(),
+            db.collection('businesses')
+                .doc(businessId)
+                .collection('employees')
+                .where('is_accepted', '==', true)
+                .get()
+        ]);
 
+        // Build services map for employee services lookup
+        const servicesMap = new Map();
         const services = servicesSnapshot.docs.map(doc => {
             const data = doc.data();
+            servicesMap.set(doc.id, data);
             return {
                 id: doc.id,
                 name: data.name,
@@ -200,6 +210,73 @@ router.get('/businesses/:slug/services', async (req, res) => {
                 duration_minutes: data.duration_minutes
             };
         });
+
+        // Collect business_owner_ids from employees
+        const businessOwnerIds = new Set();
+        employeesSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (data.business_owner_id) {
+                businessOwnerIds.add(data.business_owner_id);
+            }
+        });
+
+        // Fetch business owners data
+        const businessOwnersMap = new Map();
+        if (businessOwnerIds.size > 0) {
+            const ownerPromises = Array.from(businessOwnerIds).map(async (ownerId) => {
+                const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
+                if (ownerDoc.exists) {
+                    businessOwnersMap.set(ownerId, ownerDoc.data());
+                }
+            });
+            await Promise.all(ownerPromises);
+        }
+
+        // Fetch employee services and build employees array
+        const employees = await Promise.all(employeesSnapshot.docs.map(async (doc) => {
+            const data = doc.data();
+
+            // Get name from business_owners
+            let first_name = null;
+            let last_name = null;
+            if (data.business_owner_id && businessOwnersMap.has(data.business_owner_id)) {
+                const ownerData = businessOwnersMap.get(data.business_owner_id);
+                first_name = ownerData.first_name || null;
+                last_name = ownerData.last_name || null;
+            }
+
+            // Fetch employee services
+            const employeeServicesSnapshot = await db.collection('businesses')
+                .doc(businessId)
+                .collection('employees')
+                .doc(doc.id)
+                .collection('employeeServices')
+                .where('is_active', '==', true)
+                .get();
+
+            const employeeServices = employeeServicesSnapshot.docs.map(serviceDoc => {
+                const serviceData = serviceDoc.data();
+                const businessService = servicesMap.get(serviceData.service_id);
+                return {
+                    id: serviceDoc.id,
+                    service_id: serviceData.service_id,
+                    name: businessService?.name || null,
+                    price: serviceData.price,
+                    duration_minutes: serviceData.duration_minutes
+                };
+            });
+
+            return {
+                id: doc.id,
+                first_name,
+                last_name,
+                position: data.position ?? '',
+                availability_type: data.availability_type ?? 'flexible',
+                working_hours: data.working_hours ?? null,
+                is_open_now: data.is_open_now ?? false,
+                services: employeeServices
+            };
+        }));
 
         // Format working_hours - use default structure if null or undefined
         const formatWorkingHours = (hours) => {
@@ -226,7 +303,8 @@ router.get('/businesses/:slug/services', async (req, res) => {
                 tenant_url: businessData.tenant_url,
                 avatar_url: businessData.avatar_url || null
             },
-            services
+            services,
+            employees
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
