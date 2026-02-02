@@ -14,7 +14,7 @@ app.set('trust proxy', true);
 app.use(cors({
     origin: [
         'https://miniapp.blyss.uz',
-        'https://business-miniapp.blyss.uz/',
+        'https://business-miniapp.blyss.uz',
         "https://barbershop-miniapp-beta.automations.uz"
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
