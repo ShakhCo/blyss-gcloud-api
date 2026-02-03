@@ -13,11 +13,15 @@ import distanceRouter from './distance.js';
 import aiRouter from './ai.js';
 import conversationsRouter from './conversations.js';
 import bookingsRouter from './bookings.js';
+import telegramRouter from './telegram.js';
 
 const router = Router();
 
 // Public routes (no signature verification required)
 router.use('/public', publicRouter);
+
+// Telegram Mini App routes (uses init data auth, no signature verification)
+router.use('/telegram', telegramRouter);
 
 // Booking routes (mixed public and authenticated endpoints - handled internally)
 router.use('/', bookingsRouter);
