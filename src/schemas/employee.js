@@ -30,7 +30,8 @@ export const employeeSchema = z.object({
         .min(1, 'position is required'),
     availability_type: availabilityTypeEnum.default('flexible'),
     working_hours: workingHoursSchema,
-    is_open_now: z.boolean().default(false)
+    is_open_now: z.boolean().default(false),
+    allowed_booking_count_per_slot: z.number().int().min(1).max(5).default(1)
 });
 
 // Update employee working hours schema
@@ -50,6 +51,14 @@ export const workplaceActionSchema = z.object({
     accept: z.boolean({ required_error: 'accept is required' })
 });
 
+// Update employee slot capacity schema
+export const updateEmployeeSlotCapacitySchema = z.object({
+    allowed_booking_count_per_slot: z.number({ required_error: 'allowed_booking_count_per_slot is required' })
+        .int('must be an integer')
+        .min(1, 'minimum value is 1')
+        .max(5, 'maximum value is 5')
+});
+
 // Response schema
 export const employeeResponseSchema = z.object({
     id: z.string(),
@@ -63,5 +72,6 @@ export const employeeResponseSchema = z.object({
     availability_type: z.string().nullable(),
     working_hours: workingHoursSchema,
     is_open_now: z.boolean(),
+    allowed_booking_count_per_slot: z.number().default(1),
     date_created: z.string()
 });

@@ -76,3 +76,85 @@ export async function sendBusinessRemovalNotification(telegramId, businessName) 
 
     await sendTelegramMessage(telegramId, message);
 }
+
+/**
+ * Send a new booking notification to a business via Telegram
+ * @param {number} telegramId - The business owner's/employee's Telegram ID
+ * @param {object} booking - The booking details
+ * @param {string} booking.serviceName - The service name
+ * @param {string} booking.customerName - The customer's name
+ * @param {string} booking.customerPhone - The customer's phone number
+ * @param {string} booking.date - The booking date (YYYY-MM-DD)
+ * @param {string} booking.time - The booking time (HH:mm)
+ * @param {string} booking.employeeName - The employee name
+ * @param {number} booking.totalPrice - The total price
+ * @returns {Promise<void>}
+ */
+export async function sendBookingNotification(telegramId, booking) {
+    const { serviceName, customerName, customerPhone, date, time, employeeName, totalPrice } = booking;
+
+    const message = `🆕 <b>Yangi buyurtma!</b>\n\n` +
+        `📋 <b>Xizmat:</b> ${serviceName}\n` +
+        `👤 <b>Mijoz:</b> ${customerName}\n` +
+        `📞 <b>Telefon:</b> ${customerPhone}\n` +
+        `📅 <b>Sana:</b> ${date}\n` +
+        `🕐 <b>Vaqt:</b> ${time}\n` +
+        `👨‍💼 <b>Xodim:</b> ${employeeName}\n` +
+        `💰 <b>Narx:</b> ${totalPrice.toLocaleString()} so'm`;
+
+    await sendTelegramMessage(telegramId, message);
+}
+
+/**
+ * Send a booking cancellation notification to a business via Telegram
+ * @param {number} telegramId - The business owner's/employee's Telegram ID
+ * @param {object} booking - The booking details
+ * @param {string} booking.serviceName - The service name
+ * @param {string} booking.customerName - The customer's name
+ * @param {string} booking.date - The booking date (YYYY-MM-DD)
+ * @param {string} booking.time - The booking time (HH:mm)
+ * @returns {Promise<void>}
+ */
+export async function sendBookingCancellationNotification(telegramId, booking) {
+    const { serviceName, customerName, date, time } = booking;
+
+    const message = `❌ <b>Buyurtma bekor qilindi!</b>\n\n` +
+        `📋 <b>Xizmat:</b> ${serviceName}\n` +
+        `👤 <b>Mijoz:</b> ${customerName}\n` +
+        `📅 <b>Sana:</b> ${date}\n` +
+        `🕐 <b>Vaqt:</b> ${time}`;
+
+    await sendTelegramMessage(telegramId, message);
+}
+
+/**
+ * Send a booking status update notification to a customer via Telegram
+ * @param {number} telegramId - The customer's Telegram ID
+ * @param {object} details - The notification details
+ * @param {string} details.businessName - The business name
+ * @param {string} details.serviceName - The service name
+ * @param {string} details.date - The booking date (YYYY-MM-DD)
+ * @param {string} details.time - The booking time (HH:mm)
+ * @param {string} details.status - The new booking status
+ * @returns {Promise<void>}
+ */
+export async function sendBookingStatusUpdateNotification(telegramId, details) {
+    const { businessName, serviceName, date, time, status } = details;
+
+    const statusMessages = {
+        confirmed: '✅ <b>Buyurtmangiz tasdiqlandi!</b>',
+        completed: '🎉 <b>Buyurtmangiz yakunlandi!</b>',
+        cancelled: '❌ <b>Buyurtmangiz bekor qilindi!</b>',
+        no_show: '⚠️ <b>Buyurtmangiz "Kelmadi" deb belgilandi</b>'
+    };
+
+    const statusMessage = statusMessages[status] || `📋 <b>Buyurtma holati: ${status}</b>`;
+
+    const message = `${statusMessage}\n\n` +
+        `🏢 <b>Biznes:</b> ${businessName}\n` +
+        `📋 <b>Xizmat:</b> ${serviceName}\n` +
+        `📅 <b>Sana:</b> ${date}\n` +
+        `🕐 <b>Vaqt:</b> ${time}`;
+
+    await sendTelegramMessage(telegramId, message);
+}

@@ -12,11 +12,15 @@ import notificationsRouter from './notifications.js';
 import distanceRouter from './distance.js';
 import aiRouter from './ai.js';
 import conversationsRouter from './conversations.js';
+import bookingsRouter from './bookings.js';
 
 const router = Router();
 
 // Public routes (no signature verification required)
 router.use('/public', publicRouter);
+
+// Booking routes (mixed public and authenticated endpoints - handled internally)
+router.use('/', bookingsRouter);
 
 // All other routes require signature verification
 router.use('/auth', verifySignature, authRouter);

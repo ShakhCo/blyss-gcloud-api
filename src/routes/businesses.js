@@ -6,7 +6,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { uploadSingle } from '../config/multer.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
-import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema } from '../schemas/employee.js';
+import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema, updateEmployeeSlotCapacitySchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
 import { sendBusinessInvitationSms } from '../utils/eskiz.js';
 import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
@@ -1762,6 +1762,46 @@ router.patch('/:id/employees/:employeeId/is-open-now', authenticate, validate(up
         res.json({
             id: req.params.employeeId,
             is_open_now
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Update employee slot capacity (allowed_booking_count_per_slot)
+router.patch('/:id/employees/:employeeId/slot-capacity', authenticate, validate(updateEmployeeSlotCapacitySchema), async (req, res) => {
+    try {
+        const [businessDoc, employeeDoc] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).get(),
+            db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(req.params.employeeId)
+                .get()
+        ]);
+
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        if (!employeeDoc.exists) {
+            return res.status(404).json({ error: 'Employee not found', error_code: 'EMPLOYEE_NOT_FOUND' });
+        }
+
+        const businessData = businessDoc.data();
+
+        // Only business owner can update slot capacity
+        if (businessData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const { allowed_booking_count_per_slot } = req.validated;
+
+        await employeeDoc.ref.update({ allowed_booking_count_per_slot });
+
+        res.json({
+            id: req.params.employeeId,
+            allowed_booking_count_per_slot
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
