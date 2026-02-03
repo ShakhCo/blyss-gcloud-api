@@ -50,6 +50,9 @@ export const telegramAuth = (req, res, next) => {
 
         next();
     } catch (error) {
+        // Log the actual error for debugging
+        console.error('Telegram auth error:', error.message);
+
         // Handle specific validation errors
         if (error.message?.includes('expired') || error.message?.includes('Expired')) {
             return res.status(401).json({
