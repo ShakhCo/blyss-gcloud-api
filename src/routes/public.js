@@ -349,7 +349,8 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
                 id: doc.id,
                 name: data.name || { ru: '', uz: '' },
                 description: data.description || { ru: '', uz: '' },
-                price: data.price
+                price: data.price,
+                duration_minutes: data.duration_minutes
             };
         });
 
