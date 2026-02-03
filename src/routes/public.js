@@ -15,6 +15,8 @@ const limiter = rateLimit({
     max: 500, // limit each IP to 500 requests per windowMs
     standardHeaders: true,
     legacyHeaders: false,
+    // Trust proxy is set to 1 in server.js (single proxy hop for Cloud Run)
+    validate: { trustProxy: false }
 });
 
 router.use(limiter);

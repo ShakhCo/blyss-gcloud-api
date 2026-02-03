@@ -9,7 +9,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Trust proxy for rate limiting (behind Cloudflare/Google Cloud)
-app.set('trust proxy', true);
+// Use 1 to trust only the first proxy hop (recommended for Cloud Run)
+app.set('trust proxy', 1);
 
 app.use(cors({
     origin: [
