@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
-import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema } from '../schemas/business.js';
+import crypto from 'crypto';
+import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramCreateBookingSchema } from '../schemas/business.js';
+import { sendBookingNotification } from '../utils/telegram.js';
 import { db } from '../db/db.js';
 
 const router = Router();
@@ -665,6 +667,279 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
         });
     } catch (error) {
         console.error('Error in /telegram/available-slots:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * Convert seconds from midnight to HH:mm format
+ */
+function secondsToTime(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+}
+
+/**
+ * POST /telegram/bookings
+ * Create a new booking from Telegram mini app
+ */
+router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res) => {
+    try {
+        const { user_id, business_id, services, notes } = req.validated;
+        const telegramUser = req.telegramUser;
+
+        // 1. Validate user exists
+        const userDoc = await db.collection('users').doc(user_id).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                error: 'User not found',
+                error_code: 'USER_NOT_FOUND'
+            });
+        }
+
+        const userData = userDoc.data();
+
+        // 2. Verify business exists
+        const businessDoc = await db.collection('businesses').doc(business_id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({
+                error: 'Business not found',
+                error_code: 'BUSINESS_NOT_FOUND'
+            });
+        }
+
+        const businessData = businessDoc.data();
+
+        // 3. Get all booking dates from services to fetch existing bookings
+        const bookingDates = [...new Set(services.map(s => s.day))];
+
+        // Fetch existing bookings for these dates
+        const existingBookingsSnapshot = await db.collection('bookings')
+            .where('business_id', '==', business_id)
+            .where('booking_date', 'in', bookingDates)
+            .where('status', 'in', ['pending', 'confirmed'])
+            .get();
+
+        // Build map of employee bookings: employee_id -> [{ start, end }]
+        const employeeBookingsMap = new Map();
+        for (const bookingDoc of existingBookingsSnapshot.docs) {
+            const bookingData = bookingDoc.data();
+            for (const item of bookingData.items || []) {
+                if (!item.employee_id || !item.start_time) continue;
+
+                const itemDay = item.start_time.split('T')[0];
+                const timePart = item.start_time.split('T')[1];
+                const [hours, minutes] = timePart.split(':').map(Number);
+                const startSeconds = hours * 3600 + minutes * 60;
+                const endSeconds = startSeconds + (item.duration_minutes || 30) * 60;
+
+                const key = `${item.employee_id}_${itemDay}`;
+                if (!employeeBookingsMap.has(key)) {
+                    employeeBookingsMap.set(key, []);
+                }
+                employeeBookingsMap.get(key).push({ start: startSeconds, end: endSeconds });
+            }
+        }
+
+        // 4. Build booking items from services with full validation
+        const bookingItems = [];
+        let totalPrice = 0;
+        let totalDuration = 0;
+        const bookingDate = services[0].day;
+
+        for (let i = 0; i < services.length; i++) {
+            const service = services[i];
+
+            // 4a. Validate employee exists and belongs to this business
+            const employeeDoc = await db.collection('businesses')
+                .doc(business_id)
+                .collection('employees')
+                .doc(service.employee_id)
+                .get();
+
+            if (!employeeDoc.exists) {
+                return res.status(400).json({
+                    error: `Employee ${service.employee_id} not found in this business`,
+                    error_code: 'EMPLOYEE_NOT_FOUND'
+                });
+            }
+
+            const employeeData = employeeDoc.data();
+
+            // Check employee is accepted
+            if (!employeeData.is_accepted) {
+                return res.status(400).json({
+                    error: `Employee ${service.employee_id} is not active`,
+                    error_code: 'EMPLOYEE_NOT_ACTIVE'
+                });
+            }
+
+            // 4b. Validate employee offers this service
+            const empServiceSnapshot = await db.collection('businesses')
+                .doc(business_id)
+                .collection('employees')
+                .doc(service.employee_id)
+                .collection('employeeServices')
+                .where('service_id', '==', service.service_id)
+                .where('is_active', '==', true)
+                .limit(1)
+                .get();
+
+            if (empServiceSnapshot.empty) {
+                return res.status(400).json({
+                    error: `Employee ${service.employee_id} does not offer service ${service.service_id}`,
+                    error_code: 'EMPLOYEE_SERVICE_NOT_FOUND'
+                });
+            }
+
+            const empServiceData = empServiceSnapshot.docs[0].data();
+
+            // 4c. Validate service exists
+            const serviceDoc = await db.collection('businesses')
+                .doc(business_id)
+                .collection('services')
+                .doc(service.service_id)
+                .get();
+
+            if (!serviceDoc.exists) {
+                return res.status(400).json({
+                    error: `Service ${service.service_id} not found`,
+                    error_code: 'SERVICE_NOT_FOUND'
+                });
+            }
+
+            const serviceData = serviceDoc.data();
+
+            // 4d. Validate employee is available at the given time
+            const key = `${service.employee_id}_${service.day}`;
+            const existingBookings = employeeBookingsMap.get(key) || [];
+            const allowedCount = employeeData.allowed_booking_count_per_slot || 1;
+
+            // Count overlapping bookings
+            let overlapCount = 0;
+            for (const booking of existingBookings) {
+                // Check if requested time overlaps with existing booking
+                if (!(service.end <= booking.start || service.start >= booking.end)) {
+                    overlapCount++;
+                }
+            }
+
+            if (overlapCount >= allowedCount) {
+                return res.status(409).json({
+                    error: `Employee ${service.employee_id} is not available at ${secondsToTime(service.start)} on ${service.day}`,
+                    error_code: 'SLOT_NOT_AVAILABLE'
+                });
+            }
+
+            // Add this booking to the map to check subsequent services in same request
+            if (!employeeBookingsMap.has(key)) {
+                employeeBookingsMap.set(key, []);
+            }
+            employeeBookingsMap.get(key).push({ start: service.start, end: service.end });
+
+            // Get employee name from business_owners
+            let employeeName = '';
+            if (employeeData.business_owner_id) {
+                const ownerDoc = await db.collection('business_owners').doc(employeeData.business_owner_id).get();
+                if (ownerDoc.exists) {
+                    const ownerData = ownerDoc.data();
+                    employeeName = [ownerData.first_name, ownerData.last_name].filter(Boolean).join(' ') || '';
+                }
+            }
+
+            // Calculate duration from start/end
+            const durationMinutes = Math.floor((service.end - service.start) / 60);
+
+            // Convert seconds to time format
+            const startTime = `${service.day}T${secondsToTime(service.start)}`;
+            const endTime = `${service.day}T${secondsToTime(service.end)}`;
+
+            bookingItems.push({
+                id: crypto.randomBytes(8).toString('hex'),
+                service_id: service.service_id,
+                service_name: serviceData.name || { uz: '', ru: '' },
+                employee_id: service.employee_id,
+                employee_name: employeeName,
+                start_time: startTime,
+                end_time: endTime,
+                price: empServiceData.price,
+                duration_minutes: durationMinutes,
+                status: 'pending',
+                order_index: i
+            });
+
+            totalPrice += empServiceData.price;
+            totalDuration += durationMinutes;
+        }
+
+        // 5. Generate unique booking ID
+        let bookingId;
+        let exists = true;
+        while (exists) {
+            bookingId = crypto.randomBytes(16).toString('hex');
+            const existingDoc = await db.collection('bookings').doc(bookingId).get();
+            exists = existingDoc.exists;
+        }
+
+        // 6. Create booking
+        const now = new Date();
+        const customerName = [userData.first_name, userData.last_name].filter(Boolean).join(' ')
+            || [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ')
+            || 'Telegram User';
+
+        const bookingPayload = {
+            business_id,
+            business_name: businessData.business_name,
+            user_id,
+            customer_name: customerName,
+            customer_phone: userData.phone_number || '',
+            customer_telegram_id: telegramUser.id,
+            booking_date: bookingDate,
+            status: 'pending',
+            total_price: totalPrice,
+            total_duration_minutes: totalDuration,
+            notes: notes || '',
+            items: bookingItems,
+            created_at: now,
+            updated_at: now
+        };
+
+        await db.collection('bookings').doc(bookingId).set(bookingPayload);
+
+        // 7. Send Telegram notification to business if enabled
+        if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
+            try {
+                const firstItem = bookingItems[0];
+                const serviceName = typeof firstItem.service_name === 'object'
+                    ? firstItem.service_name.uz || firstItem.service_name.ru
+                    : firstItem.service_name;
+
+                await sendBookingNotification(businessData.telegram_bot.chat_id, {
+                    serviceName,
+                    customerName: bookingPayload.customer_name,
+                    customerPhone: bookingPayload.customer_phone || 'N/A',
+                    date: bookingDate,
+                    time: secondsToTime(services[0].start),
+                    employeeName: firstItem.employee_name,
+                    totalPrice
+                });
+            } catch (telegramError) {
+                console.error('Failed to send Telegram notification:', telegramError);
+            }
+        }
+
+        res.status(201).json({
+            id: bookingId,
+            ...bookingPayload,
+            created_at: now.toISOString(),
+            updated_at: now.toISOString()
+        });
+    } catch (error) {
+        console.error('Error in /telegram/bookings:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'

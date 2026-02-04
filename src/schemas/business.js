@@ -140,6 +140,23 @@ export const telegramAvailableSlotsQuerySchema = z.object({
     business_id: z.string().min(1, 'business_id is required')
 });
 
+// Schema for telegram booking service item
+const telegramBookingServiceSchema = z.object({
+    service_id: z.string().min(1, 'service_id is required'),
+    employee_id: z.string().min(1, 'employee_id is required'),
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'day must be YYYY-MM-DD'),
+    start: z.number().int().min(0).max(86399, 'start must be seconds from midnight (0-86399)'),
+    end: z.number().int().min(0).max(86400, 'end must be seconds from midnight (0-86400)')
+});
+
+// Schema for telegram booking creation
+export const telegramCreateBookingSchema = z.object({
+    user_id: z.string().min(1, 'user_id is required'),
+    business_id: z.string().min(1, 'business_id is required'),
+    services: z.array(telegramBookingServiceSchema).min(1, 'at least one service is required'),
+    notes: z.string().optional().default('')
+});
+
 // Query schema for distance calculation with flat parameters
 export const distanceQuerySchema = z.object({
     user_lat: z.coerce.number({
