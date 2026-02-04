@@ -19,6 +19,63 @@ export const loginSchema = z.object({
         .min(12, 'phone_number must be at least 12 digits')
 });
 
+const response = {
+    time_slots: [
+        {
+            start: 36000, // 10:00
+            end: 36900, // 10:15,
+            availabe_employees: [
+                {
+                    employee_id: 0,
+                    first_name: '',
+                    last_name: '',
+                    services: [
+                        {
+                            service_od: 0,
+                            name: {
+                                uz: '',
+                                ru: ''
+                            },
+                            description: {
+                                uz: '',
+                                ru: ''
+                            },
+                            duration_in_minutes: 0,
+                            price: 0
+                        },
+                    ]
+                }
+            ]
+        },
+        {
+            start: 36900, // 10:15
+            end: 37800,  // 10:30
+            availabe_employees: [
+                {
+                    employee_id: 0,
+                    first_name: '',
+                    last_name: '',
+                    services: [
+                        {
+                            service_od: 0,
+                            name: {
+                                uz: '',
+                                ru: ''
+                            },
+                            description: {
+                                uz: '',
+                                ru: ''
+                            },
+                            duration_in_minutes: 0,
+                            price: 0
+                        },
+                    ]
+                }
+            ]
+        }, //etc
+    ]
+}
+
 // Output schema (for responses)
 export const userResponseSchema = z.object({
     id: z.string(),

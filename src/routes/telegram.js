@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
-import { nearestBusinessesQuerySchema, distanceQuerySchema } from '../schemas/business.js';
+import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema } from '../schemas/business.js';
 import { db } from '../db/db.js';
 
 const router = Router();
@@ -406,6 +406,248 @@ router.get('/get-distance', validate(distanceQuerySchema, 'query'), async (req, 
         res.json(result);
     } catch (error) {
         console.error('Error in /telegram/get-distance:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+// Day name mapping for working hours lookup
+const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/**
+ * GET /telegram/available-slots
+ * Returns all time slots for a business day with available employees and their services
+ * Query params: business_id, date (YYYY-MM-DD)
+ */
+router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'query'), async (req, res) => {
+    try {
+        const { business_id, date } = req.validated;
+
+        // 1. Get business and validate it exists
+        const businessDoc = await db.collection('businesses').doc(business_id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({
+                error: 'Business not found',
+                error_code: 'BUSINESS_NOT_FOUND'
+            });
+        }
+
+        const businessData = businessDoc.data();
+
+        // 2. Get day's working hours
+        const dateObj = new Date(date);
+        const dayIndex = dateObj.getDay();
+        const dayName = dayNames[dayIndex];
+        const businessHours = businessData.working_hours?.[dayName];
+
+        if (!businessHours || !businessHours.is_open) {
+            return res.json({
+                time_slots: [],
+                message: 'Business is closed on this day'
+            });
+        }
+
+        // 3. Get all accepted employees with their services
+        const employeesSnapshot = await db.collection('businesses')
+            .doc(business_id)
+            .collection('employees')
+            .where('is_accepted', '==', true)
+            .get();
+
+        if (employeesSnapshot.empty) {
+            return res.json({
+                time_slots: [],
+                message: 'No employees available'
+            });
+        }
+
+        // Get business owner IDs to fetch names
+        const businessOwnerIds = new Set();
+        employeesSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (data.business_owner_id) {
+                businessOwnerIds.add(data.business_owner_id);
+            }
+        });
+
+        // Fetch business owners data
+        const businessOwnersMap = new Map();
+        if (businessOwnerIds.size > 0) {
+            const ownerPromises = Array.from(businessOwnerIds).map(async (ownerId) => {
+                const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
+                if (ownerDoc.exists) {
+                    businessOwnersMap.set(ownerId, ownerDoc.data());
+                }
+            });
+            await Promise.all(ownerPromises);
+        }
+
+        // Build employee data with their services
+        const employees = [];
+        await Promise.all(employeesSnapshot.docs.map(async (empDoc) => {
+            const empData = empDoc.data();
+
+            // Get employee name from business_owners
+            let first_name = null;
+            let last_name = null;
+            if (empData.business_owner_id && businessOwnersMap.has(empData.business_owner_id)) {
+                const ownerData = businessOwnersMap.get(empData.business_owner_id);
+                first_name = ownerData.first_name || null;
+                last_name = ownerData.last_name || null;
+            }
+
+            // Get employee services
+            const employeeServicesSnapshot = await db.collection('businesses')
+                .doc(business_id)
+                .collection('employees')
+                .doc(empDoc.id)
+                .collection('employeeServices')
+                .where('is_active', '==', true)
+                .get();
+
+            if (employeeServicesSnapshot.empty) {
+                return; // Skip employees without services
+            }
+
+            // Get service details for each employee service
+            const services = [];
+            for (const serviceDoc of employeeServicesSnapshot.docs) {
+                const serviceData = serviceDoc.data();
+
+                // Fetch the parent service to get name and description
+                const parentServiceDoc = await db.collection('businesses')
+                    .doc(business_id)
+                    .collection('services')
+                    .doc(serviceData.service_id)
+                    .get();
+
+                if (parentServiceDoc.exists) {
+                    const parentData = parentServiceDoc.data();
+                    services.push({
+                        service_id: serviceData.service_id,
+                        name: parentData.name || { uz: '', ru: '' },
+                        description: parentData.description || { uz: '', ru: '' },
+                        duration_minutes: serviceData.duration_minutes,
+                        price: serviceData.price
+                    });
+                }
+            }
+
+            if (services.length > 0) {
+                employees.push({
+                    id: empDoc.id,
+                    first_name,
+                    last_name,
+                    working_hours: empData.working_hours || null,
+                    allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
+                    services
+                });
+            }
+        }));
+
+        if (employees.length === 0) {
+            return res.json({
+                time_slots: [],
+                message: 'No employees with active services available'
+            });
+        }
+
+        // 4. Get all bookings for that date (pending/confirmed)
+        const bookingsSnapshot = await db.collection('bookings')
+            .where('business_id', '==', business_id)
+            .where('booking_date', '==', date)
+            .where('status', 'in', ['pending', 'confirmed'])
+            .get();
+
+        // Build map of booked slots per employee
+        const employeeBookings = new Map();
+        for (const bookingDoc of bookingsSnapshot.docs) {
+            const bookingData = bookingDoc.data();
+            const items = bookingData.items || [];
+
+            for (const item of items) {
+                if (!item.employee_id || !item.start_time) continue;
+
+                if (!employeeBookings.has(item.employee_id)) {
+                    employeeBookings.set(item.employee_id, []);
+                }
+
+                // Store booking time range in seconds from midnight
+                const timePart = item.start_time.split('T')[1];
+                const [hours, minutes] = timePart.split(':').map(Number);
+                const startSeconds = hours * 3600 + minutes * 60;
+                const endSeconds = startSeconds + (item.duration_minutes || 30) * 60;
+
+                employeeBookings.get(item.employee_id).push({
+                    start: startSeconds,
+                    end: endSeconds
+                });
+            }
+        }
+
+        // 5. Generate 15-minute slots from business open to close
+        const slotInterval = 900; // 15 minutes in seconds
+        const timeSlots = [];
+
+        for (let slotStart = businessHours.start; slotStart < businessHours.end; slotStart += slotInterval) {
+            const slotEnd = slotStart + slotInterval;
+            const availableEmployees = [];
+
+            // 6. For each slot, check which employees are available
+            for (const employee of employees) {
+                // Check employee working hours for this day
+                const empHours = employee.working_hours?.[dayName];
+                if (empHours && !empHours.is_open) {
+                    continue; // Employee not working this day
+                }
+
+                // Check if slot is within employee's working hours
+                if (empHours) {
+                    if (slotStart < empHours.start || slotEnd > empHours.end) {
+                        continue; // Slot outside employee's hours
+                    }
+                }
+
+                // Check if employee is booked during this slot
+                const empBookings = employeeBookings.get(employee.id) || [];
+                const allowedCount = employee.allowed_booking_count_per_slot;
+
+                // Count overlapping bookings
+                let bookingCount = 0;
+                for (const booking of empBookings) {
+                    // Check if booking overlaps with this slot
+                    if (!(slotEnd <= booking.start || slotStart >= booking.end)) {
+                        bookingCount++;
+                    }
+                }
+
+                if (bookingCount < allowedCount) {
+                    availableEmployees.push({
+                        employee_id: employee.id,
+                        first_name: employee.first_name,
+                        last_name: employee.last_name,
+                        services: employee.services
+                    });
+                }
+            }
+
+            // Only include slot if at least one employee is available
+            if (availableEmployees.length > 0) {
+                timeSlots.push({
+                    start: slotStart,
+                    end: slotEnd,
+                    available_employees: availableEmployees
+                });
+            }
+        }
+
+        res.json({
+            time_slots: timeSlots
+        });
+    } catch (error) {
+        console.error('Error in /telegram/available-slots:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'
