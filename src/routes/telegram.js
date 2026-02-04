@@ -1,10 +1,33 @@
 import { Router } from 'express';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
-import { nearestBusinessesQuerySchema } from '../schemas/business.js';
+import { nearestBusinessesQuerySchema, distanceQuerySchema } from '../schemas/business.js';
 import { db } from '../db/db.js';
 
 const router = Router();
+
+const OPENROUTESERVICE_API_KEY = process.env.OPENROUTESERVICE_API_KEY;
+
+// Simple in-memory cache for distance calculations
+const distanceCache = new Map();
+const MAX_CACHE_SIZE = 1000;
+
+function getCacheKey(lat1, lng1, lat2, lng2) {
+    const precision = 10000;
+    const rLat1 = Math.round(lat1 * precision) / precision;
+    const rLng1 = Math.round(lng1 * precision) / precision;
+    const rLat2 = Math.round(lat2 * precision) / precision;
+    const rLng2 = Math.round(lng2 * precision) / precision;
+    return `${rLat1},${rLng1}-${rLat2},${rLng2}`;
+}
+
+function setCache(key, value) {
+    if (distanceCache.size >= MAX_CACHE_SIZE) {
+        const firstKey = distanceCache.keys().next().value;
+        distanceCache.delete(firstKey);
+    }
+    distanceCache.set(key, value);
+}
 
 // Apply Telegram auth middleware to all routes
 router.use(telegramAuth);
@@ -296,6 +319,93 @@ router.get('/business-details', async (req, res) => {
         });
     } catch (error) {
         console.error('Error in /telegram/business-details:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * GET /telegram/get-distance
+ * Calculate road distance and travel time between user and business locations
+ * Query params: user_lat, user_lng, business_lat, business_lng
+ * Returns: { distance: number, metric: 'km' | 'm', duration: number (minutes) }
+ */
+router.get('/get-distance', validate(distanceQuerySchema, 'query'), async (req, res) => {
+    try {
+        const { user_lat, user_lng, business_lat, business_lng } = req.validated;
+
+        // Check cache first
+        const cacheKey = getCacheKey(user_lat, user_lng, business_lat, business_lng);
+        const cachedResult = distanceCache.get(cacheKey);
+
+        if (cachedResult) {
+            return res.json(cachedResult);
+        }
+
+        if (!OPENROUTESERVICE_API_KEY) {
+            return res.status(500).json({
+                error: 'OpenRouteService API key not configured',
+                error_code: 'API_KEY_MISSING'
+            });
+        }
+
+        // OpenRouteService expects [lng, lat] format
+        const locations = [
+            [user_lng, user_lat],
+            [business_lng, business_lat]
+        ];
+
+        const response = await fetch('https://api.openrouteservice.org/v2/matrix/driving-car', {
+            method: 'POST',
+            headers: {
+                'Authorization': OPENROUTESERVICE_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                locations,
+                metrics: ['distance', 'duration'],
+                units: 'km'
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            return res.status(response.status).json({
+                error: errorData.error?.message || 'Failed to calculate distance',
+                error_code: 'DISTANCE_CALCULATION_FAILED'
+            });
+        }
+
+        const data = await response.json();
+
+        const distanceInKm = data.distances?.[0]?.[1];
+        const durationInSeconds = data.durations?.[0]?.[1];
+
+        if (distanceInKm === undefined || distanceInKm === null) {
+            return res.status(500).json({
+                error: 'Unable to calculate distance between locations',
+                error_code: 'DISTANCE_NOT_AVAILABLE'
+            });
+        }
+
+        const durationInMinutes = durationInSeconds ? Math.ceil(durationInSeconds / 60) : null;
+
+        let result;
+        if (distanceInKm < 1) {
+            const distanceInMeters = Math.round(distanceInKm * 1000);
+            result = { distance: distanceInMeters, metric: 'm', duration: durationInMinutes };
+        } else {
+            const roundedKm = Math.round(distanceInKm * 10) / 10;
+            result = { distance: roundedKm, metric: 'km', duration: durationInMinutes };
+        }
+
+        setCache(cacheKey, result);
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error in /telegram/get-distance:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'

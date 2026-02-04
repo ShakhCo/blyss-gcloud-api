@@ -133,3 +133,27 @@ export const nearestBusinessesQuerySchema = z.object({
         .default(5)
         .optional()
 });
+
+// Query schema for distance calculation with flat parameters
+export const distanceQuerySchema = z.object({
+    user_lat: z.coerce.number({
+        required_error: 'user_lat is required',
+        invalid_type_error: 'user_lat must be a number'
+    }).min(-90, 'user_lat must be between -90 and 90')
+        .max(90, 'user_lat must be between -90 and 90'),
+    user_lng: z.coerce.number({
+        required_error: 'user_lng is required',
+        invalid_type_error: 'user_lng must be a number'
+    }).min(-180, 'user_lng must be between -180 and 180')
+        .max(180, 'user_lng must be between -180 and 180'),
+    business_lat: z.coerce.number({
+        required_error: 'business_lat is required',
+        invalid_type_error: 'business_lat must be a number'
+    }).min(-90, 'business_lat must be between -90 and 90')
+        .max(90, 'business_lat must be between -90 and 90'),
+    business_lng: z.coerce.number({
+        required_error: 'business_lng is required',
+        invalid_type_error: 'business_lng must be a number'
+    }).min(-180, 'business_lng must be between -180 and 180')
+        .max(180, 'business_lng must be between -180 and 180')
+});

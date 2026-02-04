@@ -64,9 +64,9 @@ function parseNestedQuery(req, res, next) {
 }
 
 /**
- * Calculate road distance between two locations using OpenRouteService Matrix API
+ * Calculate road distance and travel time between two locations using OpenRouteService Matrix API
  * Query params: user_location (required), business_location (required)
- * Returns: { distance: number, metric: 'km' | 'm' }
+ * Returns: { distance: number, metric: 'km' | 'm', duration: number (minutes) }
  */
 router.get('/', parseNestedQuery, validate(distanceQuerySchema, 'query'), async (req, res) => {
     try {
@@ -102,7 +102,7 @@ router.get('/', parseNestedQuery, validate(distanceQuerySchema, 'query'), async 
             },
             body: JSON.stringify({
                 locations,
-                metrics: ['distance'],
+                metrics: ['distance', 'duration'],
                 units: 'km'
             })
         });
@@ -117,8 +117,9 @@ router.get('/', parseNestedQuery, validate(distanceQuerySchema, 'query'), async 
 
         const data = await response.json();
 
-        // Extract distance from user (index 0) to business (index 1)
+        // Extract distance and duration from user (index 0) to business (index 1)
         const distanceInKm = data.distances?.[0]?.[1];
+        const durationInSeconds = data.durations?.[0]?.[1];
 
         if (distanceInKm === undefined || distanceInKm === null) {
             return res.status(500).json({
@@ -127,16 +128,19 @@ router.get('/', parseNestedQuery, validate(distanceQuerySchema, 'query'), async 
             });
         }
 
+        // Convert duration to minutes (round up to nearest minute)
+        const durationInMinutes = durationInSeconds ? Math.ceil(durationInSeconds / 60) : null;
+
         // Format response
         let result;
         if (distanceInKm < 1) {
             // Convert to meters and round to nearest meter
             const distanceInMeters = Math.round(distanceInKm * 1000);
-            result = { distance: distanceInMeters, metric: 'm' };
+            result = { distance: distanceInMeters, metric: 'm', duration: durationInMinutes };
         } else {
             // Round to 1 decimal place for km
             const roundedKm = Math.round(distanceInKm * 10) / 10;
-            result = { distance: roundedKm, metric: 'km' };
+            result = { distance: roundedKm, metric: 'km', duration: durationInMinutes };
         }
 
         // Cache the result
