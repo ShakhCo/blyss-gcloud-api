@@ -490,12 +490,12 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
             const empData = empDoc.data();
 
             // Get employee name from business_owners
-            let first_name = null;
-            let last_name = null;
+            let first_name = '';
+            let last_name = '';
             if (empData.business_owner_id && businessOwnersMap.has(empData.business_owner_id)) {
                 const ownerData = businessOwnersMap.get(empData.business_owner_id);
-                first_name = ownerData.first_name || null;
-                last_name = ownerData.last_name || null;
+                first_name = ownerData.first_name || '';
+                last_name = ownerData.last_name || '';
             }
 
             // Get employee services
@@ -591,7 +591,24 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
         const slotInterval = 900; // 15 minutes in seconds
         const timeSlots = [];
 
-        for (let slotStart = businessHours.start; slotStart < businessHours.end; slotStart += slotInterval) {
+        // Calculate minimum start time if date is today (Uzbekistan time GMT+5)
+        const now = new Date();
+        const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const uzbekNow = new Date(utcNow + (5 * 3600000)); // GMT+5
+
+        const todayUzb = uzbekNow.toISOString().split('T')[0]; // YYYY-MM-DD
+        let minSlotStart = businessHours.start;
+
+        if (date === todayUzb) {
+            // Current time in seconds from midnight + 15 minutes buffer
+            const currentSeconds = uzbekNow.getHours() * 3600 + uzbekNow.getMinutes() * 60 + uzbekNow.getSeconds();
+            const bufferSeconds = 900; // 15 minutes
+            minSlotStart = Math.max(businessHours.start, currentSeconds + bufferSeconds);
+            // Round up to next slot interval
+            minSlotStart = Math.ceil(minSlotStart / slotInterval) * slotInterval;
+        }
+
+        for (let slotStart = minSlotStart; slotStart < businessHours.end; slotStart += slotInterval) {
             const slotEnd = slotStart + slotInterval;
             const availableEmployees = [];
 
