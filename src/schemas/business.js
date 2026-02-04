@@ -116,8 +116,8 @@ export const nearestBusinessesQuerySchema = z.object({
     radius: z.coerce.number({
         invalid_type_error: 'radius must be a number'
     }).positive('radius must be positive')
-        .max(1000, 'radius must be at most 100 km')
-        .default(10)
+        .max(1000, 'radius must be at most 1000 km')
+        .default(1000)
         .optional(),
     page: z.coerce.number({
         invalid_type_error: 'page must be a number'

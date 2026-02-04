@@ -43,11 +43,11 @@ function calculateDistance(lat1, lng1, lat2, lng2) {
 /**
  * GET /telegram/nearest-businesses
  * Returns nearest businesses based on user's location with pagination
- * Query params: lat, lng, radius (default 10km), page (default 1), page_size (default 5)
+ * Query params: lat, lng, radius (default 1000km), page (default 1), page_size (default 5)
  */
 router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'), async (req, res) => {
     try {
-        const { lat, lng, radius = 10, page = 1, page_size = 5 } = req.validated;
+        const { lat, lng, radius = 1000, page = 1, page_size = 5 } = req.validated;
 
         const businessesSnapshot = await db.collection('businesses').get();
 
