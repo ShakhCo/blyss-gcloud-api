@@ -37,9 +37,49 @@ router.use(telegramAuth);
 /**
  * GET /telegram/me
  * Returns the current authenticated Telegram user from init data
+ * Registers user if not exists
  */
-router.get('/me', (req, res) => {
-    res.json(req.telegramUser);
+router.get('/me', async (req, res) => {
+    try {
+        const telegramUser = req.telegramUser;
+        const odamUzUserId = String(telegramUser.id);
+
+        // Check if user exists
+        const userDoc = await db.collection('users').doc(odamUzUserId).get();
+
+        if (!userDoc.exists) {
+            // Register new user
+            const now = new Date();
+            const newUser = {
+                telegram_id: telegramUser.id,
+                first_name: telegramUser.first_name || '',
+                last_name: telegramUser.last_name || '',
+                username: telegramUser.username || '',
+                phone_number: null,
+                is_verified: false,
+                created_at: now,
+                updated_at: now
+            };
+
+            await db.collection('users').doc(odamUzUserId).set(newUser);
+
+            return res.json({
+                ...telegramUser,
+                user_id: odamUzUserId
+            });
+        }
+
+        res.json({
+            ...telegramUser,
+            user_id: odamUzUserId
+        });
+    } catch (error) {
+        console.error('Error in /telegram/me:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
 });
 
 /**
