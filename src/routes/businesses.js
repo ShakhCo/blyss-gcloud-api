@@ -182,6 +182,36 @@ router.get('/:id', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
+        // Fetch services and employees counts in parallel
+        const [servicesSnapshot, employeesSnapshot] = await Promise.all([
+            db.collection('businesses').doc(req.params.id).collection('services').get(),
+            db.collection('businesses').doc(req.params.id).collection('employees').get()
+        ]);
+
+        // Calculate services count
+        const allServices = servicesSnapshot.docs.length;
+        const activeServices = servicesSnapshot.docs.filter(doc => doc.data().is_active === true).length;
+
+        // Calculate employees count
+        const allEmployees = employeesSnapshot.docs.length;
+        const confirmedEmployees = employeesSnapshot.docs.filter(doc => doc.data().is_accepted === true).length;
+
+        // Count employees with services (need to check employeeServices subcollection)
+        let employeesWithServices = 0;
+        for (const empDoc of employeesSnapshot.docs) {
+            const empServicesSnapshot = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('employees')
+                .doc(empDoc.id)
+                .collection('employeeServices')
+                .where('is_active', '==', true)
+                .limit(1)
+                .get();
+            if (!empServicesSnapshot.empty) {
+                employeesWithServices++;
+            }
+        }
+
         res.json({
             id: doc.id,
             business_name: data.business_name,
@@ -196,7 +226,16 @@ router.get('/:id', authenticate, async (req, res) => {
             avatar_updated_at: data.avatar_updated_at?.toDate?.().toISOString() || data.avatar_updated_at || null,
             employee_invite_token: data.employee_invite_token || null,
             telegram_bot: data.telegram_bot || null,
-            date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+            date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+            services_count: {
+                active: activeServices,
+                all: allServices
+            },
+            employees_count: {
+                confirmed: confirmedEmployees,
+                all: allEmployees,
+                with_services: employeesWithServices
+            }
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
