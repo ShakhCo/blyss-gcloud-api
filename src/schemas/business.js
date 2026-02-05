@@ -137,23 +137,35 @@ export const nearestBusinessesQuerySchema = z.object({
 // Query schema for telegram available slots
 export const telegramAvailableSlotsQuerySchema = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
-    business_id: z.string().min(1, 'business_id is required')
+    business_id: z.string().min(1, 'business_id is required'),
+    service_ids: z.string().min(1, 'service_ids is required')
+        .transform(val => val.split(',').map(s => s.trim()).filter(Boolean))
+        .refine(arr => arr.length > 0, 'at least one service_id is required')
 });
 
-// Schema for telegram booking service item
-const telegramBookingServiceSchema = z.object({
+// Query schema for telegram slot employees
+export const telegramSlotEmployeesQuerySchema = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+    business_id: z.string().min(1, 'business_id is required'),
+    service_ids: z.string().min(1, 'service_ids is required')
+        .transform(val => val.split(',').map(s => s.trim()).filter(Boolean))
+        .refine(arr => arr.length > 0, 'at least one service_id is required'),
+    start_time: z.coerce.number().int().min(0).max(86399, 'start_time must be seconds from midnight (0-86399)')
+});
+
+// Schema for telegram booking service item (v2 - simplified)
+const telegramBookingServiceSchemaV2 = z.object({
     service_id: z.string().min(1, 'service_id is required'),
-    employee_id: z.string().min(1, 'employee_id is required'),
-    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'day must be YYYY-MM-DD'),
-    start: z.number().int().min(0).max(86399, 'start must be seconds from midnight (0-86399)'),
-    end: z.number().int().min(0).max(86400, 'end must be seconds from midnight (0-86400)')
+    employee_id: z.string().nullable().optional()
 });
 
-// Schema for telegram booking creation
-export const telegramCreateBookingSchema = z.object({
+// Schema for telegram booking creation (v2)
+export const telegramCreateBookingSchemaV2 = z.object({
     user_id: z.string().min(1, 'user_id is required'),
     business_id: z.string().min(1, 'business_id is required'),
-    services: z.array(telegramBookingServiceSchema).min(1, 'at least one service is required'),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+    start_time: z.coerce.number().int().min(0).max(86399, 'start_time must be seconds from midnight (0-86399)'),
+    services: z.array(telegramBookingServiceSchemaV2).min(1, 'at least one service is required'),
     notes: z.string().optional().default('')
 });
 

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
-import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramCreateBookingSchema } from '../schemas/business.js';
+import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2 } from '../schemas/business.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { db } from '../db/db.js';
 
@@ -98,8 +98,8 @@ function calculateDistance(lat1, lng1, lat2, lng2) {
     const dLng = toRadians(lng2 - lng1);
 
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
 
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
@@ -460,12 +460,12 @@ const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'frida
 
 /**
  * GET /telegram/available-slots
- * Returns all time slots for a business day with available employees and their services
- * Query params: business_id, date (YYYY-MM-DD)
+ * Returns available start times for a service chain
+ * Query params: business_id, date (YYYY-MM-DD), service_ids (comma-separated)
  */
 router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'query'), async (req, res) => {
     try {
-        const { business_id, date } = req.validated;
+        const { business_id, date, service_ids } = req.validated;
 
         // 1. Get business and validate it exists
         const businessDoc = await db.collection('businesses').doc(business_id).get();
@@ -486,12 +486,37 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
 
         if (!businessHours || !businessHours.is_open) {
             return res.json({
-                time_slots: [],
+                first_service: null,
+                total_services: service_ids.length,
+                available_start_times: [],
                 message: 'Business is closed on this day'
             });
         }
 
-        // 3. Get all accepted employees with their services
+        // 3. Get first service details
+        const firstServiceId = service_ids[0];
+        const firstServiceDoc = await db.collection('businesses')
+            .doc(business_id)
+            .collection('services')
+            .doc(firstServiceId)
+            .get();
+
+        if (!firstServiceDoc.exists) {
+            return res.status(400).json({
+                error: `Service ${firstServiceId} not found`,
+                error_code: 'SERVICE_NOT_FOUND'
+            });
+        }
+
+        const firstServiceData = firstServiceDoc.data();
+        if (!firstServiceData.is_active) {
+            return res.status(400).json({
+                error: `Service ${firstServiceId} is not active`,
+                error_code: 'SERVICE_NOT_ACTIVE'
+            });
+        }
+
+        // 4. Get employees who offer the first service
         const employeesSnapshot = await db.collection('businesses')
             .doc(business_id)
             .collection('employees')
@@ -500,38 +525,210 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
 
         if (employeesSnapshot.empty) {
             return res.json({
-                time_slots: [],
+                first_service: {
+                    id: firstServiceId,
+                    name: firstServiceData.name || { uz: '', ru: '' },
+                    original_price: firstServiceData.price,
+                    original_duration: firstServiceData.duration_minutes
+                },
+                total_services: service_ids.length,
+                available_start_times: [],
                 message: 'No employees available'
             });
         }
 
-        // Get business owner IDs to fetch names
+        // Build list of employees who offer the first service
+        const employeesWithFirstService = [];
+        for (const empDoc of employeesSnapshot.docs) {
+            const empData = empDoc.data();
+
+            const empServiceSnapshot = await db.collection('businesses')
+                .doc(business_id)
+                .collection('employees')
+                .doc(empDoc.id)
+                .collection('employeeServices')
+                .where('service_id', '==', firstServiceId)
+                .where('is_active', '==', true)
+                .limit(1)
+                .get();
+
+            if (!empServiceSnapshot.empty) {
+                const empServiceData = empServiceSnapshot.docs[0].data();
+                employeesWithFirstService.push({
+                    id: empDoc.id,
+                    working_hours: empData.working_hours || null,
+                    allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
+                    duration_minutes: empServiceData.duration_minutes
+                });
+            }
+        }
+
+        if (employeesWithFirstService.length === 0) {
+            return res.json({
+                first_service: {
+                    id: firstServiceId,
+                    name: firstServiceData.name || { uz: '', ru: '' },
+                    original_price: firstServiceData.price,
+                    original_duration: firstServiceData.duration_minutes
+                },
+                total_services: service_ids.length,
+                available_start_times: [],
+                message: 'No employees offer this service'
+            });
+        }
+
+        // 5. Get all bookings for that date
+        const bookingsSnapshot = await db.collection('bookings')
+            .where('business_id', '==', business_id)
+            .where('booking_date', '==', date)
+            .where('status', 'in', ['pending', 'confirmed'])
+            .get();
+
+        const employeeBookings = new Map();
+        for (const bookingDoc of bookingsSnapshot.docs) {
+            const bookingData = bookingDoc.data();
+            for (const item of bookingData.items || []) {
+                if (!item.employee_id || !item.start_time) continue;
+
+                if (!employeeBookings.has(item.employee_id)) {
+                    employeeBookings.set(item.employee_id, []);
+                }
+
+                const timePart = item.start_time.split('T')[1];
+                const [hours, minutes] = timePart.split(':').map(Number);
+                const startSeconds = hours * 3600 + minutes * 60;
+                const endSeconds = startSeconds + (item.duration_minutes || 30) * 60;
+
+                employeeBookings.get(item.employee_id).push({ start: startSeconds, end: endSeconds });
+            }
+        }
+
+        // 6. Generate available start times
+        const slotInterval = 900; // 15 minutes
+        const availableStartTimes = [];
+
+        // Calculate minimum start time if date is today (Uzbekistan time GMT+5)
+        const now = new Date();
+        const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const uzbekNow = new Date(utcNow + (5 * 3600000));
+        const todayUzb = uzbekNow.toISOString().split('T')[0];
+
+        let minSlotStart = businessHours.start;
+        if (date === todayUzb) {
+            const currentSeconds = uzbekNow.getHours() * 3600 + uzbekNow.getMinutes() * 60 + uzbekNow.getSeconds();
+            const bufferSeconds = 900;
+            minSlotStart = Math.max(businessHours.start, currentSeconds + bufferSeconds);
+            minSlotStart = Math.ceil(minSlotStart / slotInterval) * slotInterval;
+        }
+
+        for (let slotStart = minSlotStart; slotStart < businessHours.end; slotStart += slotInterval) {
+            let hasAvailableEmployee = false;
+
+            for (const employee of employeesWithFirstService) {
+                const empHours = employee.working_hours?.[dayName];
+                if (empHours && !empHours.is_open) continue;
+
+                const slotEnd = slotStart + employee.duration_minutes * 60;
+
+                if (empHours && (slotStart < empHours.start || slotEnd > empHours.end)) continue;
+                if (slotEnd > businessHours.end) continue;
+
+                const empBookings = employeeBookings.get(employee.id) || [];
+                let bookingCount = 0;
+                for (const booking of empBookings) {
+                    if (!(slotEnd <= booking.start || slotStart >= booking.end)) {
+                        bookingCount++;
+                    }
+                }
+
+                if (bookingCount < employee.allowed_booking_count_per_slot) {
+                    hasAvailableEmployee = true;
+                    break;
+                }
+            }
+
+            if (hasAvailableEmployee) {
+                availableStartTimes.push(slotStart);
+            }
+        }
+
+        res.json({
+            first_service: {
+                id: firstServiceId,
+                name: firstServiceData.name || { uz: '', ru: '' },
+                original_price: firstServiceData.price,
+                original_duration: firstServiceData.duration_minutes
+            },
+            total_services: service_ids.length,
+            available_start_times: availableStartTimes
+        });
+    } catch (error) {
+        console.error('Error in /telegram/available-slots:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * GET /telegram/slot-employees
+ * Returns available employees for each service in the chain at a specific start time
+ * Query params: business_id, date (YYYY-MM-DD), service_ids (comma-separated), start_time (seconds)
+ */
+router.get('/slot-employees', validate(telegramSlotEmployeesQuerySchema, 'query'), async (req, res) => {
+    try {
+        const { business_id, date, service_ids, start_time } = req.validated;
+
+        // 1. Get business and validate
+        const businessDoc = await db.collection('businesses').doc(business_id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({
+                error: 'Business not found',
+                error_code: 'BUSINESS_NOT_FOUND'
+            });
+        }
+
+        const businessData = businessDoc.data();
+        const dateObj = new Date(date);
+        const dayIndex = dateObj.getDay();
+        const dayName = dayNames[dayIndex];
+        const businessHours = businessData.working_hours?.[dayName];
+
+        if (!businessHours || !businessHours.is_open) {
+            return res.status(400).json({
+                error: 'Business is closed on this day',
+                error_code: 'BUSINESS_CLOSED'
+            });
+        }
+
+        // 2. Get all employees
+        const employeesSnapshot = await db.collection('businesses')
+            .doc(business_id)
+            .collection('employees')
+            .where('is_accepted', '==', true)
+            .get();
+
+        // Get business owner names
         const businessOwnerIds = new Set();
         employeesSnapshot.docs.forEach(doc => {
             const data = doc.data();
-            if (data.business_owner_id) {
-                businessOwnerIds.add(data.business_owner_id);
-            }
+            if (data.business_owner_id) businessOwnerIds.add(data.business_owner_id);
         });
 
-        // Fetch business owners data
         const businessOwnersMap = new Map();
         if (businessOwnerIds.size > 0) {
-            const ownerPromises = Array.from(businessOwnerIds).map(async (ownerId) => {
+            await Promise.all(Array.from(businessOwnerIds).map(async (ownerId) => {
                 const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
-                if (ownerDoc.exists) {
-                    businessOwnersMap.set(ownerId, ownerDoc.data());
-                }
-            });
-            await Promise.all(ownerPromises);
+                if (ownerDoc.exists) businessOwnersMap.set(ownerId, ownerDoc.data());
+            }));
         }
 
-        // Build employee data with their services
-        const employees = [];
-        await Promise.all(employeesSnapshot.docs.map(async (empDoc) => {
+        // Build employee map with their services
+        const employeeMap = new Map();
+        for (const empDoc of employeesSnapshot.docs) {
             const empData = empDoc.data();
 
-            // Get employee name from business_owners
             let first_name = '';
             let last_name = '';
             if (empData.business_owner_id && businessOwnersMap.has(empData.business_owner_id)) {
@@ -540,8 +737,7 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
                 last_name = ownerData.last_name || '';
             }
 
-            // Get employee services
-            const employeeServicesSnapshot = await db.collection('businesses')
+            const empServicesSnapshot = await db.collection('businesses')
                 .doc(business_id)
                 .collection('employees')
                 .doc(empDoc.id)
@@ -549,164 +745,153 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
                 .where('is_active', '==', true)
                 .get();
 
-            if (employeeServicesSnapshot.empty) {
-                return; // Skip employees without services
-            }
-
-            // Get service details for each employee service
-            const services = [];
-            for (const serviceDoc of employeeServicesSnapshot.docs) {
-                const serviceData = serviceDoc.data();
-
-                // Fetch the parent service to get name and description
-                const parentServiceDoc = await db.collection('businesses')
-                    .doc(business_id)
-                    .collection('services')
-                    .doc(serviceData.service_id)
-                    .get();
-
-                if (parentServiceDoc.exists) {
-                    const parentData = parentServiceDoc.data();
-                    services.push({
-                        service_id: serviceData.service_id,
-                        name: parentData.name || { uz: '', ru: '' },
-                        description: parentData.description || { uz: '', ru: '' },
-                        duration_minutes: serviceData.duration_minutes,
-                        price: serviceData.price
-                    });
-                }
-            }
-
-            if (services.length > 0) {
-                employees.push({
-                    id: empDoc.id,
-                    first_name,
-                    last_name,
-                    working_hours: empData.working_hours || null,
-                    allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
-                    services
+            const services = new Map();
+            for (const svcDoc of empServicesSnapshot.docs) {
+                const svcData = svcDoc.data();
+                services.set(svcData.service_id, {
+                    price: svcData.price,
+                    duration_minutes: svcData.duration_minutes
                 });
             }
-        }));
 
-        if (employees.length === 0) {
-            return res.json({
-                time_slots: [],
-                message: 'No employees with active services available'
+            employeeMap.set(empDoc.id, {
+                id: empDoc.id,
+                first_name,
+                last_name,
+                working_hours: empData.working_hours || null,
+                allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
+                services
             });
         }
 
-        // 4. Get all bookings for that date (pending/confirmed)
+        // 3. Get all bookings for that date
         const bookingsSnapshot = await db.collection('bookings')
             .where('business_id', '==', business_id)
             .where('booking_date', '==', date)
             .where('status', 'in', ['pending', 'confirmed'])
             .get();
 
-        // Build map of booked slots per employee
         const employeeBookings = new Map();
         for (const bookingDoc of bookingsSnapshot.docs) {
-            const bookingData = bookingDoc.data();
-            const items = bookingData.items || [];
-
-            for (const item of items) {
+            for (const item of bookingDoc.data().items || []) {
                 if (!item.employee_id || !item.start_time) continue;
 
                 if (!employeeBookings.has(item.employee_id)) {
                     employeeBookings.set(item.employee_id, []);
                 }
 
-                // Store booking time range in seconds from midnight
                 const timePart = item.start_time.split('T')[1];
                 const [hours, minutes] = timePart.split(':').map(Number);
                 const startSeconds = hours * 3600 + minutes * 60;
                 const endSeconds = startSeconds + (item.duration_minutes || 30) * 60;
 
-                employeeBookings.get(item.employee_id).push({
-                    start: startSeconds,
-                    end: endSeconds
-                });
+                employeeBookings.get(item.employee_id).push({ start: startSeconds, end: endSeconds });
             }
         }
 
-        // 5. Generate 15-minute slots from business open to close
-        const slotInterval = 900; // 15 minutes in seconds
-        const timeSlots = [];
+        // 4. Build service chain with available employees
+        const servicesResult = [];
+        let currentStartTime = start_time;
 
-        // Calculate minimum start time if date is today (Uzbekistan time GMT+5)
-        const now = new Date();
-        const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
-        const uzbekNow = new Date(utcNow + (5 * 3600000)); // GMT+5
+        for (const serviceId of service_ids) {
+            const serviceDoc = await db.collection('businesses')
+                .doc(business_id)
+                .collection('services')
+                .doc(serviceId)
+                .get();
 
-        const todayUzb = uzbekNow.toISOString().split('T')[0]; // YYYY-MM-DD
-        let minSlotStart = businessHours.start;
+            if (!serviceDoc.exists) {
+                servicesResult.push({
+                    service_id: serviceId,
+                    name: { uz: '', ru: '' },
+                    start_time: currentStartTime,
+                    employees: [],
+                    unavailable: true,
+                    reason: 'service_not_found'
+                });
+                currentStartTime += 1800;
+                continue;
+            }
 
-        if (date === todayUzb) {
-            // Current time in seconds from midnight + 15 minutes buffer
-            const currentSeconds = uzbekNow.getHours() * 3600 + uzbekNow.getMinutes() * 60 + uzbekNow.getSeconds();
-            const bufferSeconds = 900; // 15 minutes
-            minSlotStart = Math.max(businessHours.start, currentSeconds + bufferSeconds);
-            // Round up to next slot interval
-            minSlotStart = Math.ceil(minSlotStart / slotInterval) * slotInterval;
-        }
+            const serviceData = serviceDoc.data();
+            if (!serviceData.is_active) {
+                servicesResult.push({
+                    service_id: serviceId,
+                    name: serviceData.name || { uz: '', ru: '' },
+                    start_time: currentStartTime,
+                    employees: [],
+                    unavailable: true,
+                    reason: 'service_not_active'
+                });
+                currentStartTime += 1800;
+                continue;
+            }
 
-        for (let slotStart = minSlotStart; slotStart < businessHours.end; slotStart += slotInterval) {
-            const slotEnd = slotStart + slotInterval;
             const availableEmployees = [];
+            let shortestDuration = Infinity;
 
-            // 6. For each slot, check which employees are available
-            for (const employee of employees) {
-                // Check employee working hours for this day
+            for (const [empId, employee] of employeeMap) {
+                if (!employee.services.has(serviceId)) continue;
+
+                const empService = employee.services.get(serviceId);
+                const slotEnd = currentStartTime + empService.duration_minutes * 60;
+
                 const empHours = employee.working_hours?.[dayName];
-                if (empHours && !empHours.is_open) {
-                    continue; // Employee not working this day
-                }
+                if (empHours && !empHours.is_open) continue;
+                if (empHours && (currentStartTime < empHours.start || slotEnd > empHours.end)) continue;
+                if (slotEnd > businessHours.end) continue;
 
-                // Check if slot is within employee's working hours
-                if (empHours) {
-                    if (slotStart < empHours.start || slotEnd > empHours.end) {
-                        continue; // Slot outside employee's hours
-                    }
-                }
-
-                // Check if employee is booked during this slot
-                const empBookings = employeeBookings.get(employee.id) || [];
-                const allowedCount = employee.allowed_booking_count_per_slot;
-
-                // Count overlapping bookings
+                const empBookings = employeeBookings.get(empId) || [];
                 let bookingCount = 0;
                 for (const booking of empBookings) {
-                    // Check if booking overlaps with this slot
-                    if (!(slotEnd <= booking.start || slotStart >= booking.end)) {
+                    if (!(slotEnd <= booking.start || currentStartTime >= booking.end)) {
                         bookingCount++;
                     }
                 }
 
-                if (bookingCount < allowedCount) {
+                if (bookingCount < employee.allowed_booking_count_per_slot) {
                     availableEmployees.push({
-                        employee_id: employee.id,
+                        id: empId,
                         first_name: employee.first_name,
                         last_name: employee.last_name,
-                        services: employee.services
+                        price: empService.price,
+                        duration_minutes: empService.duration_minutes
                     });
+
+                    if (empService.duration_minutes < shortestDuration) {
+                        shortestDuration = empService.duration_minutes;
+                    }
                 }
             }
 
-            // Only include slot if at least one employee is available
-            if (availableEmployees.length > 0) {
-                timeSlots.push({
-                    start: slotStart,
-                    end: slotEnd,
-                    available_employees: availableEmployees
+            if (availableEmployees.length === 0) {
+                const reason = currentStartTime >= businessHours.end
+                    ? 'exceeds_business_hours'
+                    : 'no_employees_available';
+
+                servicesResult.push({
+                    service_id: serviceId,
+                    name: serviceData.name || { uz: '', ru: '' },
+                    start_time: currentStartTime,
+                    employees: [],
+                    unavailable: true,
+                    reason
                 });
+                currentStartTime += (serviceData.duration_minutes || 30) * 60;
+            } else {
+                servicesResult.push({
+                    service_id: serviceId,
+                    name: serviceData.name || { uz: '', ru: '' },
+                    start_time: currentStartTime,
+                    employees: availableEmployees
+                });
+                currentStartTime += shortestDuration * 60;
             }
         }
 
-        res.json({
-            time_slots: timeSlots
-        });
+        res.json({ services: servicesResult });
     } catch (error) {
-        console.error('Error in /telegram/available-slots:', error);
+        console.error('Error in /telegram/slot-employees:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'
@@ -725,11 +910,11 @@ function secondsToTime(seconds) {
 
 /**
  * POST /telegram/bookings
- * Create a new booking from Telegram mini app
+ * Create a new booking from Telegram mini app (v2 - simplified payload)
  */
-router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res) => {
+router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, res) => {
     try {
-        const { user_id, business_id, services, notes } = req.validated;
+        const { user_id, business_id, date, start_time, services, notes } = req.validated;
         const telegramUser = req.telegramUser;
 
         // 1. Validate user exists
@@ -740,10 +925,9 @@ router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res)
                 error_code: 'USER_NOT_FOUND'
             });
         }
-
         const userData = userDoc.data();
 
-        // 2. Verify business exists
+        // 2. Verify business exists and get working hours
         const businessDoc = await db.collection('businesses').doc(business_id).get();
         if (!businessDoc.exists) {
             return res.status(404).json({
@@ -751,172 +935,263 @@ router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res)
                 error_code: 'BUSINESS_NOT_FOUND'
             });
         }
-
         const businessData = businessDoc.data();
 
-        // 3. Get all booking dates from services to fetch existing bookings
-        const bookingDates = [...new Set(services.map(s => s.day))];
+        const dateObj = new Date(date);
+        const dayIndex = dateObj.getDay();
+        const dayName = dayNames[dayIndex];
+        const businessHours = businessData.working_hours?.[dayName];
 
-        // Fetch existing bookings for these dates
-        const existingBookingsSnapshot = await db.collection('bookings')
+        if (!businessHours || !businessHours.is_open) {
+            return res.status(400).json({
+                error: 'Business is closed on this day',
+                error_code: 'BUSINESS_CLOSED'
+            });
+        }
+
+        // 3. Get all employees with their services
+        const employeesSnapshot = await db.collection('businesses')
+            .doc(business_id)
+            .collection('employees')
+            .where('is_accepted', '==', true)
+            .get();
+
+        const businessOwnerIds = new Set();
+        employeesSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (data.business_owner_id) businessOwnerIds.add(data.business_owner_id);
+        });
+
+        const businessOwnersMap = new Map();
+        if (businessOwnerIds.size > 0) {
+            await Promise.all(Array.from(businessOwnerIds).map(async (ownerId) => {
+                const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
+                if (ownerDoc.exists) businessOwnersMap.set(ownerId, ownerDoc.data());
+            }));
+        }
+
+        const employeeMap = new Map();
+        for (const empDoc of employeesSnapshot.docs) {
+            const empData = empDoc.data();
+
+            let first_name = '';
+            let last_name = '';
+            if (empData.business_owner_id && businessOwnersMap.has(empData.business_owner_id)) {
+                const ownerData = businessOwnersMap.get(empData.business_owner_id);
+                first_name = ownerData.first_name || '';
+                last_name = ownerData.last_name || '';
+            }
+
+            const empServicesSnapshot = await db.collection('businesses')
+                .doc(business_id)
+                .collection('employees')
+                .doc(empDoc.id)
+                .collection('employeeServices')
+                .where('is_active', '==', true)
+                .get();
+
+            const empServices = new Map();
+            for (const svcDoc of empServicesSnapshot.docs) {
+                const svcData = svcDoc.data();
+                empServices.set(svcData.service_id, {
+                    price: svcData.price,
+                    duration_minutes: svcData.duration_minutes
+                });
+            }
+
+            employeeMap.set(empDoc.id, {
+                id: empDoc.id,
+                first_name,
+                last_name,
+                working_hours: empData.working_hours || null,
+                allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
+                services: empServices
+            });
+        }
+
+        // 4. Get existing bookings
+        const bookingsSnapshot = await db.collection('bookings')
             .where('business_id', '==', business_id)
-            .where('booking_date', 'in', bookingDates)
+            .where('booking_date', '==', date)
             .where('status', 'in', ['pending', 'confirmed'])
             .get();
 
-        // Build map of employee bookings: employee_id -> [{ start, end }]
-        const employeeBookingsMap = new Map();
-        for (const bookingDoc of existingBookingsSnapshot.docs) {
-            const bookingData = bookingDoc.data();
-            for (const item of bookingData.items || []) {
+        const employeeBookings = new Map();
+        for (const bookingDoc of bookingsSnapshot.docs) {
+            for (const item of bookingDoc.data().items || []) {
                 if (!item.employee_id || !item.start_time) continue;
 
-                const itemDay = item.start_time.split('T')[0];
+                if (!employeeBookings.has(item.employee_id)) {
+                    employeeBookings.set(item.employee_id, []);
+                }
+
                 const timePart = item.start_time.split('T')[1];
                 const [hours, minutes] = timePart.split(':').map(Number);
-                const startSeconds = hours * 3600 + minutes * 60;
-                const endSeconds = startSeconds + (item.duration_minutes || 30) * 60;
+                const startSec = hours * 3600 + minutes * 60;
+                const endSec = startSec + (item.duration_minutes || 30) * 60;
 
-                const key = `${item.employee_id}_${itemDay}`;
-                if (!employeeBookingsMap.has(key)) {
-                    employeeBookingsMap.set(key, []);
-                }
-                employeeBookingsMap.get(key).push({ start: startSeconds, end: endSeconds });
+                employeeBookings.get(item.employee_id).push({ start: startSec, end: endSec });
             }
         }
 
-        // 4. Build booking items from services with full validation
+        // 5. Build booking items chain
         const bookingItems = [];
+        let currentTime = start_time;
         let totalPrice = 0;
         let totalDuration = 0;
-        const bookingDate = services[0].day;
 
         for (let i = 0; i < services.length; i++) {
-            const service = services[i];
+            const { service_id, employee_id } = services[i];
 
-            // 4a. Validate employee exists and belongs to this business
-            const employeeDoc = await db.collection('businesses')
-                .doc(business_id)
-                .collection('employees')
-                .doc(service.employee_id)
-                .get();
-
-            if (!employeeDoc.exists) {
-                return res.status(400).json({
-                    error: `Employee ${service.employee_id} not found in this business`,
-                    error_code: 'EMPLOYEE_NOT_FOUND'
-                });
-            }
-
-            const employeeData = employeeDoc.data();
-
-            // Check employee is accepted
-            if (!employeeData.is_accepted) {
-                return res.status(400).json({
-                    error: `Employee ${service.employee_id} is not active`,
-                    error_code: 'EMPLOYEE_NOT_ACTIVE'
-                });
-            }
-
-            // 4b. Validate employee offers this service
-            const empServiceSnapshot = await db.collection('businesses')
-                .doc(business_id)
-                .collection('employees')
-                .doc(service.employee_id)
-                .collection('employeeServices')
-                .where('service_id', '==', service.service_id)
-                .where('is_active', '==', true)
-                .limit(1)
-                .get();
-
-            if (empServiceSnapshot.empty) {
-                return res.status(400).json({
-                    error: `Employee ${service.employee_id} does not offer service ${service.service_id}`,
-                    error_code: 'EMPLOYEE_SERVICE_NOT_FOUND'
-                });
-            }
-
-            const empServiceData = empServiceSnapshot.docs[0].data();
-
-            // 4c. Validate service exists
+            // Get service details
             const serviceDoc = await db.collection('businesses')
                 .doc(business_id)
                 .collection('services')
-                .doc(service.service_id)
+                .doc(service_id)
                 .get();
 
             if (!serviceDoc.exists) {
                 return res.status(400).json({
-                    error: `Service ${service.service_id} not found`,
+                    error: `Service ${service_id} not found`,
                     error_code: 'SERVICE_NOT_FOUND'
                 });
             }
 
             const serviceData = serviceDoc.data();
+            if (!serviceData.is_active) {
+                return res.status(400).json({
+                    error: `Service ${service_id} is not active`,
+                    error_code: 'SERVICE_NOT_ACTIVE'
+                });
+            }
 
-            // 4d. Validate employee is available at the given time
-            const key = `${service.employee_id}_${service.day}`;
-            const existingBookings = employeeBookingsMap.get(key) || [];
-            const allowedCount = employeeData.allowed_booking_count_per_slot || 1;
+            // Find employee (assigned or any available)
+            let selectedEmployee = null;
+            let selectedEmpService = null;
 
-            // Count overlapping bookings
-            let overlapCount = 0;
-            for (const booking of existingBookings) {
-                // Check if requested time overlaps with existing booking
-                if (!(service.end <= booking.start || service.start >= booking.end)) {
-                    overlapCount++;
+            if (employee_id) {
+                const emp = employeeMap.get(employee_id);
+                if (!emp) {
+                    return res.status(400).json({
+                        error: `Employee ${employee_id} not found`,
+                        error_code: 'EMPLOYEE_NOT_FOUND'
+                    });
+                }
+
+                if (!emp.services.has(service_id)) {
+                    return res.status(400).json({
+                        error: `Employee ${employee_id} does not offer service ${service_id}`,
+                        error_code: 'EMPLOYEE_SERVICE_NOT_FOUND'
+                    });
+                }
+
+                selectedEmployee = emp;
+                selectedEmpService = emp.services.get(service_id);
+            } else {
+                // Find any available employee
+                for (const [empId, emp] of employeeMap) {
+                    if (!emp.services.has(service_id)) continue;
+
+                    const empService = emp.services.get(service_id);
+                    const slotEnd = currentTime + empService.duration_minutes * 60;
+
+                    const empHours = emp.working_hours?.[dayName];
+                    if (empHours && !empHours.is_open) continue;
+                    if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) continue;
+                    if (slotEnd > businessHours.end) continue;
+
+                    const empBookings = employeeBookings.get(empId) || [];
+                    let bookingCount = 0;
+                    for (const booking of empBookings) {
+                        if (!(slotEnd <= booking.start || currentTime >= booking.end)) {
+                            bookingCount++;
+                        }
+                    }
+
+                    if (bookingCount < emp.allowed_booking_count_per_slot) {
+                        selectedEmployee = emp;
+                        selectedEmpService = empService;
+                        break;
+                    }
+                }
+
+                if (!selectedEmployee) {
+                    return res.status(409).json({
+                        error: `No available employee for service ${service_id} at ${secondsToTime(currentTime)}`,
+                        error_code: 'NO_EMPLOYEE_AVAILABLE'
+                    });
                 }
             }
 
-            if (overlapCount >= allowedCount) {
+            // Validate selected employee availability
+            const slotEnd = currentTime + selectedEmpService.duration_minutes * 60;
+
+            const empHours = selectedEmployee.working_hours?.[dayName];
+            if (empHours && !empHours.is_open) {
                 return res.status(409).json({
-                    error: `Employee ${service.employee_id} is not available at ${secondsToTime(service.start)} on ${service.day}`,
+                    error: `Employee ${selectedEmployee.id} is not working on this day`,
+                    error_code: 'EMPLOYEE_NOT_WORKING'
+                });
+            }
+            if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) {
+                return res.status(409).json({
+                    error: `Employee ${selectedEmployee.id} is not available at ${secondsToTime(currentTime)}`,
+                    error_code: 'EMPLOYEE_NOT_AVAILABLE'
+                });
+            }
+            if (slotEnd > businessHours.end) {
+                return res.status(409).json({
+                    error: 'Booking exceeds business hours',
+                    error_code: 'EXCEEDS_BUSINESS_HOURS'
+                });
+            }
+
+            const empBookings = employeeBookings.get(selectedEmployee.id) || [];
+            let bookingCount = 0;
+            for (const booking of empBookings) {
+                if (!(slotEnd <= booking.start || currentTime >= booking.end)) {
+                    bookingCount++;
+                }
+            }
+
+            if (bookingCount >= selectedEmployee.allowed_booking_count_per_slot) {
+                return res.status(409).json({
+                    error: `Employee ${selectedEmployee.id} is fully booked at ${secondsToTime(currentTime)}`,
                     error_code: 'SLOT_NOT_AVAILABLE'
                 });
             }
 
-            // Add this booking to the map to check subsequent services in same request
-            if (!employeeBookingsMap.has(key)) {
-                employeeBookingsMap.set(key, []);
+            // Add to employee bookings map (for subsequent services)
+            if (!employeeBookings.has(selectedEmployee.id)) {
+                employeeBookings.set(selectedEmployee.id, []);
             }
-            employeeBookingsMap.get(key).push({ start: service.start, end: service.end });
+            employeeBookings.get(selectedEmployee.id).push({ start: currentTime, end: slotEnd });
 
-            // Get employee name from business_owners
-            let employeeName = '';
-            if (employeeData.business_owner_id) {
-                const ownerDoc = await db.collection('business_owners').doc(employeeData.business_owner_id).get();
-                if (ownerDoc.exists) {
-                    const ownerData = ownerDoc.data();
-                    employeeName = [ownerData.first_name, ownerData.last_name].filter(Boolean).join(' ') || '';
-                }
-            }
-
-            // Calculate duration from start/end
-            const durationMinutes = Math.floor((service.end - service.start) / 60);
-
-            // Convert seconds to time format
-            const startTime = `${service.day}T${secondsToTime(service.start)}`;
-            const endTime = `${service.day}T${secondsToTime(service.end)}`;
+            // Build booking item
+            const startTimeStr = `${date}T${secondsToTime(currentTime)}`;
+            const endTimeStr = `${date}T${secondsToTime(slotEnd)}`;
+            const employeeName = [selectedEmployee.first_name, selectedEmployee.last_name].filter(Boolean).join(' ') || '';
 
             bookingItems.push({
                 id: crypto.randomBytes(8).toString('hex'),
-                service_id: service.service_id,
+                service_id,
                 service_name: serviceData.name || { uz: '', ru: '' },
-                employee_id: service.employee_id,
+                employee_id: selectedEmployee.id,
                 employee_name: employeeName,
-                start_time: startTime,
-                end_time: endTime,
-                price: empServiceData.price,
-                duration_minutes: durationMinutes,
+                start_time: startTimeStr,
+                end_time: endTimeStr,
+                price: selectedEmpService.price,
+                duration_minutes: selectedEmpService.duration_minutes,
                 status: 'pending',
                 order_index: i
             });
 
-            totalPrice += empServiceData.price;
-            totalDuration += durationMinutes;
+            totalPrice += selectedEmpService.price;
+            totalDuration += selectedEmpService.duration_minutes;
+            currentTime = slotEnd;
         }
 
-        // 5. Generate unique booking ID
+        // 6. Generate unique booking ID
         let bookingId;
         let exists = true;
         while (exists) {
@@ -925,7 +1200,7 @@ router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res)
             exists = existingDoc.exists;
         }
 
-        // 6. Create booking
+        // 7. Create booking
         const now = new Date();
         const customerName = [userData.first_name, userData.last_name].filter(Boolean).join(' ')
             || [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ')
@@ -938,7 +1213,7 @@ router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res)
             customer_name: customerName,
             customer_phone: userData.phone_number || '',
             customer_telegram_id: telegramUser.id,
-            booking_date: bookingDate,
+            booking_date: date,
             status: 'pending',
             total_price: totalPrice,
             total_duration_minutes: totalDuration,
@@ -950,7 +1225,7 @@ router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res)
 
         await db.collection('bookings').doc(bookingId).set(bookingPayload);
 
-        // 7. Send Telegram notification to business if enabled
+        // 8. Send Telegram notification
         if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
             try {
                 const firstItem = bookingItems[0];
@@ -962,8 +1237,8 @@ router.post('/bookings', validate(telegramCreateBookingSchema), async (req, res)
                     serviceName,
                     customerName: bookingPayload.customer_name,
                     customerPhone: bookingPayload.customer_phone || 'N/A',
-                    date: bookingDate,
-                    time: secondsToTime(services[0].start),
+                    date,
+                    time: secondsToTime(start_time),
                     employeeName: firstItem.employee_name,
                     totalPrice
                 });
