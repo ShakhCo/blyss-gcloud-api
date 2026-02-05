@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
-import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2 } from '../schemas/business.js';
+import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2, telegramSendOtpSchema, telegramVerifyOtpSchema } from '../schemas/business.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { db } from '../db/db.js';
 
@@ -1301,6 +1301,167 @@ router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, re
         });
     } catch (error) {
         console.error('Error in /telegram/bookings:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * POST /telegram/send-otp
+ * Send OTP to phone number for user verification
+ */
+router.post('/send-otp', validate(telegramSendOtpSchema), async (req, res) => {
+    try {
+        const { user_id, phone_number } = req.validated;
+
+        // Verify user exists
+        const userDoc = await db.collection('users').doc(user_id).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                error: 'User not found',
+                error_code: 'USER_NOT_FOUND'
+            });
+        }
+
+        // Check rate limit - 60 seconds between requests
+        const recentOtp = await db.collection('telegram_otps')
+            .where('user_id', '==', user_id)
+            .where('created_at', '>', new Date(Date.now() - 60000))
+            .limit(1)
+            .get();
+
+        if (!recentOtp.empty) {
+            const lastOtp = recentOtp.docs[0].data();
+            const waitTime = Math.ceil((60000 - (Date.now() - lastOtp.created_at.toDate().getTime())) / 1000);
+            return res.status(429).json({
+                error: `Please wait ${waitTime} seconds before requesting another code`,
+                error_code: 'RATE_LIMITED',
+                wait_seconds: waitTime
+            });
+        }
+
+        // Generate 5-digit OTP
+        const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
+
+        // Store OTP
+        const otpRef = await db.collection('telegram_otps').add({
+            user_id,
+            phone_number,
+            otp_code: otpCode,
+            created_at: new Date(),
+            expires_at: new Date(Date.now() + 5 * 60 * 1000),
+            used: false
+        });
+
+        // Send SMS via Eskiz
+        const eskizToken = process.env.ESKIZ_TOKEN;
+        let smsSent = false;
+
+        if (eskizToken) {
+            try {
+                await fetch('https://notify.eskiz.uz/api/message/sms/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${eskizToken}`
+                    },
+                    body: JSON.stringify({
+                        mobile_phone: phone_number,
+                        message: `BLYSS tasdiqlash kodi: ${otpCode}`,
+                        from: '4546',
+                        callback_url: ''
+                    })
+                });
+                smsSent = true;
+            } catch (smsError) {
+                console.error('Failed to send SMS:', smsError);
+            }
+        }
+
+        res.json({
+            otp_id: otpRef.id,
+            message: smsSent ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
+            sms_sent: smsSent
+        });
+    } catch (error) {
+        console.error('Error in /telegram/send-otp:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * POST /telegram/verify-otp
+ * Verify OTP and update user's phone number
+ */
+router.post('/verify-otp', validate(telegramVerifyOtpSchema), async (req, res) => {
+    try {
+        const { otp_id, otp_code, user_id } = req.validated;
+
+        // Get OTP document
+        const otpDoc = await db.collection('telegram_otps').doc(otp_id).get();
+
+        if (!otpDoc.exists) {
+            return res.status(400).json({
+                error: 'Invalid OTP',
+                error_code: 'INVALID_OTP'
+            });
+        }
+
+        const otpData = otpDoc.data();
+
+        // Verify user_id matches
+        if (otpData.user_id !== user_id) {
+            return res.status(400).json({
+                error: 'Invalid OTP',
+                error_code: 'INVALID_OTP'
+            });
+        }
+
+        // Check if already used
+        if (otpData.used) {
+            return res.status(400).json({
+                error: 'OTP already used',
+                error_code: 'OTP_USED'
+            });
+        }
+
+        // Check if expired
+        if (otpData.expires_at.toDate() < new Date()) {
+            return res.status(400).json({
+                error: 'OTP has expired',
+                error_code: 'OTP_EXPIRED'
+            });
+        }
+
+        // Verify OTP code
+        if (otpData.otp_code !== String(otp_code)) {
+            return res.status(400).json({
+                error: 'Invalid OTP code',
+                error_code: 'INVALID_OTP'
+            });
+        }
+
+        // Mark OTP as used
+        await otpDoc.ref.update({ used: true });
+
+        // Update user's phone number
+        await db.collection('users').doc(user_id).update({
+            phone_number: otpData.phone_number,
+            is_verified: true,
+            updated_at: new Date()
+        });
+
+        res.json({
+            success: true,
+            phone_number: otpData.phone_number
+        });
+    } catch (error) {
+        console.error('Error in /telegram/verify-otp:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'

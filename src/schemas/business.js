@@ -192,3 +192,19 @@ export const distanceQuerySchema = z.object({
     }).min(-180, 'business_lng must be between -180 and 180')
         .max(180, 'business_lng must be between -180 and 180')
 });
+
+// Telegram OTP schemas
+export const telegramSendOtpSchema = z.object({
+    user_id: z.string({ required_error: 'user_id is required' }),
+    phone_number: z.string({ required_error: 'phone_number is required' })
+        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX')
+});
+
+export const telegramVerifyOtpSchema = z.object({
+    otp_id: z.string({ required_error: 'otp_id is required' }),
+    otp_code: z.coerce.number({ required_error: 'otp_code is required' })
+        .int('otp_code must be an integer')
+        .min(10000, 'otp_code must be 5 digits')
+        .max(99999, 'otp_code must be 5 digits'),
+    user_id: z.string({ required_error: 'user_id is required' })
+});
