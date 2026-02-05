@@ -1191,7 +1191,50 @@ router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, re
             currentTime = slotEnd;
         }
 
-        // 6. Generate unique booking ID
+        // 6. Check for user booking conflicts across all businesses
+        const bookingEndTime = currentTime; // End time of the last service
+        const userBookingsSnapshot = await db.collection('bookings')
+            .where('user_id', '==', user_id)
+            .where('booking_date', '==', date)
+            .where('status', 'in', ['pending', 'confirmed'])
+            .get();
+
+        for (const existingBookingDoc of userBookingsSnapshot.docs) {
+            const existingBooking = existingBookingDoc.data();
+            const items = existingBooking.items || [];
+
+            if (items.length === 0) continue;
+
+            // Get time range of existing booking
+            const firstItem = items[0];
+            const lastItem = items[items.length - 1];
+
+            const existingStartTime = firstItem.start_time.split('T')[1];
+            const [startHours, startMinutes] = existingStartTime.split(':').map(Number);
+            const existingStart = startHours * 3600 + startMinutes * 60;
+
+            const existingEndTime = lastItem.end_time.split('T')[1];
+            const [endHours, endMinutes] = existingEndTime.split(':').map(Number);
+            const existingEnd = endHours * 3600 + endMinutes * 60;
+
+            // Check for overlap: NOT (newEnd <= existingStart OR newStart >= existingEnd)
+            const hasOverlap = !(bookingEndTime <= existingStart || start_time >= existingEnd);
+
+            if (hasOverlap) {
+                return res.status(409).json({
+                    error: 'You already have a booking during this time',
+                    error_code: 'USER_TIME_CONFLICT',
+                    conflicting_booking: {
+                        id: existingBookingDoc.id,
+                        business_name: existingBooking.business_name,
+                        start_time: firstItem.start_time,
+                        end_time: lastItem.end_time
+                    }
+                });
+            }
+        }
+
+        // 7. Generate unique booking ID
         let bookingId;
         let exists = true;
         while (exists) {
@@ -1200,7 +1243,7 @@ router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, re
             exists = existingDoc.exists;
         }
 
-        // 7. Create booking
+        // 8. Create booking
         const now = new Date();
         const customerName = [userData.first_name, userData.last_name].filter(Boolean).join(' ')
             || [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(' ')
@@ -1225,7 +1268,7 @@ router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, re
 
         await db.collection('bookings').doc(bookingId).set(bookingPayload);
 
-        // 8. Send Telegram notification
+        // 9. Send Telegram notification
         if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
             try {
                 const firstItem = bookingItems[0];
