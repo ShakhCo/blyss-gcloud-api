@@ -1513,6 +1513,40 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             .doc(employeeId)
             .set(employeeData);
 
+        // Auto-enable all active business services for the new employee
+        try {
+            const businessServicesSnapshot = await db.collection('businesses')
+                .doc(req.params.id)
+                .collection('services')
+                .where('is_active', '==', true)
+                .get();
+
+            if (!businessServicesSnapshot.empty) {
+                const serviceBatch = db.batch();
+                businessServicesSnapshot.docs.forEach(serviceDoc => {
+                    const serviceData = serviceDoc.data();
+                    const employeeServiceRef = db.collection('businesses')
+                        .doc(req.params.id)
+                        .collection('employees')
+                        .doc(employeeId)
+                        .collection('employeeServices')
+                        .doc(serviceDoc.id);
+
+                    serviceBatch.set(employeeServiceRef, {
+                        service_id: serviceDoc.id,
+                        price: serviceData.price,
+                        duration_minutes: serviceData.duration_minutes,
+                        is_active: true,
+                        date_created: dateCreated
+                    });
+                });
+                await serviceBatch.commit();
+            }
+        } catch (serviceError) {
+            console.error('Failed to auto-enable services for employee:', serviceError);
+            // Don't fail employee creation if service assignment fails
+        }
+
         // Send SMS invitation via Eskiz
         // Skip notification if adding yourself
         if (!isSelf) {
