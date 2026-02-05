@@ -348,6 +348,28 @@ router.post('/register', validate(registerSchema), async (req, res) => {
 
         await db.collection(collection).doc(userId).set(createData);
 
+        // If registering as business_owner, update any existing employee records with this phone number
+        if (user_type === 'business_owner') {
+            try {
+                // Find all employees with this phone number that have no business_owner_id
+                const employeesSnapshot = await db.collectionGroup('employees')
+                    .where('phone_number', '==', phoneNumber)
+                    .where('business_owner_id', '==', null)
+                    .get();
+
+                if (!employeesSnapshot.empty) {
+                    const batch = db.batch();
+                    employeesSnapshot.docs.forEach(doc => {
+                        batch.update(doc.ref, { business_owner_id: userId });
+                    });
+                    await batch.commit();
+                }
+            } catch (updateError) {
+                console.error('Failed to update employee business_owner_id:', updateError);
+                // Don't fail registration if this update fails
+            }
+        }
+
         // Return success response
         res.status(201).json({
             success: true
