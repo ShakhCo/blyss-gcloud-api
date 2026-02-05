@@ -1364,8 +1364,8 @@ router.post('/send-otp', validate(telegramSendOtpSchema), async (req, res) => {
             used: false
         });
 
-        // Send SMS via Eskiz using the utility function
-        const smsResult = await sendSms(phone_number, `${otpCode} BLYSS tasdiqlash kodi. Код подтверждения BLYSS.`);
+        // Send SMS via Eskiz using the utility function (approved template)
+        const smsResult = await sendSms(phone_number, `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`);
 
         res.json({
             otp_id: otpRef.id,
