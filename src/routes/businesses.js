@@ -1435,6 +1435,26 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             };
         }
 
+        // Check if phone number belongs to a registered business owner
+        let employeeBusinessOwnerId = null;
+        let registeredBusinessOwner = null;
+
+        if (isSelf) {
+            // Adding yourself - use your own business owner ID
+            employeeBusinessOwnerId = req.user.id;
+        } else {
+            // Check if the phone number belongs to a registered business owner
+            const businessOwnerSnapshot = await db.collection('business_owners')
+                .where('phone_number', '==', phone_number)
+                .limit(1)
+                .get();
+
+            if (!businessOwnerSnapshot.empty) {
+                employeeBusinessOwnerId = businessOwnerSnapshot.docs[0].id;
+                registeredBusinessOwner = businessOwnerSnapshot.docs[0].data();
+            }
+        }
+
         const employeeData = {
             phone_number,
             position,
@@ -1445,7 +1465,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             date_accepted: isSelf ? dateCreated : null,
             is_rejected: false,
             is_open_now: false,
-            business_owner_id: businessData.business_owner_id
+            business_owner_id: employeeBusinessOwnerId
         };
 
         await db.collection('businesses')
@@ -1468,22 +1488,13 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
                 }
             }
 
-            // Check if phone number is a registered business owner with telegram_id
-            const businessOwnerSnapshot = await db.collection('business_owners')
-                .where('phone_number', '==', phone_number)
-                .limit(1)
-                .get();
-
-            if (!businessOwnerSnapshot.empty) {
-                const businessOwner = businessOwnerSnapshot.docs[0].data();
-                if (businessOwner.telegram_id) {
-                    // Send Telegram notification
-                    try {
-                        await sendBusinessInvitationNotification(businessOwner.telegram_id, businessData.business_name, businessData.business_type, position);
-                    } catch (telegramError) {
-                        console.error('Failed to send Telegram notification:', telegramError);
-                        // Don't fail the request if Telegram notification fails
-                    }
+            // Send Telegram notification if the registered business owner has telegram_id
+            if (registeredBusinessOwner?.telegram_id) {
+                try {
+                    await sendBusinessInvitationNotification(registeredBusinessOwner.telegram_id, businessData.business_name, businessData.business_type, position);
+                } catch (telegramError) {
+                    console.error('Failed to send Telegram notification:', telegramError);
+                    // Don't fail the request if Telegram notification fails
                 }
             }
         }
@@ -1498,7 +1509,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             is_accepted: employeeData.is_accepted,
             date_accepted: employeeData.date_accepted?.toISOString() || null,
             is_rejected: employeeData.is_rejected,
-            business_owner_id: businessData.business_owner_id
+            business_owner_id: employeeBusinessOwnerId
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
