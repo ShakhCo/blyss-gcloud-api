@@ -930,6 +930,14 @@ router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, re
         }
         const userData = userDoc.data();
 
+        // 1.5 Verify user has phone number
+        if (!userData.phone_number) {
+            return res.status(400).json({
+                error: 'Phone number is required to make a booking',
+                error_code: 'PHONE_NUMBER_REQUIRED'
+            });
+        }
+
         // 2. Verify business exists and get working hours
         const businessDoc = await db.collection('businesses').doc(business_id).get();
         if (!businessDoc.exists) {
