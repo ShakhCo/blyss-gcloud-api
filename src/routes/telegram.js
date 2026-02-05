@@ -4,6 +4,7 @@ import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
 import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2, telegramSendOtpSchema, telegramVerifyOtpSchema } from '../schemas/business.js';
 import { sendBookingNotification } from '../utils/telegram.js';
+import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
 
 const router = Router();
@@ -1363,35 +1364,13 @@ router.post('/send-otp', validate(telegramSendOtpSchema), async (req, res) => {
             used: false
         });
 
-        // Send SMS via Eskiz
-        const eskizToken = process.env.ESKIZ_TOKEN;
-        let smsSent = false;
-
-        if (eskizToken) {
-            try {
-                await fetch('https://notify.eskiz.uz/api/message/sms/send', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${eskizToken}`
-                    },
-                    body: JSON.stringify({
-                        mobile_phone: phone_number,
-                        message: `BLYSS tasdiqlash kodi: ${otpCode}`,
-                        from: '4546',
-                        callback_url: ''
-                    })
-                });
-                smsSent = true;
-            } catch (smsError) {
-                console.error('Failed to send SMS:', smsError);
-            }
-        }
+        // Send SMS via Eskiz using the utility function
+        const smsResult = await sendSms(phone_number, `${otpCode} BLYSS tasdiqlash kodi. Код подтверждения BLYSS.`);
 
         res.json({
             otp_id: otpRef.id,
-            message: smsSent ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
-            sms_sent: smsSent
+            message: smsResult.success ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
+            sms_sent: smsResult.success
         });
     } catch (error) {
         console.error('Error in /telegram/send-otp:', error);
