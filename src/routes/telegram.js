@@ -65,13 +65,16 @@ router.get('/me', async (req, res) => {
 
             return res.json({
                 ...telegramUser,
-                user_id: odamUzUserId
+                user_id: odamUzUserId,
+                phone_number: null
             });
         }
 
+        const userData = userDoc.data();
         res.json({
             ...telegramUser,
-            user_id: odamUzUserId
+            user_id: odamUzUserId,
+            phone_number: userData.phone_number || null
         });
     } catch (error) {
         console.error('Error in /telegram/me:', error);

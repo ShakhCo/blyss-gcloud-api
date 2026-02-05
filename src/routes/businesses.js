@@ -448,6 +448,18 @@ router.delete('/:id', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
+        // Delete avatar from storage if exists
+        if (currentData.avatar_url) {
+            const filename = getFilenameFromUrl(currentData.avatar_url);
+            if (filename) {
+                try {
+                    await deleteFile(filename);
+                } catch (err) {
+                    console.error('Failed to delete business avatar:', err.message);
+                }
+            }
+        }
+
         await docRef.delete();
         res.status(204).send();
     } catch (error) {
