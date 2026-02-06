@@ -632,4 +632,131 @@ router.post('/businesses/:businessId/bookings', validate(botCreateBookingSchema)
     }
 });
 
+/**
+ * GET /bot/businesses/:businessId/bookings/:telegramId
+ * Get bookings for a user by telegram ID.
+ */
+router.get('/businesses/:businessId/bookings/:telegramId', async (req, res) => {
+    try {
+        const { businessId, telegramId } = req.params;
+
+        if (!businessId || !telegramId) {
+            return res.status(400).json({
+                error: 'businessId and telegramId are required',
+                error_code: 'MISSING_FIELDS'
+            });
+        }
+
+        const bookingsSnapshot = await db.collection('bookings')
+            .where('business_id', '==', businessId)
+            .where('customer_telegram_id', '==', Number(telegramId))
+            .orderBy('booking_date', 'desc')
+            .get();
+
+        const bookings = bookingsSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                booking_date: data.booking_date,
+                status: data.status,
+                total_price: data.total_price,
+                total_duration_minutes: data.total_duration_minutes,
+                items: (data.items || []).map(item => ({
+                    service_name: item.service_name,
+                    employee_name: item.employee_name,
+                    start_time: item.start_time,
+                    duration_minutes: item.duration_minutes,
+                    price: item.price
+                })),
+                created_at: data.created_at?.toDate?.().toISOString() || data.created_at
+            };
+        });
+
+        res.json({ bookings });
+    } catch (error) {
+        console.error('Error in GET /bot/businesses/:businessId/bookings/:telegramId:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * PATCH /bot/bookings/:bookingId/cancel
+ * Cancel a booking. Sets status to 'cancelled'.
+ * Rejects if booking starts within 1 hour (Uzbekistan GMT+5).
+ */
+router.patch('/bookings/:bookingId/cancel', async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+
+        if (!bookingId) {
+            return res.status(400).json({
+                error: 'bookingId is required',
+                error_code: 'MISSING_FIELDS'
+            });
+        }
+
+        const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+        if (!bookingDoc.exists) {
+            return res.status(404).json({
+                error: 'Booking not found',
+                error_code: 'NOT_FOUND'
+            });
+        }
+
+        const booking = bookingDoc.data();
+
+        if (booking.status === 'cancelled') {
+            return res.status(400).json({
+                error: 'Booking is already cancelled',
+                error_code: 'ALREADY_CANCELLED'
+            });
+        }
+
+        if (!['pending', 'confirmed'].includes(booking.status)) {
+            return res.status(400).json({
+                error: `Cannot cancel a booking with status "${booking.status}"`,
+                error_code: 'INVALID_STATUS'
+            });
+        }
+
+        // Check 1-hour restriction (Uzbekistan GMT+5)
+        const firstItem = (booking.items || [])[0];
+        if (firstItem && firstItem.start_time && booking.booking_date) {
+            const bookingDateTimeStr = firstItem.start_time; // "YYYY-MM-DDTHH:mm"
+            const bookingDateTimeUtc = new Date(bookingDateTimeStr + ':00.000Z');
+            // Convert from UZB time to UTC by subtracting 5 hours
+            const bookingUtc = new Date(bookingDateTimeUtc.getTime() - 5 * 60 * 60 * 1000);
+            const nowUtc = new Date();
+            const diffMs = bookingUtc.getTime() - nowUtc.getTime();
+
+            if (diffMs < 60 * 60 * 1000) {
+                return res.status(400).json({
+                    error: 'Cannot cancel a booking less than 1 hour before the appointment',
+                    error_code: 'TOO_LATE_TO_CANCEL'
+                });
+            }
+        }
+
+        await db.collection('bookings').doc(bookingId).update({
+            status: 'cancelled',
+            updated_at: new Date()
+        });
+
+        res.json({
+            success: true,
+            booking_id: bookingId,
+            status: 'cancelled'
+        });
+    } catch (error) {
+        console.error('Error in PATCH /bot/bookings/:bookingId/cancel:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
 export default router;
