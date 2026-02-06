@@ -163,7 +163,7 @@ router.post('/otp/send', async (req, res) => {
         });
 
         // Send SMS
-        const smsMessage = `${otpCode} — BLYSS tasdiqlash kodi. Код подтверждения BLYSS.`;
+        const smsMessage = `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`;
         const smsResult = await sendSms(phone_number, smsMessage);
 
         res.json({
