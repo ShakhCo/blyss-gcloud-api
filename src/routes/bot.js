@@ -3,6 +3,7 @@ import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
 import { botCreateBookingSchema } from '../schemas/booking.js';
 import { sendBookingNotification } from '../utils/telegram.js';
+import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
 
 const router = Router();
@@ -28,10 +29,226 @@ router.get('/users/:telegramId', async (req, res) => {
             id: userDoc.id,
             phone_number: data.phone_number || '',
             first_name: data.first_name || '',
-            last_name: data.last_name || ''
+            last_name: data.last_name || '',
+            is_verified: data.is_verified || false
         });
     } catch (error) {
         console.error('Error in /bot/users/:telegramId:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * PUT /bot/users/:telegramId
+ * Register or update a user from the Telegram bot.
+ * Creates user doc if not exists; updates first_name/last_name only if exists (never overwrites phone).
+ */
+router.put('/users/:telegramId', async (req, res) => {
+    try {
+        const { telegramId } = req.params;
+        const { first_name, last_name } = req.body || {};
+        const userId = String(telegramId);
+        const userRef = db.collection('users').doc(userId);
+        const userDoc = await userRef.get();
+        const now = new Date();
+
+        if (!userDoc.exists) {
+            // Create new user
+            const userData = {
+                telegram_id: Number(telegramId),
+                first_name: first_name || '',
+                last_name: last_name || '',
+                phone_number: '',
+                is_verified: false,
+                created_at: now,
+                updated_at: now
+            };
+            await userRef.set(userData);
+            return res.status(201).json({
+                id: userId,
+                phone_number: '',
+                first_name: userData.first_name,
+                last_name: userData.last_name,
+                is_verified: false
+            });
+        }
+
+        // Update existing user (preserve phone)
+        await userRef.update({
+            first_name: first_name || userDoc.data().first_name || '',
+            last_name: last_name || userDoc.data().last_name || '',
+            updated_at: now
+        });
+
+        const updated = await userRef.get();
+        const data = updated.data();
+        res.json({
+            id: userId,
+            phone_number: data.phone_number || '',
+            first_name: data.first_name || '',
+            last_name: data.last_name || '',
+            is_verified: data.is_verified || false
+        });
+    } catch (error) {
+        console.error('Error in PUT /bot/users/:telegramId:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * POST /bot/otp/send
+ * Send OTP SMS for phone verification from bot.
+ */
+router.post('/otp/send', async (req, res) => {
+    try {
+        const { telegram_id, phone_number } = req.body || {};
+
+        if (!telegram_id || !phone_number) {
+            return res.status(400).json({
+                error: 'telegram_id and phone_number are required',
+                error_code: 'MISSING_FIELDS'
+            });
+        }
+
+        if (!/^998\d{9}$/.test(phone_number)) {
+            return res.status(400).json({
+                error: 'Invalid phone number format. Must be 998XXXXXXXXX (12 digits)',
+                error_code: 'INVALID_PHONE'
+            });
+        }
+
+        // Rate limit: 60s between requests per telegram_id
+        const recentOtps = await db.collection('bot_otps')
+            .where('telegram_id', '==', Number(telegram_id))
+            .orderBy('created_at', 'desc')
+            .limit(1)
+            .get();
+
+        if (!recentOtps.empty) {
+            const lastOtp = recentOtps.docs[0].data();
+            const lastCreated = lastOtp.created_at?.toDate ? lastOtp.created_at.toDate() : new Date(lastOtp.created_at);
+            const secondsSince = (Date.now() - lastCreated.getTime()) / 1000;
+            if (secondsSince < 60) {
+                return res.status(429).json({
+                    error: `Please wait ${Math.ceil(60 - secondsSince)} seconds before requesting another code`,
+                    error_code: 'RATE_LIMITED'
+                });
+            }
+        }
+
+        // Generate 5-digit code
+        const otpCode = String(crypto.randomInt(10000, 100000));
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + 5 * 60 * 1000); // 5 minutes
+
+        const otpRef = db.collection('bot_otps').doc();
+        await otpRef.set({
+            telegram_id: Number(telegram_id),
+            phone_number,
+            otp_code: otpCode,
+            created_at: now,
+            expires_at: expiresAt,
+            used: false
+        });
+
+        // Send SMS
+        const smsMessage = `${otpCode} — BLYSS tasdiqlash kodi. Код подтверждения BLYSS.`;
+        const smsResult = await sendSms(phone_number, smsMessage);
+
+        res.json({
+            otp_id: otpRef.id,
+            message: 'OTP sent',
+            sms_sent: smsResult?.success || false
+        });
+    } catch (error) {
+        console.error('Error in POST /bot/otp/send:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * POST /bot/otp/verify
+ * Verify OTP code and save phone to user doc.
+ */
+router.post('/otp/verify', async (req, res) => {
+    try {
+        const { telegram_id, otp_id, otp_code } = req.body || {};
+
+        if (!telegram_id || !otp_id || !otp_code) {
+            return res.status(400).json({
+                error: 'telegram_id, otp_id, and otp_code are required',
+                error_code: 'MISSING_FIELDS'
+            });
+        }
+
+        const otpDoc = await db.collection('bot_otps').doc(otp_id).get();
+        if (!otpDoc.exists) {
+            return res.status(404).json({
+                error: 'OTP not found',
+                error_code: 'OTP_NOT_FOUND'
+            });
+        }
+
+        const otpData = otpDoc.data();
+
+        if (otpData.telegram_id !== Number(telegram_id)) {
+            return res.status(403).json({
+                error: 'OTP does not belong to this user',
+                error_code: 'FORBIDDEN'
+            });
+        }
+
+        if (otpData.used) {
+            return res.status(400).json({
+                error: 'OTP already used',
+                error_code: 'OTP_USED'
+            });
+        }
+
+        const expiresAt = otpData.expires_at?.toDate ? otpData.expires_at.toDate() : new Date(otpData.expires_at);
+        if (Date.now() > expiresAt.getTime()) {
+            return res.status(400).json({
+                error: 'OTP expired',
+                error_code: 'OTP_EXPIRED'
+            });
+        }
+
+        if (otpData.otp_code !== String(otp_code)) {
+            return res.status(400).json({
+                error: 'Invalid OTP code',
+                error_code: 'INVALID_OTP'
+            });
+        }
+
+        // Mark OTP as used
+        await db.collection('bot_otps').doc(otp_id).update({ used: true });
+
+        // Save phone to user doc
+        const userId = String(telegram_id);
+        const userRef = db.collection('users').doc(userId);
+        const now = new Date();
+
+        await userRef.set({
+            phone_number: otpData.phone_number,
+            is_verified: true,
+            updated_at: now
+        }, { merge: true });
+
+        res.json({
+            success: true,
+            phone_number: otpData.phone_number
+        });
+    } catch (error) {
+        console.error('Error in POST /bot/otp/verify:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'
