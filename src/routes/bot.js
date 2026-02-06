@@ -650,7 +650,6 @@ router.get('/businesses/:businessId/bookings/:telegramId', async (req, res) => {
         const bookingsSnapshot = await db.collection('bookings')
             .where('business_id', '==', businessId)
             .where('customer_telegram_id', '==', Number(telegramId))
-            .orderBy('booking_date', 'desc')
             .get();
 
         const bookings = bookingsSnapshot.docs.map(doc => {
@@ -671,6 +670,8 @@ router.get('/businesses/:businessId/bookings/:telegramId', async (req, res) => {
                 created_at: data.created_at?.toDate?.().toISOString() || data.created_at
             };
         });
+
+        bookings.sort((a, b) => (b.booking_date || '').localeCompare(a.booking_date || ''));
 
         res.json({ bookings });
     } catch (error) {
