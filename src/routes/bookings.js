@@ -378,8 +378,20 @@ router.get(
             }
 
             // Generate time slots (30-minute intervals)
-            const businessStartMinutes = Math.floor(businessHours.start / 60);
+            let businessStartMinutes = Math.floor(businessHours.start / 60);
             const businessEndMinutes = Math.floor(businessHours.end / 60);
+
+            // For today: skip past time slots (Uzbekistan GMT+5, 15-min buffer)
+            const nowUtc = new Date();
+            const uzbekNow = new Date(nowUtc.getTime() + 5 * 60 * 60 * 1000);
+            const todayUzb = uzbekNow.toISOString().split('T')[0];
+
+            if (date === todayUzb) {
+                const currentMinutes = uzbekNow.getUTCHours() * 60 + uzbekNow.getUTCMinutes() + 15;
+                // Round up to next 30-min slot
+                const roundedMinutes = Math.ceil(currentMinutes / 30) * 30;
+                businessStartMinutes = Math.max(businessStartMinutes, roundedMinutes);
+            }
 
             const slots = [];
             const slotInterval = 30;
