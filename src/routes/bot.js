@@ -7,6 +7,38 @@ import { db } from '../db/db.js';
 
 const router = Router();
 
+/**
+ * GET /bot/users/:telegramId
+ * Look up a user by Telegram ID (HMAC signature auth, no JWT needed)
+ */
+router.get('/users/:telegramId', async (req, res) => {
+    try {
+        const { telegramId } = req.params;
+        const userDoc = await db.collection('users').doc(String(telegramId)).get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({
+                error: 'User not found',
+                error_code: 'USER_NOT_FOUND'
+            });
+        }
+
+        const data = userDoc.data();
+        res.json({
+            id: userDoc.id,
+            phone_number: data.phone_number || '',
+            first_name: data.first_name || '',
+            last_name: data.last_name || ''
+        });
+    } catch (error) {
+        console.error('Error in /bot/users/:telegramId:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
 // Day name mapping for working hours lookup
 const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
