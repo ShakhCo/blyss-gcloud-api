@@ -28,7 +28,10 @@ app.use(cookieParser());
 
 // IMPORTANT: Parse JSON and URL-encoded bodies BEFORE routes
 // Remove express.text() - it interferes with JSON parsing
-app.use(express.json({ limit: '10mb' })); // Added limit for larger payloads
+app.use(express.json({
+    limit: '10mb',
+    verify: (req, _res, buf) => { req.rawBody = buf.toString('utf-8'); }
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.get('/', (req, res) => {

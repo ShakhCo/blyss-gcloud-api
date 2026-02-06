@@ -65,12 +65,13 @@ const verifyRequestSignature = (req) => {
     }
 
     // Get raw body for signature verification
-    // For multipart/form-data (file uploads), use empty string to match frontend
+    // Use req.rawBody (captured in server.js) to avoid JSON re-serialization mismatches
+    // (e.g. Python's json.dumps escapes emoji as \uXXXX, JS JSON.stringify keeps raw UTF-8)
     const contentType = req.headers['content-type'] || '';
     const isMultipart = contentType.includes('multipart/form-data');
     const body = isMultipart
         ? ''
-        : (req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : '');
+        : (req.rawBody || (req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : ''));
 
     const message = body + timestamp;
     const expectedSignature = crypto
