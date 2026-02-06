@@ -73,6 +73,27 @@ export const serviceEmployeesQuerySchema = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be in YYYY-MM-DD format').optional()
 });
 
+// Bot booking service item schema (simplified - bot sends minimal payload)
+const botBookingServiceSchema = z.object({
+    service_id: z.string().min(1, 'service_id is required'),
+    employee_id: z.string().nullable().optional()
+});
+
+// Bot booking creation schema (HMAC-authenticated, no JWT needed)
+export const botCreateBookingSchema = z.object({
+    telegram_id: z.number({ required_error: 'telegram_id is required' }),
+    date: z.string({ required_error: 'date is required' })
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be in YYYY-MM-DD format'),
+    start_time: z.coerce.number({ required_error: 'start_time is required' })
+        .int().min(0).max(86399, 'start_time must be seconds from midnight (0-86399)'),
+    services: z.array(botBookingServiceSchema).min(1, 'at least one service is required'),
+    customer_name: z.string({ required_error: 'customer_name is required' }).min(1),
+    customer_phone: z.string({ required_error: 'customer_phone is required' })
+        .min(9, 'customer_phone must be at least 9 digits')
+        .regex(/^\d+$/, 'customer_phone must contain only digits'),
+    notes: z.string().optional().default('')
+});
+
 // Booking response schema
 export const bookingResponseSchema = z.object({
     id: z.string(),
