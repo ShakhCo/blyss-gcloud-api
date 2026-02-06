@@ -777,7 +777,7 @@ router.patch(
 );
 
 // ============================================
-// BUSINESS ENDPOINTS (require business owner auth)
+// BUSINESS ENDPOINTS (require business owner or accepted employee auth)
 // ============================================
 
 /**
@@ -793,7 +793,7 @@ router.get(
             const { businessId } = req.params;
             const { page, page_size, status, employee_id, date_from, date_to } = req.validated;
 
-            // Verify business ownership
+            // Verify business access (owner or employee)
             const businessDoc = await db.collection('businesses').doc(businessId).get();
             if (!businessDoc.exists) {
                 return res.status(404).json({
@@ -803,7 +803,27 @@ router.get(
             }
 
             const businessData = businessDoc.data();
-            if (businessData.business_owner_id !== req.user.id) {
+            const isOwner = businessData.business_owner_id === req.user.id;
+            let isEmployee = false;
+            let employeeDocId = null;
+
+            if (!isOwner) {
+                // Check if user is an accepted employee of this business
+                const employeeSnapshot = await db.collection('businesses').doc(businessId)
+                    .collection('employees')
+                    .where('phone_number', '==', req.user.phone_number)
+                    .where('is_accepted', '==', true)
+                    .where('is_rejected', '==', false)
+                    .limit(1)
+                    .get();
+
+                if (!employeeSnapshot.empty) {
+                    isEmployee = true;
+                    employeeDocId = employeeSnapshot.docs[0].id;
+                }
+            }
+
+            if (!isOwner && !isEmployee) {
                 return res.status(403).json({
                     error: 'Access denied',
                     error_code: 'FORBIDDEN'
@@ -831,9 +851,12 @@ router.get(
                 bookings = bookings.filter(b => b.status === status);
             }
 
-            if (employee_id) {
+            // For employees, force filter to their own bookings only
+            const effectiveEmployeeId = isEmployee ? employeeDocId : employee_id;
+
+            if (effectiveEmployeeId) {
                 bookings = bookings.filter(b =>
-                    b.items?.some(item => item.employee_id === employee_id)
+                    b.items?.some(item => item.employee_id === effectiveEmployeeId)
                 );
             }
 
