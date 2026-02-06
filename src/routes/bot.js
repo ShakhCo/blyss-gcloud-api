@@ -124,22 +124,27 @@ router.post('/otp/send', async (req, res) => {
         }
 
         // Rate limit: 60s between requests per telegram_id
-        const recentOtps = await db.collection('bot_otps')
-            .where('telegram_id', '==', Number(telegram_id))
-            .orderBy('created_at', 'desc')
-            .limit(1)
-            .get();
+        try {
+            const recentOtps = await db.collection('bot_otps')
+                .where('telegram_id', '==', Number(telegram_id))
+                .orderBy('created_at', 'desc')
+                .limit(1)
+                .get();
 
-        if (!recentOtps.empty) {
-            const lastOtp = recentOtps.docs[0].data();
-            const lastCreated = lastOtp.created_at?.toDate ? lastOtp.created_at.toDate() : new Date(lastOtp.created_at);
-            const secondsSince = (Date.now() - lastCreated.getTime()) / 1000;
-            if (secondsSince < 60) {
-                return res.status(429).json({
-                    error: `Please wait ${Math.ceil(60 - secondsSince)} seconds before requesting another code`,
-                    error_code: 'RATE_LIMITED'
-                });
+            if (!recentOtps.empty) {
+                const lastOtp = recentOtps.docs[0].data();
+                const lastCreated = lastOtp.created_at?.toDate ? lastOtp.created_at.toDate() : new Date(lastOtp.created_at);
+                const secondsSince = (Date.now() - lastCreated.getTime()) / 1000;
+                if (secondsSince < 60) {
+                    return res.status(429).json({
+                        error: `Please wait ${Math.ceil(60 - secondsSince)} seconds before requesting another code`,
+                        error_code: 'RATE_LIMITED'
+                    });
+                }
             }
+        } catch (indexError) {
+            // Composite index may not exist yet — skip rate limiting, log for index creation
+            console.warn('bot_otps rate limit query failed (create composite index: telegram_id ASC, created_at DESC):', indexError.message);
         }
 
         // Generate 5-digit code
