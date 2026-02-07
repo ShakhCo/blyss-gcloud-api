@@ -3,6 +3,7 @@ import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
 import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2, telegramSendOtpSchema, telegramVerifyOtpSchema } from '../schemas/business.js';
+import { userBookingsQuerySchema } from '../schemas/booking.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
@@ -1310,6 +1311,73 @@ router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, re
         });
     } catch (error) {
         console.error('Error in /telegram/bookings:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * GET /telegram/bookings
+ * Get authenticated Telegram user's booking history
+ * Supports filtering by status, date range, and pagination
+ */
+router.get('/bookings', validate(userBookingsQuerySchema, 'query'), async (req, res) => {
+    try {
+        const telegramUser = req.telegramUser;
+        const userId = String(telegramUser.id);
+        const { page, page_size, status, date_from, date_to } = req.validated;
+
+        // Query bookings by user_id (stored as String(telegram_id))
+        let query = db.collection('bookings')
+            .where('user_id', '==', userId)
+            .orderBy('created_at', 'desc');
+
+        const bookingsSnapshot = await query.get();
+
+        let bookings = bookingsSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                ...data,
+                created_at: data.created_at?.toDate?.().toISOString() || data.created_at,
+                updated_at: data.updated_at?.toDate?.().toISOString() || data.updated_at
+            };
+        });
+
+        // Apply filters in memory (Firestore doesn't support multiple inequality filters on different fields)
+        if (status) {
+            bookings = bookings.filter(b => b.status === status);
+        }
+
+        if (date_from) {
+            bookings = bookings.filter(b => b.booking_date >= date_from);
+        }
+
+        if (date_to) {
+            bookings = bookings.filter(b => b.booking_date <= date_to);
+        }
+
+        // Calculate pagination
+        const total = bookings.length;
+        const totalPages = Math.ceil(total / page_size);
+        const startIndex = (page - 1) * page_size;
+        const paginatedBookings = bookings.slice(startIndex, startIndex + page_size);
+
+        res.json({
+            data: paginatedBookings,
+            pagination: {
+                page,
+                page_size,
+                total,
+                total_pages: totalPages,
+                has_next: page < totalPages,
+                has_prev: page > 1
+            }
+        });
+    } catch (error) {
+        console.error('Error in GET /telegram/bookings:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'
