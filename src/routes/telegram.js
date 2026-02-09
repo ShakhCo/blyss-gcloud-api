@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
-import { nearestBusinessesQuerySchema, distanceQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2, telegramSendOtpSchema, telegramVerifyOtpSchema } from '../schemas/business.js';
+import { nearestBusinessesQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2, telegramSendOtpSchema, telegramVerifyOtpSchema } from '../schemas/business.js';
+import { distanceQuerySchema } from '../schemas/distance.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
@@ -30,6 +31,26 @@ function setCache(key, value) {
         distanceCache.delete(firstKey);
     }
     distanceCache.set(key, value);
+}
+
+/**
+ * Middleware to parse nested query parameters like user_location[lat]=41.2995
+ * into nested objects { user_location: { lat: 41.2995 } }
+ */
+function parseNestedQuery(req, res, next) {
+    const parsed = {};
+    for (const [key, value] of Object.entries(req.query)) {
+        const match = key.match(/^(\w+)\[(\w+)\]$/);
+        if (match) {
+            const [, parent, child] = match;
+            if (!parsed[parent]) parsed[parent] = {};
+            parsed[parent][child] = value;
+        } else if (!parsed[key]) {
+            parsed[key] = value;
+        }
+    }
+    req.parsedQuery = { ...req.query, ...parsed };
+    next();
 }
 
 // Apply Telegram auth middleware to all routes
@@ -375,15 +396,15 @@ router.get('/business-details', async (req, res) => {
 /**
  * GET /telegram/get-distance
  * Calculate road distance and travel time between user and business locations
- * Query params: user_lat, user_lng, business_lat, business_lng
+ * Query params: user_location[lat], user_location[lng], business_location[lat], business_location[lng]
  * Returns: { distance: number, metric: 'km' | 'm', duration: number (minutes) }
  */
-router.get('/get-distance', validate(distanceQuerySchema, 'query'), async (req, res) => {
+router.get('/get-distance', parseNestedQuery, validate(distanceQuerySchema, 'query'), async (req, res) => {
     try {
-        const { user_lat, user_lng, business_lat, business_lng } = req.validated;
+        const { user_location, business_location } = req.validated;
 
         // Check cache first
-        const cacheKey = getCacheKey(user_lat, user_lng, business_lat, business_lng);
+        const cacheKey = getCacheKey(user_location.lat, user_location.lng, business_location.lat, business_location.lng);
         const cachedResult = distanceCache.get(cacheKey);
 
         if (cachedResult) {
@@ -399,8 +420,8 @@ router.get('/get-distance', validate(distanceQuerySchema, 'query'), async (req, 
 
         // OpenRouteService expects [lng, lat] format
         const locations = [
-            [user_lng, user_lat],
-            [business_lng, business_lat]
+            [user_location.lng, user_location.lat],
+            [business_location.lng, business_location.lat]
         ];
 
         const response = await fetch('https://api.openrouteservice.org/v2/matrix/driving-car', {
