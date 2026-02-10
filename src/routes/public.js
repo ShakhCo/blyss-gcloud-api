@@ -163,7 +163,7 @@ router.get('/business/services', async (req, res) => {
  * Alternative endpoint that accepts slug as a path parameter
  * Example: GET /public/businesses/my-salon/services
  */
-router.get('/businesses/:slug/services', async (req, res) => {
+router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
     try {
         const { slug } = req.params;
         const zoneDomain = process.env.CLOUDFLARE_ZONE_DOMAIN || 'blyss.uz';
@@ -299,6 +299,57 @@ router.get('/businesses/:slug/services', async (req, res) => {
             return { ...defaultHours, ...hours };
         };
 
+        // Calculate distance if user location is provided
+        let distance = null;
+        const userLat = parseFloat(req.query.lat);
+        const userLng = parseFloat(req.query.lng);
+        const businessLocation = businessData.location;
+
+        if (!isNaN(userLat) && !isNaN(userLng) && businessLocation?.lat && businessLocation?.lng) {
+            const cacheKey = getCacheKey(userLat, userLng, businessLocation.lat, businessLocation.lng);
+            const cachedResult = distanceCache.get(cacheKey);
+
+            if (cachedResult) {
+                distance = cachedResult;
+            } else if (OPENROUTESERVICE_API_KEY) {
+                try {
+                    const orsResponse = await fetch('https://api.openrouteservice.org/v2/matrix/driving-car', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': OPENROUTESERVICE_API_KEY,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            locations: [
+                                [userLng, userLat],
+                                [businessLocation.lng, businessLocation.lat]
+                            ],
+                            metrics: ['distance', 'duration'],
+                            units: 'km'
+                        })
+                    });
+
+                    if (orsResponse.ok) {
+                        const orsData = await orsResponse.json();
+                        const distanceInKm = orsData.distances?.[0]?.[1];
+                        const durationInSeconds = orsData.durations?.[0]?.[1];
+
+                        if (distanceInKm != null) {
+                            const durationInMinutes = durationInSeconds ? Math.ceil(durationInSeconds / 60) : null;
+                            if (distanceInKm < 1) {
+                                distance = { distance: Math.round(distanceInKm * 1000), metric: 'm', duration: durationInMinutes };
+                            } else {
+                                distance = { distance: Math.round(distanceInKm * 10) / 10, metric: 'km', duration: durationInMinutes };
+                            }
+                            setCache(cacheKey, distance);
+                        }
+                    }
+                } catch (distanceError) {
+                    console.error('Distance calculation failed:', distanceError);
+                }
+            }
+        }
+
         res.json({
             business: {
                 name: businessData.business_name,
@@ -309,6 +360,7 @@ router.get('/businesses/:slug/services', async (req, res) => {
                 tenant_url: businessData.tenant_url,
                 avatar_url: businessData.avatar_url || null
             },
+            distance,
             services,
             employees
         });
