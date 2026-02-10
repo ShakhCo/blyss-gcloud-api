@@ -19,3 +19,9 @@ export const distanceQuerySchema = z.object({
     user_location: locationSchema,
     business_location: locationSchema
 });
+
+// Body schema for POST distance calculation
+export const distanceBodySchema = z.object({
+    from: locationSchema,
+    to: locationSchema
+});
