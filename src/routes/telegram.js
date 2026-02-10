@@ -173,34 +173,80 @@ router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'
         // Sort by distance
         businessesInRadius.sort((a, b) => a.distance - b.distance);
 
-        // Fetch services for all businesses in parallel
-        const servicesSnapshots = await Promise.all(
-            businessesInRadius.map(business =>
-                db.collection('businesses')
-                    .doc(business.id)
-                    .collection('services')
-                    .where('is_active', '==', true)
-                    .get()
+        // Fetch services and employees for all businesses in parallel
+        const [servicesSnapshots, employeesSnapshots] = await Promise.all([
+            Promise.all(
+                businessesInRadius.map(business =>
+                    db.collection('businesses')
+                        .doc(business.id)
+                        .collection('services')
+                        .where('is_active', '==', true)
+                        .get()
+                )
+            ),
+            Promise.all(
+                businessesInRadius.map(business =>
+                    db.collection('businesses')
+                        .doc(business.id)
+                        .collection('employees')
+                        .where('is_accepted', '==', true)
+                        .get()
+                )
             )
+        ]);
+
+        // Build employee count per service for each business
+        const employeeServiceCounts = await Promise.all(
+            businessesInRadius.map(async (business, i) => {
+                const empSnapshot = employeesSnapshots[i];
+                const serviceEmployeeCount = new Map();
+
+                await Promise.all(empSnapshot.docs.map(async (empDoc) => {
+                    const empServicesSnapshot = await db.collection('businesses')
+                        .doc(business.id)
+                        .collection('employees')
+                        .doc(empDoc.id)
+                        .collection('employeeServices')
+                        .where('is_active', '==', true)
+                        .get();
+
+                    empServicesSnapshot.docs.forEach(svcDoc => {
+                        const serviceId = svcDoc.data().service_id;
+                        serviceEmployeeCount.set(serviceId, (serviceEmployeeCount.get(serviceId) || 0) + 1);
+                    });
+                }));
+
+                return serviceEmployeeCount;
+            })
         );
 
-        // Combine businesses with services, filter out those with no services
+        // Combine businesses with services, filter out services with no employees
         const businessesWithDistance = [];
         for (let i = 0; i < businessesInRadius.length; i++) {
             const business = businessesInRadius[i];
             const servicesSnapshot = servicesSnapshots[i];
+            const serviceEmployeeCount = employeeServiceCounts[i];
 
             if (servicesSnapshot.empty) {
                 continue;
             }
 
-            const services = servicesSnapshot.docs.map(serviceDoc => {
-                const serviceData = serviceDoc.data();
-                return {
-                    name: serviceData.name || { ru: '', uz: '' },
-                    duration_minutes: serviceData.duration_minutes || 0
-                };
-            });
+            const services = servicesSnapshot.docs
+                .map(serviceDoc => {
+                    const serviceData = serviceDoc.data();
+                    const employeeCount = serviceEmployeeCount.get(serviceDoc.id) || 0;
+                    return {
+                        id: serviceDoc.id,
+                        name: serviceData.name || { ru: '', uz: '' },
+                        duration_minutes: serviceData.duration_minutes || 0,
+                        employee_count: employeeCount
+                    };
+                })
+                .filter(service => service.employee_count > 0);
+
+            if (services.length === 0) {
+                continue;
+            }
 
             const distanceValue = business.distance < 1
                 ? Math.round(business.distance * 1000)
