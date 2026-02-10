@@ -511,7 +511,7 @@ const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'frida
  */
 router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'query'), async (req, res) => {
     try {
-        const { business_id, date, service_ids } = req.validated;
+        const { business_id, date, service_ids, employee_id } = req.validated;
 
         // 1. Get business and validate it exists
         const businessDoc = await db.collection('businesses').doc(business_id).get();
@@ -609,7 +609,12 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
             }
         }
 
-        if (employeesWithFirstService.length === 0) {
+        // Filter to specific employee if requested
+        const filteredEmployees = employee_id
+            ? employeesWithFirstService.filter(e => e.id === employee_id)
+            : employeesWithFirstService;
+
+        if (filteredEmployees.length === 0) {
             return res.json({
                 first_service: {
                     id: firstServiceId,
@@ -670,7 +675,7 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
         for (let slotStart = minSlotStart; slotStart < businessHours.end; slotStart += slotInterval) {
             let hasAvailableEmployee = false;
 
-            for (const employee of employeesWithFirstService) {
+            for (const employee of filteredEmployees) {
                 const empHours = employee.working_hours?.[dayName];
                 if (empHours && !empHours.is_open) continue;
 
@@ -724,7 +729,7 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
  */
 router.get('/slot-employees', validate(telegramSlotEmployeesQuerySchema, 'query'), async (req, res) => {
     try {
-        const { business_id, date, service_ids, start_time } = req.validated;
+        const { business_id, date, service_ids, start_time, employee_id } = req.validated;
 
         // 1. Get business and validate
         const businessDoc = await db.collection('businesses').doc(business_id).get();
@@ -877,6 +882,7 @@ router.get('/slot-employees', validate(telegramSlotEmployeesQuerySchema, 'query'
             let shortestDuration = Infinity;
 
             for (const [empId, employee] of employeeMap) {
+                if (employee_id && empId !== employee_id) continue;
                 if (!employee.services.has(serviceId)) continue;
 
                 const empService = employee.services.get(serviceId);
