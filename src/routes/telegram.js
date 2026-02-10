@@ -354,6 +354,25 @@ router.get('/business-details', async (req, res) => {
             });
         }));
 
+        // Build top-level employees list
+        const employees = employeesSnapshot.docs.map(empDoc => {
+            const empData = empDoc.data();
+            let first_name = null;
+            let last_name = null;
+            if (empData.business_owner_id && businessOwnersMap.has(empData.business_owner_id)) {
+                const ownerData = businessOwnersMap.get(empData.business_owner_id);
+                first_name = ownerData.first_name || null;
+                last_name = ownerData.last_name || null;
+            }
+            return {
+                id: empDoc.id,
+                first_name,
+                last_name,
+                position: empData.position || '',
+                avatar_url: empData.avatar_url || ''
+            };
+        });
+
         // Build services with employees
         const services = servicesSnapshot.docs.map(doc => {
             const data = doc.data();
@@ -383,7 +402,8 @@ router.get('/business-details', async (req, res) => {
             working_hours: businessData.working_hours,
             business_phone_number: businessData.business_phone_number || '',
             tenant_url: businessData.tenant_url || '',
-            services
+            services,
+            employees
         });
     } catch (error) {
         console.error('Error in /telegram/business-details:', error);
