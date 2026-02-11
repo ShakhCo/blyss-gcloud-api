@@ -1487,7 +1487,7 @@ router.get('/bookings', validate(userBookingsQuerySchema, 'query'), async (req, 
     try {
         const telegramUser = req.telegramUser;
         const userId = String(telegramUser.id);
-        const { page, page_size, status, date_from, date_to } = req.validated;
+        const { page, page_size, status, business_id, date_from, date_to } = req.validated;
 
         // Query bookings by user_id (stored as String(telegram_id))
         let query = db.collection('bookings')
@@ -1507,6 +1507,10 @@ router.get('/bookings', validate(userBookingsQuerySchema, 'query'), async (req, 
         });
 
         // Apply filters in memory (Firestore doesn't support multiple inequality filters on different fields)
+        if (business_id) {
+            bookings = bookings.filter(b => b.business_id === business_id);
+        }
+
         if (status) {
             bookings = bookings.filter(b => b.status === status);
         }
