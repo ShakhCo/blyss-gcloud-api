@@ -526,6 +526,8 @@ router.get('/business-details', async (req, res) => {
             working_hours: businessData.working_hours,
             business_phone_number: businessData.business_phone_number || '',
             tenant_url: businessData.tenant_url || '',
+            primary_color: businessData.primary_color || '#088395',
+            primary_color_enabled: businessData.primary_color_enabled !== undefined ? businessData.primary_color_enabled : true,
             services,
             employees,
             photos
