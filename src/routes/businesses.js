@@ -1329,7 +1329,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { name, price, duration_minutes, description, allow_employee_customization } = req.validated;
+        const { name, price, duration_minutes, description, color, allow_employee_customization } = req.validated;
 
         // Generate unique 16 character ID
         let serviceId;
@@ -1351,6 +1351,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             price,
             duration_minutes,
             ...(description && { description }),
+            color,
             is_active: false,
             allow_employee_customization,
             date_created: dateCreated
@@ -1397,13 +1398,14 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
 
-        const { name, price, duration_minutes, description, allow_employee_customization, overwrite_employees_price, overwrite_employees_duration } = req.validated;
+        const { name, price, duration_minutes, description, color, allow_employee_customization, overwrite_employees_price, overwrite_employees_duration } = req.validated;
         const currentData = serviceDoc.data();
 
         const updateData = {
             name,
             price,
             duration_minutes,
+            color,
             allow_employee_customization,
             ...(description && { description })
         };
