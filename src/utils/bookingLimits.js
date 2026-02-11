@@ -1,7 +1,7 @@
 import { db } from '../db/db.js';
 
 // Maximum active (pending/confirmed) bookings a single user can have at any time
-const MAX_ACTIVE_BOOKINGS_PER_USER = 10;
+const MAX_ACTIVE_BOOKINGS_PER_USER = 3;
 
 /**
  * Check if a user has reached their active booking limit.
