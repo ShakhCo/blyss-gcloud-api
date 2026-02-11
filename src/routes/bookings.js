@@ -929,6 +929,27 @@ router.get(
                 };
             });
 
+            // Collect unique service IDs and fetch their colors
+            const serviceIds = [...new Set(bookings.flatMap(b => (b.items || []).map(i => i.service_id)).filter(Boolean))];
+            const serviceColorMap = {};
+            if (serviceIds.length > 0) {
+                const servicesSnapshot = await db.collection('businesses').doc(businessId).collection('services')
+                    .where('__name__', 'in', serviceIds.slice(0, 30))
+                    .get();
+                servicesSnapshot.docs.forEach(doc => {
+                    serviceColorMap[doc.id] = doc.data().color || '#088395';
+                });
+            }
+
+            // Enrich booking items with service color
+            bookings = bookings.map(booking => ({
+                ...booking,
+                items: (booking.items || []).map(item => ({
+                    ...item,
+                    service_color: serviceColorMap[item.service_id] || '#088395'
+                }))
+            }));
+
             // Apply filters in memory
             if (status) {
                 bookings = bookings.filter(b => b.status === status);
