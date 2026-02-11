@@ -97,21 +97,19 @@ export const createBusinessSchema = z.object({
 
 // Input schema for updating business (without business_owner_id - cannot be changed)
 export const updateBusinessSchema = z.object({
-    business_name: z.string({ required_error: 'business_name is required' })
-        .min(1, 'business_name is required'),
-    business_type: z.string({ required_error: 'business_type is required' })
-        .min(1, 'business_type is required'),
-    location: locationSchema,
-    working_hours: businessWorkingHoursSchema,
-    business_phone_number: z.string({ required_error: 'business_phone_number is required' })
+    business_name: z.string().min(1, 'business_name is required').optional(),
+    business_type: z.string().min(1, 'business_type is required').optional(),
+    location: locationSchema.optional(),
+    working_hours: businessWorkingHoursSchema.optional(),
+    business_phone_number: z.string()
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
-        .min(12, 'business_phone_number must be at least 12 digits'),
+        .min(12, 'business_phone_number must be at least 12 digits')
+        .optional(),
     avatar_url: z.string().url('Invalid avatar URL').optional(),
     primary_color: z.string()
         .regex(/^#[0-9A-Fa-f]{6}$/, 'primary_color must be a valid hex color (e.g. #088395)')
-        .optional()
-        .default('#088395'),
-    primary_color_enabled: z.boolean().optional().default(true)
+        .optional(),
+    primary_color_enabled: z.boolean().optional()
 });
 
 // Working hours update schema (for PATCH /:id/working-hours)

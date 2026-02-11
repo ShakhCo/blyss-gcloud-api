@@ -360,16 +360,6 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
         }
 
-        const {
-            business_name,
-            business_type,
-            location,
-            working_hours,
-            business_phone_number,
-            primary_color,
-            primary_color_enabled
-        } = req.validated;
-
         const currentData = doc.data();
 
         // Verify ownership
@@ -377,15 +367,16 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const updateData = {
-            business_name,
-            business_type,
-            location,
-            working_hours,
-            business_phone_number,
-            primary_color,
-            primary_color_enabled
-        };
+        // Only include fields that were provided in the request
+        const updateData = {};
+        const allowedFields = ['business_name', 'business_type', 'location', 'working_hours', 'business_phone_number', 'primary_color', 'primary_color_enabled'];
+        for (const field of allowedFields) {
+            if (req.validated[field] !== undefined) {
+                updateData[field] = req.validated[field];
+            }
+        }
+
+        const { working_hours } = req.validated;
 
         // Clip employee working hours to business hours range if working_hours are being updated
         let employeeUpdatePromises = [];
