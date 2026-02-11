@@ -293,7 +293,9 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             location,
             working_hours,
             business_phone_number,
-            place_id
+            place_id,
+            primary_color,
+            primary_color_enabled
         } = req.validated;
 
         const business_owner_id = req.user.id;
@@ -331,6 +333,8 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             tenant_url: tenantUrl,
             employee_invite_token: employeeInviteToken,
             place_id,
+            primary_color,
+            primary_color_enabled,
             date_created: dateCreated
         };
 
@@ -361,7 +365,9 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             business_type,
             location,
             working_hours,
-            business_phone_number
+            business_phone_number,
+            primary_color,
+            primary_color_enabled
         } = req.validated;
 
         const currentData = doc.data();
@@ -376,7 +382,9 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             business_type,
             location,
             working_hours,
-            business_phone_number
+            business_phone_number,
+            primary_color,
+            primary_color_enabled
         };
 
         // Clip employee working hours to business hours range if working_hours are being updated

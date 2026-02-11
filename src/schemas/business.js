@@ -67,7 +67,12 @@ export const businessSchema = z.object({
         .min(12, 'business_phone_number must be at least 12 digits'),
     business_owner_id: z.string({ required_error: 'business_owner_id is required' })
         .min(1, 'business_owner_id is required'),
-    avatar_url: z.string().url('Invalid avatar URL').optional()
+    avatar_url: z.string().url('Invalid avatar URL').optional(),
+    primary_color: z.string()
+        .regex(/^#[0-9A-Fa-f]{6}$/, 'primary_color must be a valid hex color (e.g. #088395)')
+        .optional()
+        .default('#088395'),
+    primary_color_enabled: z.boolean().optional().default(true)
 });
 
 // Input schema for creating business (without business_owner_id - taken from auth)
@@ -82,7 +87,12 @@ export const createBusinessSchema = z.object({
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
         .min(12, 'business_phone_number must be at least 12 digits'),
     avatar_url: z.string().url('Invalid avatar URL').optional(),
-    place_id: z.string().default('')
+    place_id: z.string().default(''),
+    primary_color: z.string()
+        .regex(/^#[0-9A-Fa-f]{6}$/, 'primary_color must be a valid hex color (e.g. #088395)')
+        .optional()
+        .default('#088395'),
+    primary_color_enabled: z.boolean().optional().default(true)
 });
 
 // Input schema for updating business (without business_owner_id - cannot be changed)
@@ -96,7 +106,12 @@ export const updateBusinessSchema = z.object({
     business_phone_number: z.string({ required_error: 'business_phone_number is required' })
         .regex(/^\d+$/, 'business_phone_number must contain only digits')
         .min(12, 'business_phone_number must be at least 12 digits'),
-    avatar_url: z.string().url('Invalid avatar URL').optional()
+    avatar_url: z.string().url('Invalid avatar URL').optional(),
+    primary_color: z.string()
+        .regex(/^#[0-9A-Fa-f]{6}$/, 'primary_color must be a valid hex color (e.g. #088395)')
+        .optional()
+        .default('#088395'),
+    primary_color_enabled: z.boolean().optional().default(true)
 });
 
 // Working hours update schema (for PATCH /:id/working-hours)
@@ -119,6 +134,8 @@ export const businessResponseSchema = z.object({
     business_status: businessStatusEnum,
     tenant_url: z.string().optional(),
     avatar_url: z.string().optional(),
+    primary_color: z.string().optional(),
+    primary_color_enabled: z.boolean().optional(),
     date_created: z.string()
 });
 
