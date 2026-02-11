@@ -1115,6 +1115,23 @@ router.delete('/:id/photos/:photoId', authenticate, async (req, res) => {
 
         await photoRef.delete();
 
+        // Re-order remaining photos so order values are sequential (0, 1, 2, ...)
+        const remainingPhotos = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('photos')
+            .orderBy('order', 'asc')
+            .get();
+
+        if (!remainingPhotos.empty) {
+            const batch = db.batch();
+            remainingPhotos.docs.forEach((doc, index) => {
+                if (doc.data().order !== index) {
+                    batch.update(doc.ref, { order: index });
+                }
+            });
+            await batch.commit();
+        }
+
         res.status(204).send();
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });

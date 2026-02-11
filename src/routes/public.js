@@ -186,8 +186,8 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
         const businessId = businessDoc.id;
         const businessData = businessDoc.data();
 
-        // Get active services and accepted employees in parallel
-        const [servicesSnapshot, employeesSnapshot] = await Promise.all([
+        // Get active services, accepted employees, and photos in parallel
+        const [servicesSnapshot, employeesSnapshot, photosSnapshot] = await Promise.all([
             db.collection('businesses')
                 .doc(businessId)
                 .collection('services')
@@ -197,6 +197,11 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
                 .doc(businessId)
                 .collection('employees')
                 .where('is_accepted', '==', true)
+                .get(),
+            db.collection('businesses')
+                .doc(businessId)
+                .collection('photos')
+                .orderBy('order', 'asc')
                 .get()
         ]);
 
@@ -359,8 +364,11 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
                 business_phone_number: businessData.business_phone_number,
                 tenant_url: businessData.tenant_url,
                 avatar_url: businessData.avatar_url || null,
-                cover_url: businessData.cover_url || null
             },
+            photos: photosSnapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            })),
             distance,
             services,
             employees
@@ -432,7 +440,6 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
                 lng: location.lng || 0
             },
             avatar_url: businessData.avatar_url || '',
-            cover_url: businessData.cover_url || '',
             business_type: businessData.business_type,
             working_hours: businessData.working_hours,
             business_phone_number: businessData.business_phone_number || '',
@@ -570,7 +577,6 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
                 distance: distanceValue,
                 distance_metric: distanceMetric,
                 avatar_url: business.avatar_url || '',
-                cover_url: business.cover_url || '',
                 business_type: business.business_type,
                 working_hours: business.working_hours
             });

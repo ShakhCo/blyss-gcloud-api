@@ -315,7 +315,6 @@ router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'
                 distance: distanceValue,
                 distance_metric: distanceMetric,
                 avatar_url: business.avatar_url || '',
-                cover_url: business.cover_url || '',
                 business_type: business.business_type,
                 working_hours: business.working_hours
             });
@@ -501,7 +500,6 @@ router.get('/business-details', async (req, res) => {
                 lng: location.lng || 0
             },
             avatar_url: businessData.avatar_url || '',
-            cover_url: businessData.cover_url || '',
             business_type: businessData.business_type,
             working_hours: businessData.working_hours,
             business_phone_number: businessData.business_phone_number || '',
