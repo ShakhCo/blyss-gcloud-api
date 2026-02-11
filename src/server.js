@@ -13,12 +13,18 @@ const PORT = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 app.use(cors({
-    origin: [
-        'https://botservice.blyss.uz',
-        'https://miniapp.blyss.uz',
-        'https://business-miniapp.blyss.uz',
-        "https://barbershop-miniapp-beta.automations.uz"
-    ],
+    origin: (origin, callback) => {
+        const allowed = [
+            'https://botservice.blyss.uz',
+            'https://miniapp.blyss.uz',
+            "https://barbershop-miniapp-beta.automations.uz"
+        ];
+        if (!origin || allowed.includes(origin) || /^https:\/\/[\w-]+-miniapp\.blyss\.uz$/.test(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Timestamp', 'X-Signature'],
     credentials: true
