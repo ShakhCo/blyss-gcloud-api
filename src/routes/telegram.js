@@ -109,6 +109,52 @@ router.get('/me', async (req, res) => {
 });
 
 /**
+ * GET /telegram/resolve-tenant?slug=my-salon
+ * Resolves a tenant slug to a business_id
+ * The slug is the subdomain part of tenant_url (e.g., "my-salon" from "my-salon.blyss.uz")
+ */
+router.get('/resolve-tenant', async (req, res) => {
+    try {
+        const { slug } = req.query;
+
+        if (!slug) {
+            return res.status(400).json({
+                error: 'slug is required',
+                error_code: 'MISSING_SLUG'
+            });
+        }
+
+        const zoneDomain = process.env.CLOUDFLARE_ZONE_DOMAIN || 'blyss.uz';
+        const tenantUrl = `${slug}.${zoneDomain}`;
+
+        const businessesSnapshot = await db.collection('businesses')
+            .where('tenant_url', '==', tenantUrl)
+            .limit(1)
+            .get();
+
+        if (businessesSnapshot.empty) {
+            return res.status(404).json({
+                error: 'Business not found for this tenant',
+                error_code: 'TENANT_NOT_FOUND'
+            });
+        }
+
+        const businessDoc = businessesSnapshot.docs[0];
+
+        res.json({
+            business_id: businessDoc.id,
+            business_name: businessDoc.data().business_name
+        });
+    } catch (error) {
+        console.error('Error in /telegram/resolve-tenant:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
  * Convert degrees to radians
  */
 function toRadians(degrees) {
