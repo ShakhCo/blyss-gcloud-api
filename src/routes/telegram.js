@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
@@ -8,8 +9,19 @@ import { userBookingsQuerySchema } from '../schemas/booking.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
+import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 
 const router = Router();
+
+// Rate limiter for booking creation (10 requests per 15 minutes per IP)
+const bookingCreateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many booking requests, please try again later', error_code: 'RATE_LIMITED' },
+    validate: { trustProxy: false }
+});
 
 const OPENROUTESERVICE_API_KEY = process.env.OPENROUTESERVICE_API_KEY;
 
@@ -1077,7 +1089,7 @@ function secondsToTime(seconds) {
  * POST /telegram/bookings
  * Create a new booking from Telegram mini app (v2 - simplified payload)
  */
-router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, res) => {
+router.post('/bookings', bookingCreateLimiter, validate(telegramCreateBookingSchemaV2), async (req, res) => {
     try {
         const { user_id, business_id, date, start_time, services, notes } = req.validated;
         const telegramUser = req.telegramUser;
@@ -1097,6 +1109,17 @@ router.post('/bookings', validate(telegramCreateBookingSchemaV2), async (req, re
             return res.status(400).json({
                 error: 'Phone number is required to make a booking',
                 error_code: 'PHONE_NUMBER_REQUIRED'
+            });
+        }
+
+        // 1.6 Check per-user active booking limit
+        const bookingLimit = await checkUserBookingLimit(user_id);
+        if (bookingLimit) {
+            return res.status(429).json({
+                error: `You have reached the maximum of ${bookingLimit.limit} active bookings`,
+                error_code: 'BOOKING_LIMIT_REACHED',
+                active_bookings: bookingLimit.count,
+                limit: bookingLimit.limit
             });
         }
 

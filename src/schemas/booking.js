@@ -26,8 +26,7 @@ export const createBookingSchema = z.object({
     business_id: z.string({ required_error: 'business_id is required' }).min(1),
     customer_name: z.string({ required_error: 'customer_name is required' }).min(1),
     customer_phone: z.string({ required_error: 'customer_phone is required' })
-        .min(9, 'customer_phone must be at least 9 digits')
-        .regex(/^\d+$/, 'customer_phone must contain only digits'),
+        .regex(/^998\d{9}$/, 'customer_phone must be a valid Uzbek number (998XXXXXXXXX, 12 digits)'),
     customer_telegram_id: z.number().nullable().optional(),
     booking_date: z.string({ required_error: 'booking_date is required' })
         .regex(/^\d{4}-\d{2}-\d{2}$/, 'booking_date must be in YYYY-MM-DD format'),
@@ -90,8 +89,7 @@ export const botCreateBookingSchema = z.object({
     services: z.array(botBookingServiceSchema).min(1, 'at least one service is required'),
     customer_name: z.string({ required_error: 'customer_name is required' }).min(1),
     customer_phone: z.string({ required_error: 'customer_phone is required' })
-        .min(9, 'customer_phone must be at least 9 digits')
-        .regex(/^\d+$/, 'customer_phone must contain only digits'),
+        .regex(/^998\d{9}$/, 'customer_phone must be a valid Uzbek number (998XXXXXXXXX, 12 digits)'),
     notes: z.string().optional().default('')
 });
 
