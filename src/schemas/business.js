@@ -3,6 +3,27 @@ import { z } from 'zod';
 // Business status enum
 export const businessStatusEnum = z.enum(['verified', 'unverified', 'active', 'inactive']);
 
+// Photo category enum
+export const photoCategoryEnum = z.enum(['interior', 'exterior']);
+
+// Schema for uploading a gallery photo
+export const uploadPhotoSchema = z.object({
+    category: photoCategoryEnum
+});
+
+// Schema for querying gallery photos (category is optional filter)
+export const getPhotosQuerySchema = z.object({
+    category: photoCategoryEnum.optional()
+});
+
+// Schema for reordering gallery photos
+export const reorderPhotosSchema = z.object({
+    photos: z.array(z.object({
+        id: z.string().min(1),
+        order: z.number().int().min(0)
+    })).min(1)
+});
+
 // Firestore timestamp schema (seconds from midnight)
 const firestoreTimestampSchema = z.object({
     _seconds: z.number(),

@@ -358,7 +358,8 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
                 working_hours: formatWorkingHours(businessData.working_hours),
                 business_phone_number: businessData.business_phone_number,
                 tenant_url: businessData.tenant_url,
-                avatar_url: businessData.avatar_url || null
+                avatar_url: businessData.avatar_url || null,
+                cover_url: businessData.cover_url || null
             },
             distance,
             services,
@@ -378,13 +379,18 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
     try {
         const { businessId } = req.params;
 
-        // Fetch business and services in parallel
-        const [businessDoc, servicesSnapshot] = await Promise.all([
+        // Fetch business, services, and photos in parallel
+        const [businessDoc, servicesSnapshot, photosSnapshot] = await Promise.all([
             db.collection('businesses').doc(businessId).get(),
             db.collection('businesses')
                 .doc(businessId)
                 .collection('services')
                 .where('is_active', '==', true)
+                .get(),
+            db.collection('businesses')
+                .doc(businessId)
+                .collection('photos')
+                .orderBy('order', 'asc')
                 .get()
         ]);
 
@@ -409,6 +415,11 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
             };
         });
 
+        const photos = photosSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
         res.json({
             business_id: businessId,
             business_name: businessData.business_name,
@@ -421,11 +432,13 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
                 lng: location.lng || 0
             },
             avatar_url: businessData.avatar_url || '',
+            cover_url: businessData.cover_url || '',
             business_type: businessData.business_type,
             working_hours: businessData.working_hours,
             business_phone_number: businessData.business_phone_number || '',
             tenant_url: businessData.tenant_url || '',
-            services
+            services,
+            photos
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -557,6 +570,7 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
                 distance: distanceValue,
                 distance_metric: distanceMetric,
                 avatar_url: business.avatar_url || '',
+                cover_url: business.cover_url || '',
                 business_type: business.business_type,
                 working_hours: business.working_hours
             });

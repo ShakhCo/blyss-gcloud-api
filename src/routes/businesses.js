@@ -4,7 +4,7 @@ import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { uploadSingle } from '../config/multer.js';
-import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema } from '../schemas/business.js';
+import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema } from '../schemas/business.js';
 import { serviceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema, updateEmployeeSlotCapacitySchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
@@ -499,6 +499,43 @@ router.delete('/:id', authenticate, async (req, res) => {
             }
         }
 
+        // Delete cover photo from storage if exists
+        if (currentData.cover_url) {
+            const filename = getFilenameFromUrl(currentData.cover_url);
+            if (filename) {
+                try {
+                    await deleteFile(filename);
+                } catch (err) {
+                    console.error('Failed to delete business cover:', err.message);
+                }
+            }
+        }
+
+        // Delete all gallery photos from GCS and subcollection
+        const photosSnapshot = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('photos')
+            .get();
+
+        if (!photosSnapshot.empty) {
+            const batch = db.batch();
+            for (const photoDoc of photosSnapshot.docs) {
+                const photoData = photoDoc.data();
+                if (photoData.url) {
+                    const filename = getFilenameFromUrl(photoData.url);
+                    if (filename) {
+                        try {
+                            await deleteFile(filename);
+                        } catch (err) {
+                            console.error('Failed to delete gallery photo:', err.message);
+                        }
+                    }
+                }
+                batch.delete(photoDoc.ref);
+            }
+            await batch.commit();
+        }
+
         await docRef.delete();
         res.status(204).send();
     } catch (error) {
@@ -839,6 +876,278 @@ router.delete('/:id/avatar', authenticate, async (req, res) => {
         });
 
         res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ==================== COVER PHOTO ROUTES ====================
+
+// Upload business cover photo
+router.post('/:id/cover', authenticate, uploadSingle.single('cover'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded', error_code: 'NO_FILE' });
+        }
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Delete old cover if exists
+        if (currentData.cover_url) {
+            const oldFilename = getFilenameFromUrl(currentData.cover_url);
+            if (oldFilename) {
+                try {
+                    await deleteFile(oldFilename);
+                } catch (err) {
+                    console.error('Failed to delete old cover:', err.message);
+                }
+            }
+        }
+
+        const extension = req.file.mimetype.split('/')[1] || 'jpg';
+        const filename = `covers/${req.params.id}/${Date.now()}.${extension}`;
+
+        const coverUrl = await uploadFile(req.file.buffer, filename, req.file.mimetype);
+
+        await docRef.update({
+            cover_url: coverUrl,
+            cover_updated_at: new Date()
+        });
+
+        res.json({
+            id: req.params.id,
+            cover_url: coverUrl,
+            cover_updated_at: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Delete business cover photo
+router.delete('/:id/cover', authenticate, async (req, res) => {
+    try {
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        if (currentData.cover_url) {
+            const filename = getFilenameFromUrl(currentData.cover_url);
+            if (filename) {
+                try {
+                    await deleteFile(filename);
+                } catch (err) {
+                    console.error('Failed to delete cover file:', err.message);
+                }
+            }
+        }
+
+        await docRef.update({
+            cover_url: null,
+            cover_updated_at: new Date()
+        });
+
+        res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ==================== GALLERY PHOTO ROUTES ====================
+
+// Upload gallery photo
+router.post('/:id/photos', authenticate, uploadSingle.single('photo'), validate(uploadPhotoSchema), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded', error_code: 'NO_FILE' });
+        }
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const { category } = req.validated;
+
+        // Get current max order for this category
+        const existingPhotos = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('photos')
+            .where('category', '==', category)
+            .orderBy('order', 'desc')
+            .limit(1)
+            .get();
+
+        const nextOrder = existingPhotos.empty ? 0 : (existingPhotos.docs[0].data().order + 1);
+
+        const extension = req.file.mimetype.split('/')[1] || 'jpg';
+        const filename = `photos/${req.params.id}/${category}/${Date.now()}.${extension}`;
+
+        const photoUrl = await uploadFile(req.file.buffer, filename, req.file.mimetype);
+
+        const photoData = {
+            url: photoUrl,
+            category,
+            order: nextOrder,
+            uploaded_at: new Date().toISOString()
+        };
+
+        const photoRef = await db.collection('businesses')
+            .doc(req.params.id)
+            .collection('photos')
+            .add(photoData);
+
+        res.status(201).json({
+            id: photoRef.id,
+            ...photoData
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// List gallery photos (optional category filter)
+router.get('/:id/photos', authenticate, validate(getPhotosQuerySchema, 'query'), async (req, res) => {
+    try {
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        const currentData = doc.data();
+
+        if (currentData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const { category } = req.validated;
+
+        let query = db.collection('businesses')
+            .doc(req.params.id)
+            .collection('photos');
+
+        if (category) {
+            query = query.where('category', '==', category);
+        }
+
+        query = query.orderBy('order', 'asc');
+
+        const snapshot = await query.get();
+
+        const photos = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        res.json(photos);
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Delete a gallery photo
+router.delete('/:id/photos/:photoId', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const photoRef = db.collection('businesses')
+            .doc(req.params.id)
+            .collection('photos')
+            .doc(req.params.photoId);
+
+        const photoDoc = await photoRef.get();
+
+        if (!photoDoc.exists) {
+            return res.status(404).json({ error: 'Photo not found', error_code: 'NOT_FOUND' });
+        }
+
+        const photoData = photoDoc.data();
+
+        // Delete from GCS
+        if (photoData.url) {
+            const filename = getFilenameFromUrl(photoData.url);
+            if (filename) {
+                try {
+                    await deleteFile(filename);
+                } catch (err) {
+                    console.error('Failed to delete photo file:', err.message);
+                }
+            }
+        }
+
+        await photoRef.delete();
+
+        res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Reorder gallery photos
+router.patch('/:id/photos/reorder', authenticate, validate(reorderPhotosSchema), async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const { photos } = req.validated;
+
+        const batch = db.batch();
+        for (const { id, order } of photos) {
+            const photoRef = db.collection('businesses')
+                .doc(req.params.id)
+                .collection('photos')
+                .doc(id);
+            batch.update(photoRef, { order });
+        }
+
+        await batch.commit();
+
+        res.json({ updated: photos.length });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
     }

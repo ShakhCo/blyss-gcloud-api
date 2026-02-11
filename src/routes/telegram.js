@@ -117,10 +117,10 @@ router.get('/resolve-tenant', async (req, res) => {
     try {
         const { slug } = req.query;
 
-        if (!slug) {
+        if (!slug || typeof slug !== 'string' || slug.length > 100 || !/^[a-z0-9-]+$/.test(slug)) {
             return res.status(400).json({
-                error: 'slug is required',
-                error_code: 'MISSING_SLUG'
+                error: 'Invalid or missing slug',
+                error_code: 'INVALID_SLUG'
             });
         }
 
@@ -315,6 +315,7 @@ router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'
                 distance: distanceValue,
                 distance_metric: distanceMetric,
                 avatar_url: business.avatar_url || '',
+                cover_url: business.cover_url || '',
                 business_type: business.business_type,
                 working_hours: business.working_hours
             });
@@ -361,7 +362,7 @@ router.get('/business-details', async (req, res) => {
             });
         }
 
-        const [businessDoc, servicesSnapshot, employeesSnapshot] = await Promise.all([
+        const [businessDoc, servicesSnapshot, employeesSnapshot, photosSnapshot] = await Promise.all([
             db.collection('businesses').doc(business_id).get(),
             db.collection('businesses')
                 .doc(business_id)
@@ -372,6 +373,11 @@ router.get('/business-details', async (req, res) => {
                 .doc(business_id)
                 .collection('employees')
                 .where('is_accepted', '==', true)
+                .get(),
+            db.collection('businesses')
+                .doc(business_id)
+                .collection('photos')
+                .orderBy('order', 'asc')
                 .get()
         ]);
 
@@ -478,6 +484,11 @@ router.get('/business-details', async (req, res) => {
             };
         });
 
+        const photos = photosSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
         res.json({
             business_id,
             business_name: businessData.business_name,
@@ -490,12 +501,14 @@ router.get('/business-details', async (req, res) => {
                 lng: location.lng || 0
             },
             avatar_url: businessData.avatar_url || '',
+            cover_url: businessData.cover_url || '',
             business_type: businessData.business_type,
             working_hours: businessData.working_hours,
             business_phone_number: businessData.business_phone_number || '',
             tenant_url: businessData.tenant_url || '',
             services,
-            employees
+            employees,
+            photos
         });
     } catch (error) {
         console.error('Error in /telegram/business-details:', error);
