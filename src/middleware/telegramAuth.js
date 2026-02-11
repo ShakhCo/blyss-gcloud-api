@@ -1,4 +1,5 @@
 import { validate, parse } from '@tma.js/init-data-node';
+import { db } from '../db/db.js';
 
 // Telegram Bot Token for validating init data
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -6,19 +7,54 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // Init data expiry time (1 hour in seconds)
 const INIT_DATA_EXPIRES_IN = 3600;
 
+// In-memory cache for business bot tokens (5-minute TTL)
+const CACHE_TTL_MS = 5 * 60 * 1000;
+let botTokenCache = { tokens: [], fetchedAt: 0 };
+
+function isSignatureError(error) {
+    const msg = error.message?.toLowerCase() || '';
+    return msg.includes('signature') || msg.includes('hash');
+}
+
+function isExpiryError(error) {
+    const msg = error.message?.toLowerCase() || '';
+    return msg.includes('expired');
+}
+
+async function getBusinessBotTokens() {
+    if (Date.now() - botTokenCache.fetchedAt < CACHE_TTL_MS) {
+        return botTokenCache.tokens;
+    }
+
+    try {
+        const snapshot = await db
+            .collection('businesses')
+            .where('telegram_bot.is_active', '==', true)
+            .get();
+
+        const tokens = [];
+        snapshot.forEach((doc) => {
+            const token = doc.data().telegram_bot?.token;
+            if (token) {
+                tokens.push({ token, business_id: doc.id });
+            }
+        });
+
+        botTokenCache = { tokens, fetchedAt: Date.now() };
+        return tokens;
+    } catch (err) {
+        console.error('Failed to fetch business bot tokens:', err.message);
+        return botTokenCache.tokens;
+    }
+}
+
 /**
  * Telegram Mini App authentication middleware
  * Validates init data from Authorization header in format: "tma <initDataRaw>"
+ * Tries the main bot token first, then business bot tokens.
  */
-export const telegramAuth = (req, res, next) => {
+export const telegramAuth = async (req, res, next) => {
     try {
-        if (!TELEGRAM_BOT_TOKEN) {
-            return res.status(500).json({
-                error: 'Telegram bot token not configured',
-                error_code: 'CONFIG_ERROR'
-            });
-        }
-
         const authHeader = req.headers.authorization || '';
         const [authType, authData = ''] = authHeader.split(' ');
 
@@ -29,10 +65,55 @@ export const telegramAuth = (req, res, next) => {
             });
         }
 
-        // Validate init data signature and expiry
-        validate(authData, TELEGRAM_BOT_TOKEN, {
-            expiresIn: INIT_DATA_EXPIRES_IN
-        });
+        // Fast path: try main bot token first (if configured)
+        let matched = false;
+        if (TELEGRAM_BOT_TOKEN) {
+            try {
+                validate(authData, TELEGRAM_BOT_TOKEN, {
+                    expiresIn: INIT_DATA_EXPIRES_IN
+                });
+                matched = true;
+            } catch (error) {
+                if (isExpiryError(error)) {
+                    return res.status(401).json({
+                        error: 'Init data has expired',
+                        error_code: 'INIT_DATA_EXPIRED'
+                    });
+                }
+                if (!isSignatureError(error)) {
+                    throw error;
+                }
+            }
+        }
+
+        // Slow path: try business bot tokens
+        if (!matched) {
+            const businessTokens = await getBusinessBotTokens();
+
+            for (const { token, business_id } of businessTokens) {
+                try {
+                    validate(authData, token, {
+                        expiresIn: INIT_DATA_EXPIRES_IN
+                    });
+                    matched = true;
+                    req.matchedBusinessId = business_id;
+                    break;
+                } catch (error) {
+                    if (isSignatureError(error)) {
+                        continue;
+                    }
+                    // Non-signature error — stop trying
+                    throw error;
+                }
+            }
+        }
+
+        if (!matched) {
+            return res.status(401).json({
+                error: 'Invalid init data signature',
+                error_code: 'INVALID_SIGNATURE'
+            });
+        }
 
         // Parse init data to extract user info
         const initData = parse(authData);
@@ -50,23 +131,7 @@ export const telegramAuth = (req, res, next) => {
 
         next();
     } catch (error) {
-        // Log the actual error for debugging
         console.error('Telegram auth error:', error.message);
-
-        // Handle specific validation errors
-        if (error.message?.includes('expired') || error.message?.includes('Expired')) {
-            return res.status(401).json({
-                error: 'Init data has expired',
-                error_code: 'INIT_DATA_EXPIRED'
-            });
-        }
-
-        if (error.message?.includes('signature') || error.message?.includes('hash')) {
-            return res.status(401).json({
-                error: 'Invalid init data signature',
-                error_code: 'INVALID_SIGNATURE'
-            });
-        }
 
         return res.status(401).json({
             error: 'Authentication failed',
