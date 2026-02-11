@@ -1352,7 +1352,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             duration_minutes,
             ...(description && { description }),
             color,
-            is_active: false,
+            is_active: true,
             allow_employee_customization,
             date_created: dateCreated
         };
