@@ -17,6 +17,7 @@ import {
     sendBookingCancellationNotification,
     sendBookingStatusUpdateNotification
 } from '../utils/telegram.js';
+import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 
 const router = Router();
 
@@ -489,6 +490,17 @@ router.post(
                 notes,
                 items
             } = req.validated;
+
+            // Check per-user active booking limit
+            const bookingLimit = await checkUserBookingLimit(req.user.id);
+            if (bookingLimit) {
+                return res.status(429).json({
+                    error: `You have reached the maximum of ${bookingLimit.limit} active bookings`,
+                    error_code: 'BOOKING_LIMIT_REACHED',
+                    active_bookings: bookingLimit.count,
+                    limit: bookingLimit.limit
+                });
+            }
 
             // Verify business exists
             const businessDoc = await db.collection('businesses').doc(businessId).get();

@@ -6,6 +6,7 @@ import { botCreateBookingSchema } from '../schemas/booking.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
+import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 
 const router = Router();
 
@@ -331,6 +332,17 @@ router.post('/businesses/:businessId/bookings', bookingCreateLimiter, validate(b
                 is_verified: false,
                 created_at: now,
                 updated_at: now
+            });
+        }
+
+        // 2.5 Check per-user active booking limit
+        const bookingLimit = await checkUserBookingLimit(userId);
+        if (bookingLimit) {
+            return res.status(429).json({
+                error: `You have reached the maximum of ${bookingLimit.limit} active bookings`,
+                error_code: 'BOOKING_LIMIT_REACHED',
+                active_bookings: bookingLimit.count,
+                limit: bookingLimit.limit
             });
         }
 

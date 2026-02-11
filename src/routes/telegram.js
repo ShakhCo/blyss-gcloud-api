@@ -9,6 +9,7 @@ import { userBookingsQuerySchema } from '../schemas/booking.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
+import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 
 const router = Router();
 
@@ -1108,6 +1109,17 @@ router.post('/bookings', bookingCreateLimiter, validate(telegramCreateBookingSch
             return res.status(400).json({
                 error: 'Phone number is required to make a booking',
                 error_code: 'PHONE_NUMBER_REQUIRED'
+            });
+        }
+
+        // 1.6 Check per-user active booking limit
+        const bookingLimit = await checkUserBookingLimit(user_id);
+        if (bookingLimit) {
+            return res.status(429).json({
+                error: `You have reached the maximum of ${bookingLimit.limit} active bookings`,
+                error_code: 'BOOKING_LIMIT_REACHED',
+                active_bookings: bookingLimit.count,
+                limit: bookingLimit.limit
             });
         }
 
