@@ -219,8 +219,8 @@ router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'
         // Sort by distance
         businessesInRadius.sort((a, b) => a.distance - b.distance);
 
-        // Fetch services and employees for all businesses in parallel
-        const [servicesSnapshots, employeesSnapshots] = await Promise.all([
+        // Fetch services, employees, and photos for all businesses in parallel
+        const [servicesSnapshots, employeesSnapshots, photosSnapshots] = await Promise.all([
             Promise.all(
                 businessesInRadius.map(business =>
                     db.collection('businesses')
@@ -236,6 +236,15 @@ router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'
                         .doc(business.id)
                         .collection('employees')
                         .where('is_accepted', '==', true)
+                        .get()
+                )
+            ),
+            Promise.all(
+                businessesInRadius.map(business =>
+                    db.collection('businesses')
+                        .doc(business.id)
+                        .collection('photos')
+                        .limit(1)
                         .get()
                 )
             )
@@ -272,8 +281,9 @@ router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'
             const business = businessesInRadius[i];
             const servicesSnapshot = servicesSnapshots[i];
             const serviceEmployeeCount = employeeServiceCounts[i];
+            const photosSnapshot = photosSnapshots[i];
 
-            if (servicesSnapshot.empty) {
+            if (servicesSnapshot.empty || photosSnapshot.empty) {
                 continue;
             }
 
