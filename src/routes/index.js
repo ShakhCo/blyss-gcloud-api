@@ -15,6 +15,7 @@ import conversationsRouter from './conversations.js';
 import bookingsRouter from './bookings.js';
 import telegramRouter from './telegram.js';
 import botRouter from './bot.js';
+import cronRouter from './cron.js';
 
 const router = Router();
 
@@ -26,6 +27,9 @@ router.use('/telegram', telegramRouter);
 
 // Bot routes (HMAC signature auth for Telegram bot server)
 router.use('/bot', verifySignature, botRouter);
+
+// Cron routes (Bearer token auth for Cloud Scheduler)
+router.use('/cron', cronRouter);
 
 // Booking routes (mixed public and authenticated endpoints - handled internally)
 router.use('/', bookingsRouter);
