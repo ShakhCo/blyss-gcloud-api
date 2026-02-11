@@ -23,6 +23,7 @@ function isExpiryError(error) {
 
 async function getBusinessBotTokens() {
     if (Date.now() - botTokenCache.fetchedAt < CACHE_TTL_MS) {
+        console.log('[getBusinessBotTokens] Returning cached tokens, count:', botTokenCache.tokens.length);
         return botTokenCache.tokens;
     }
 
@@ -32,6 +33,8 @@ async function getBusinessBotTokens() {
             .where('telegram_bot.is_active', '==', true)
             .get();
 
+        console.log('[getBusinessBotTokens] Fetched from Firestore, businesses found:', snapshot.size);
+
         const tokens = [];
         snapshot.forEach((doc) => {
             const token = doc.data().telegram_bot?.token;
@@ -40,10 +43,12 @@ async function getBusinessBotTokens() {
             }
         });
 
+        console.log('[getBusinessBotTokens] Businesses with valid tokens:', tokens.length);
+
         botTokenCache = { tokens, fetchedAt: Date.now() };
         return tokens;
     } catch (err) {
-        console.error('Failed to fetch business bot tokens:', err.message);
+        console.error('[getBusinessBotTokens] Failed to fetch:', err.message);
         return botTokenCache.tokens;
     }
 }
@@ -80,7 +85,7 @@ export const telegramAuth = async (req, res, next) => {
                 matched = true;
                 console.log('[telegramAuth] Main bot token matched');
             } catch (error) {
-                console.log('[telegramAuth] Main bot token failed:', error.message);
+                console.log('[telegramAuth] Main bot token failed:', error.message, '| name:', error.name, '| stack:', error.stack);
                 if (isExpiryError(error)) {
                     console.log('[telegramAuth] REJECTED: Init data expired');
                     return res.status(401).json({
@@ -88,9 +93,7 @@ export const telegramAuth = async (req, res, next) => {
                         error_code: 'INIT_DATA_EXPIRED'
                     });
                 }
-                if (!isSignatureError(error)) {
-                    throw error;
-                }
+                // Treat validation errors (including empty message) as signature mismatch — fall through to business tokens
             }
         } else {
             console.log('[telegramAuth] No main bot token configured');
@@ -112,11 +115,8 @@ export const telegramAuth = async (req, res, next) => {
                     break;
                 } catch (error) {
                     console.log('[telegramAuth] Business token failed for', business_id, ':', error.message);
-                    if (isSignatureError(error)) {
-                        continue;
-                    }
-                    // Non-signature error — stop trying
-                    throw error;
+                    // Continue trying other tokens for any validation error
+                    continue;
                 }
             }
         }
