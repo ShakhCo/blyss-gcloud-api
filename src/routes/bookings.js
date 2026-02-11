@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
@@ -18,6 +19,16 @@ import {
 } from '../utils/telegram.js';
 
 const router = Router();
+
+// Rate limiter for booking creation (10 requests per 15 minutes per IP)
+const bookingCreateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many booking requests, please try again later', error_code: 'RATE_LIMITED' },
+    validate: { trustProxy: false }
+});
 
 // Day name mapping for working hours lookup
 const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -463,6 +474,7 @@ router.get(
  */
 router.post(
     '/public/businesses/:businessId/bookings',
+    bookingCreateLimiter,
     verifySignature,
     authenticate,
     validate(createBookingSchema),
@@ -539,6 +551,53 @@ router.post(
                     return res.status(409).json({
                         error: `Slot ${item.start_time} is no longer available for this employee`,
                         error_code: 'SLOT_NOT_AVAILABLE'
+                    });
+                }
+            }
+
+            // Check for user time conflicts across all businesses
+            const firstItemTime = items[0].start_time.split('T')[1];
+            const [firstH, firstM] = firstItemTime.split(':').map(Number);
+            const newBookingStart = firstH * 3600 + firstM * 60;
+
+            // Calculate end from last item
+            const lastItem = items[items.length - 1];
+            const lastItemTime = lastItem.start_time.split('T')[1];
+            const [lastH, lastM] = lastItemTime.split(':').map(Number);
+            const newBookingEnd = lastH * 3600 + lastM * 60 + lastItem.duration_minutes * 60;
+
+            const userBookingsSnapshot = await db.collection('bookings')
+                .where('user_id', '==', req.user.id)
+                .where('booking_date', '==', booking_date)
+                .where('status', 'in', ['pending', 'confirmed'])
+                .get();
+
+            for (const existingBookingDoc of userBookingsSnapshot.docs) {
+                const existingBooking = existingBookingDoc.data();
+                const existingItems = existingBooking.items || [];
+                if (existingItems.length === 0) continue;
+
+                const existFirstItem = existingItems[0];
+                const existLastItem = existingItems[existingItems.length - 1];
+
+                const existStartTime = existFirstItem.start_time.split('T')[1];
+                const [esH, esM] = existStartTime.split(':').map(Number);
+                const existStart = esH * 3600 + esM * 60;
+
+                const existEndTime = existLastItem.end_time.split('T')[1];
+                const [eeH, eeM] = existEndTime.split(':').map(Number);
+                const existEnd = eeH * 3600 + eeM * 60;
+
+                if (!(newBookingEnd <= existStart || newBookingStart >= existEnd)) {
+                    return res.status(409).json({
+                        error: 'You already have a booking during this time',
+                        error_code: 'USER_TIME_CONFLICT',
+                        conflicting_booking: {
+                            id: existingBookingDoc.id,
+                            business_name: existingBooking.business_name,
+                            start_time: existFirstItem.start_time,
+                            end_time: existLastItem.end_time
+                        }
                     });
                 }
             }
