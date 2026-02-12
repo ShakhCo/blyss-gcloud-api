@@ -30,6 +30,27 @@ export const serviceSchema = z.object({
     overwrite_employees_duration: z.boolean().optional().default(false)
 });
 
+// Update service schema — no defaults, so omitted fields don't overwrite existing data
+export const updateServiceSchema = z.object({
+    name: multilingualSchema,
+    price: z.number({ required_error: 'price is required' })
+        .positive('price must be positive')
+        .refine(
+            (val) => Number(val.toFixed(2)) === val,
+            { message: 'price can have at most 2 decimal places' }
+        ),
+    duration_minutes: z.number({ required_error: 'duration_minutes is required' })
+        .int('duration_minutes must be an integer')
+        .positive('duration_minutes must be positive'),
+    description: multilingualSchema.optional(),
+    color: z.string()
+        .regex(/^#[0-9A-Fa-f]{6}$/, 'color must be a valid hex color (e.g. #088395)')
+        .optional(),
+    allow_employee_customization: z.boolean().optional(),
+    overwrite_employees_price: z.boolean().optional().default(false),
+    overwrite_employees_duration: z.boolean().optional().default(false)
+});
+
 // Response schema
 export const serviceResponseSchema = z.object({
     id: z.string(),

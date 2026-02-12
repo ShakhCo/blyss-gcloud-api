@@ -5,7 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { uploadSingle } from '../config/multer.js';
 import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema } from '../schemas/business.js';
-import { serviceSchema } from '../schemas/service.js';
+import { serviceSchema, updateServiceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema, updateEmployeeSlotCapacitySchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
 import { sendBusinessInvitationSms } from '../utils/eskiz.js';
@@ -1382,7 +1382,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
 });
 
 // Update a service
-router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), async (req, res) => {
+router.put('/:id/services/:serviceId', authenticate, validate(updateServiceSchema), async (req, res) => {
     try {
         const businessDoc = await db.collection('businesses').doc(req.params.id).get();
         if (!businessDoc.exists) {
@@ -1411,8 +1411,8 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             name,
             price,
             duration_minutes,
-            color,
-            allow_employee_customization,
+            ...(color !== undefined && { color }),
+            ...(allow_employee_customization !== undefined && { allow_employee_customization }),
             ...(description && { description })
         };
 
@@ -1456,6 +1456,7 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
         res.json({
             id: req.params.serviceId,
             business_id: req.params.id,
+            ...currentData,
             ...updateData,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created,
             is_active: currentData.is_active ?? false
