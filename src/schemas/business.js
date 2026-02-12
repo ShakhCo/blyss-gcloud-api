@@ -207,6 +207,54 @@ export const telegramCreateBookingSchemaV2 = z.object({
     notes: z.string().optional().default('')
 });
 
+// Public OTP schemas (no user_id, phone-based auth)
+export const publicSendOtpSchema = z.object({
+    phone_number: z.string({ required_error: 'phone_number is required' })
+        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX')
+});
+
+export const publicVerifyOtpSchema = z.object({
+    phone_number: z.string({ required_error: 'phone_number is required' })
+        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
+    otp_code: z.coerce.number({ required_error: 'otp_code is required' })
+        .int('otp_code must be an integer')
+        .min(10000, 'otp_code must be 5 digits')
+        .max(99999, 'otp_code must be 5 digits')
+});
+
+// Public available slots query schema (business_id from URL param)
+export const publicAvailableSlotsQuerySchema = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+    service_ids: z.string().min(1, 'service_ids is required')
+        .transform(val => val.split(',').map(s => s.trim()).filter(Boolean))
+        .refine(arr => arr.length > 0, 'at least one service_id is required'),
+    employee_id: z.string().optional()
+});
+
+// Public slot employees query schema (business_id from URL param)
+export const publicSlotEmployeesQuerySchema = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+    service_ids: z.string().min(1, 'service_ids is required')
+        .transform(val => val.split(',').map(s => s.trim()).filter(Boolean))
+        .refine(arr => arr.length > 0, 'at least one service_id is required'),
+    start_time: z.coerce.number().int().min(0).max(86399, 'start_time must be seconds from midnight (0-86399)'),
+    employee_id: z.string().optional()
+});
+
+// Public booking service item schema
+const publicBookingServiceSchema = z.object({
+    service_id: z.string().min(1, 'service_id is required'),
+    employee_id: z.string().nullable().optional()
+});
+
+// Public booking creation schema (user_id from JWT, business_id from URL param)
+export const publicCreateBookingSchema = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+    start_time: z.coerce.number().int().min(0).max(86399, 'start_time must be seconds from midnight (0-86399)'),
+    services: z.array(publicBookingServiceSchema).min(1, 'at least one service is required'),
+    notes: z.string().optional().default('')
+});
+
 // Query schema for distance calculation with flat parameters
 export const distanceQuerySchema = z.object({
     user_lat: z.coerce.number({
