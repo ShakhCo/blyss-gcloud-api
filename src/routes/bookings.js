@@ -638,7 +638,7 @@ router.post(
                 end_time: calculateEndTime(item.start_time, item.duration_minutes),
                 price: item.price,
                 duration_minutes: item.duration_minutes,
-                status: 'pending',
+                status: 'confirmed',
                 order_index: index
             }));
 
@@ -651,7 +651,7 @@ router.post(
                 customer_phone,
                 customer_telegram_id: customer_telegram_id || null,
                 booking_date,
-                status: 'pending',
+                status: 'confirmed',
                 total_price: totalPrice,
                 total_duration_minutes: totalDuration,
                 notes: notes || '',
