@@ -225,6 +225,8 @@ router.get('/:id', authenticate, async (req, res) => {
             tenant_url: data.tenant_url || null,
             avatar_url: data.avatar_url || null,
             avatar_updated_at: data.avatar_updated_at?.toDate?.().toISOString() || data.avatar_updated_at || null,
+            cover_url: data.cover_url || null,
+            cover_updated_at: data.cover_updated_at?.toDate?.().toISOString() || data.cover_updated_at || null,
             employee_invite_token: data.employee_invite_token || null,
             primary_color: data.primary_color || null,
             primary_color_enabled: data.primary_color_enabled ?? null,
