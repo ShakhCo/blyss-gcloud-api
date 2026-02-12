@@ -1,12 +1,24 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
 import { botCreateBookingSchema } from '../schemas/booking.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
+import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 
 const router = Router();
+
+// Rate limiter for booking creation (10 requests per 15 minutes per IP)
+const bookingCreateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many booking requests, please try again later', error_code: 'RATE_LIMITED' },
+    validate: { trustProxy: false }
+});
 
 /**
  * GET /bot/users/:telegramId
@@ -278,7 +290,7 @@ function secondsToTime(seconds) {
  * Create a new booking from Telegram bot (HMAC signature auth, no JWT needed)
  * The bot server is a trusted caller with the shared HMAC secret.
  */
-router.post('/businesses/:businessId/bookings', validate(botCreateBookingSchema), async (req, res) => {
+router.post('/businesses/:businessId/bookings', bookingCreateLimiter, validate(botCreateBookingSchema), async (req, res) => {
     try {
         const { businessId } = req.params;
         const { telegram_id, date, start_time, services, customer_name, customer_phone, notes } = req.validated;
@@ -320,6 +332,17 @@ router.post('/businesses/:businessId/bookings', validate(botCreateBookingSchema)
                 is_verified: false,
                 created_at: now,
                 updated_at: now
+            });
+        }
+
+        // 2.5 Check per-user active booking limit
+        const bookingLimit = await checkUserBookingLimit(userId);
+        if (bookingLimit) {
+            return res.status(429).json({
+                error: `You have reached the maximum of ${bookingLimit.limit} active bookings`,
+                error_code: 'BOOKING_LIMIT_REACHED',
+                active_bookings: bookingLimit.count,
+                limit: bookingLimit.limit
             });
         }
 
@@ -565,7 +588,45 @@ router.post('/businesses/:businessId/bookings', validate(botCreateBookingSchema)
             currentTime = slotEnd;
         }
 
-        // 6. Generate unique booking ID
+        // 6. Check for user booking conflicts across all businesses
+        const bookingEndTime = currentTime;
+        const userBookingsSnapshot = await db.collection('bookings')
+            .where('user_id', '==', userId)
+            .where('booking_date', '==', date)
+            .where('status', 'in', ['pending', 'confirmed'])
+            .get();
+
+        for (const existingBookingDoc of userBookingsSnapshot.docs) {
+            const existingBooking = existingBookingDoc.data();
+            const existingItems = existingBooking.items || [];
+            if (existingItems.length === 0) continue;
+
+            const existFirstItem = existingItems[0];
+            const existLastItem = existingItems[existingItems.length - 1];
+
+            const existStartTime = existFirstItem.start_time.split('T')[1];
+            const [esH, esM] = existStartTime.split(':').map(Number);
+            const existStart = esH * 3600 + esM * 60;
+
+            const existEndTime = existLastItem.end_time.split('T')[1];
+            const [eeH, eeM] = existEndTime.split(':').map(Number);
+            const existEnd = eeH * 3600 + eeM * 60;
+
+            if (!(bookingEndTime <= existStart || start_time >= existEnd)) {
+                return res.status(409).json({
+                    error: 'You already have a booking during this time',
+                    error_code: 'USER_TIME_CONFLICT',
+                    conflicting_booking: {
+                        id: existingBookingDoc.id,
+                        business_name: existingBooking.business_name,
+                        start_time: existFirstItem.start_time,
+                        end_time: existLastItem.end_time
+                    }
+                });
+            }
+        }
+
+        // 7. Generate unique booking ID
         let bookingId;
         let exists = true;
         while (exists) {
@@ -574,7 +635,7 @@ router.post('/businesses/:businessId/bookings', validate(botCreateBookingSchema)
             exists = existingDoc.exists;
         }
 
-        // 7. Create booking
+        // 9. Create booking
         const now = new Date();
         const bookingPayload = {
             business_id: businessId,
@@ -595,7 +656,7 @@ router.post('/businesses/:businessId/bookings', validate(botCreateBookingSchema)
 
         await db.collection('bookings').doc(bookingId).set(bookingPayload);
 
-        // 8. Send Telegram notification to business
+        // 10. Send Telegram notification to business
         if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
             try {
                 const firstItem = bookingItems[0];

@@ -21,6 +21,10 @@ export const serviceSchema = z.object({
         .int('duration_minutes must be an integer')
         .positive('duration_minutes must be positive'),
     description: multilingualSchema.optional(),
+    color: z.string()
+        .regex(/^#[0-9A-Fa-f]{6}$/, 'color must be a valid hex color (e.g. #088395)')
+        .optional()
+        .default('#088395'),
     allow_employee_customization: z.boolean().optional().default(true),
     overwrite_employees_price: z.boolean().optional().default(false),
     overwrite_employees_duration: z.boolean().optional().default(false)
@@ -33,6 +37,7 @@ export const serviceResponseSchema = z.object({
     price: z.number(),
     duration_minutes: z.number(),
     is_active: z.boolean(),
+    color: z.string(),
     allow_employee_customization: z.boolean(),
     business_id: z.string(),
     date_created: z.string()

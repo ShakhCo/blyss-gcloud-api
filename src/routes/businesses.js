@@ -225,6 +225,8 @@ router.get('/:id', authenticate, async (req, res) => {
             avatar_url: data.avatar_url || null,
             avatar_updated_at: data.avatar_updated_at?.toDate?.().toISOString() || data.avatar_updated_at || null,
             employee_invite_token: data.employee_invite_token || null,
+            primary_color: data.primary_color || null,
+            primary_color_enabled: data.primary_color_enabled ?? null,
             telegram_bot: data.telegram_bot || null,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
             services_count: {
@@ -267,6 +269,8 @@ router.get('/owner/:ownerId', async (req, res) => {
                 business_owner_id: data.business_owner_id,
                 business_status: data.business_status,
                 tenant_url: data.tenant_url || null,
+                primary_color: data.primary_color || null,
+                primary_color_enabled: data.primary_color_enabled ?? null,
                 date_created: data.date_created?.toDate?.().toISOString() || data.date_created
             };
         });
@@ -293,7 +297,9 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             location,
             working_hours,
             business_phone_number,
-            place_id
+            place_id,
+            primary_color,
+            primary_color_enabled
         } = req.validated;
 
         const business_owner_id = req.user.id;
@@ -331,6 +337,8 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             tenant_url: tenantUrl,
             employee_invite_token: employeeInviteToken,
             place_id,
+            primary_color,
+            primary_color_enabled,
             date_created: dateCreated
         };
 
@@ -356,14 +364,6 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
         }
 
-        const {
-            business_name,
-            business_type,
-            location,
-            working_hours,
-            business_phone_number
-        } = req.validated;
-
         const currentData = doc.data();
 
         // Verify ownership
@@ -371,13 +371,16 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const updateData = {
-            business_name,
-            business_type,
-            location,
-            working_hours,
-            business_phone_number
-        };
+        // Only include fields that were provided in the request
+        const updateData = {};
+        const allowedFields = ['business_name', 'business_type', 'location', 'working_hours', 'business_phone_number', 'primary_color', 'primary_color_enabled'];
+        for (const field of allowedFields) {
+            if (req.validated[field] !== undefined) {
+                updateData[field] = req.validated[field];
+            }
+        }
+
+        const { working_hours } = req.validated;
 
         // Clip employee working hours to business hours range if working_hours are being updated
         let employeeUpdatePromises = [];
@@ -453,16 +456,19 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
 
         await Promise.all([...employeeUpdatePromises, docRef.update(updateData)]);
 
+        const merged = { ...currentData, ...updateData };
         res.json({
             id: req.params.id,
-            business_name: updateData.business_name,
-            business_type: updateData.business_type,
-            location: updateData.location,
-            working_hours: updateData.working_hours,
-            business_phone_number: updateData.business_phone_number,
-            business_owner_id: currentData.business_owner_id,
-            business_status: currentData.business_status,
-            tenant_url: currentData.tenant_url,
+            business_name: merged.business_name,
+            business_type: merged.business_type,
+            location: merged.location,
+            working_hours: merged.working_hours,
+            business_phone_number: merged.business_phone_number,
+            business_owner_id: merged.business_owner_id,
+            business_status: merged.business_status,
+            tenant_url: merged.tenant_url || null,
+            primary_color: merged.primary_color || null,
+            primary_color_enabled: merged.primary_color_enabled ?? null,
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
@@ -1329,7 +1335,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        const { name, price, duration_minutes, description, allow_employee_customization } = req.validated;
+        const { name, price, duration_minutes, description, color, allow_employee_customization } = req.validated;
 
         // Generate unique 16 character ID
         let serviceId;
@@ -1351,7 +1357,8 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             price,
             duration_minutes,
             ...(description && { description }),
-            is_active: false,
+            color,
+            is_active: true,
             allow_employee_customization,
             date_created: dateCreated
         };
@@ -1397,13 +1404,14 @@ router.put('/:id/services/:serviceId', authenticate, validate(serviceSchema), as
             return res.status(404).json({ error: 'Service not found', error_code: 'NOT_FOUND' });
         }
 
-        const { name, price, duration_minutes, description, allow_employee_customization, overwrite_employees_price, overwrite_employees_duration } = req.validated;
+        const { name, price, duration_minutes, description, color, allow_employee_customization, overwrite_employees_price, overwrite_employees_duration } = req.validated;
         const currentData = serviceDoc.data();
 
         const updateData = {
             name,
             price,
             duration_minutes,
+            color,
             allow_employee_customization,
             ...(description && { description })
         };
