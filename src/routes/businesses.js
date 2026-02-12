@@ -182,10 +182,11 @@ router.get('/:id', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // Fetch services and employees counts in parallel
-        const [servicesSnapshot, employeesSnapshot] = await Promise.all([
+        // Fetch services, employees, and photos counts in parallel
+        const [servicesSnapshot, employeesSnapshot, photosSnapshot] = await Promise.all([
             db.collection('businesses').doc(req.params.id).collection('services').get(),
-            db.collection('businesses').doc(req.params.id).collection('employees').get()
+            db.collection('businesses').doc(req.params.id).collection('employees').get(),
+            db.collection('businesses').doc(req.params.id).collection('photos').get()
         ]);
 
         // Calculate services count
@@ -237,6 +238,11 @@ router.get('/:id', authenticate, async (req, res) => {
                 confirmed: confirmedEmployees,
                 all: allEmployees,
                 with_services: employeesWithServices
+            },
+            photos_count: {
+                interior: photosSnapshot.docs.filter(doc => doc.data().category === 'interior').length,
+                exterior: photosSnapshot.docs.filter(doc => doc.data().category === 'exterior').length,
+                all: photosSnapshot.docs.length
             }
         });
     } catch (error) {
