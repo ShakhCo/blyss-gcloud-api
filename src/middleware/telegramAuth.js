@@ -23,7 +23,6 @@ function isExpiryError(error) {
 
 async function getBusinessBotTokens() {
     if (Date.now() - botTokenCache.fetchedAt < CACHE_TTL_MS) {
-        console.log('[getBusinessBotTokens] Returning cached tokens, count:', botTokenCache.tokens.length);
         return botTokenCache.tokens;
     }
 
@@ -33,8 +32,6 @@ async function getBusinessBotTokens() {
             .where('telegram_bot.is_active', '==', true)
             .get();
 
-        console.log('[getBusinessBotTokens] Fetched from Firestore, businesses found:', snapshot.size);
-
         const tokens = [];
         snapshot.forEach((doc) => {
             const token = doc.data().telegram_bot?.token;
@@ -42,8 +39,6 @@ async function getBusinessBotTokens() {
                 tokens.push({ token, business_id: doc.id });
             }
         });
-
-        console.log('[getBusinessBotTokens] Businesses with valid tokens:', tokens.length);
 
         botTokenCache = { tokens, fetchedAt: Date.now() };
         return tokens;
@@ -63,11 +58,7 @@ export const telegramAuth = async (req, res, next) => {
         const authHeader = req.headers.authorization || '';
         const [authType, authData = ''] = authHeader.split(' ');
 
-        console.log('[telegramAuth] Incoming request:', req.method, req.originalUrl);
-        console.log('[telegramAuth] Auth type:', authType, '| Auth data present:', !!authData);
-
         if (authType !== 'tma' || !authData) {
-            console.log('[telegramAuth] REJECTED: Invalid auth format');
             return res.status(401).json({
                 error: 'Invalid authorization format. Expected: tma <initDataRaw>',
                 error_code: 'INVALID_AUTH_FORMAT'
@@ -77,17 +68,13 @@ export const telegramAuth = async (req, res, next) => {
         // Fast path: try main bot token first (if configured)
         let matched = false;
         if (TELEGRAM_BOT_TOKEN) {
-            console.log('[telegramAuth] Trying main bot token...');
             try {
                 validate(authData, TELEGRAM_BOT_TOKEN, {
                     expiresIn: INIT_DATA_EXPIRES_IN
                 });
                 matched = true;
-                console.log('[telegramAuth] Main bot token matched');
             } catch (error) {
-                console.log('[telegramAuth] Main bot token failed:', error.message, '| name:', error.name, '| stack:', error.stack);
                 if (isExpiryError(error)) {
-                    console.log('[telegramAuth] REJECTED: Init data expired');
                     return res.status(401).json({
                         error: 'Init data has expired',
                         error_code: 'INIT_DATA_EXPIRED'
@@ -95,14 +82,11 @@ export const telegramAuth = async (req, res, next) => {
                 }
                 // Treat validation errors (including empty message) as signature mismatch — fall through to business tokens
             }
-        } else {
-            console.log('[telegramAuth] No main bot token configured');
         }
 
         // Slow path: try business bot tokens
         if (!matched) {
             const businessTokens = await getBusinessBotTokens();
-            console.log('[telegramAuth] Trying business bot tokens, count:', businessTokens.length);
 
             for (const { token, business_id } of businessTokens) {
                 try {
@@ -111,10 +95,8 @@ export const telegramAuth = async (req, res, next) => {
                     });
                     matched = true;
                     req.matchedBusinessId = business_id;
-                    console.log('[telegramAuth] Business bot token matched, business_id:', business_id);
                     break;
                 } catch (error) {
-                    console.log('[telegramAuth] Business token failed for', business_id, ':', error.message);
                     // Continue trying other tokens for any validation error
                     continue;
                 }
@@ -122,7 +104,6 @@ export const telegramAuth = async (req, res, next) => {
         }
 
         if (!matched) {
-            console.log('[telegramAuth] REJECTED: No token matched');
             return res.status(401).json({
                 error: 'Invalid init data signature',
                 error_code: 'INVALID_SIGNATURE'
@@ -131,10 +112,8 @@ export const telegramAuth = async (req, res, next) => {
 
         // Parse init data to extract user info
         const initData = parse(authData);
-        console.log('[telegramAuth] Parsed init data, user:', initData.user?.id, initData.user?.firstName);
 
         if (!initData.user) {
-            console.log('[telegramAuth] REJECTED: No user data in init data');
             return res.status(401).json({
                 error: 'User data not found in init data',
                 error_code: 'NO_USER_DATA'
@@ -145,15 +124,13 @@ export const telegramAuth = async (req, res, next) => {
         req.telegramUser = initData.user;
         req.telegramInitData = initData;
 
-        console.log('[telegramAuth] SUCCESS: User authenticated, id:', initData.user.id);
         next();
     } catch (error) {
-        console.error('[telegramAuth] ERROR:', error.message);
+        console.error('[telegramAuth] ERROR:', error);
 
         return res.status(401).json({
             error: 'Authentication failed',
-            error_code: 'AUTH_FAILED',
-            details: error.message
+            error_code: 'AUTH_FAILED'
         });
     }
 };

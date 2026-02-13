@@ -4,6 +4,9 @@ import { db } from '../db/db.js';
 
 // API secret for HMAC verification
 const API_SECRET = process.env.API_SECRET;
+if (!API_SECRET) {
+    throw new Error('FATAL: API_SECRET environment variable is required. Server cannot start without it.');
+}
 
 // Max allowed timestamp difference (30 seconds)
 const MAX_TIMESTAMP_DIFF = 120;
@@ -38,11 +41,6 @@ const verifyRequestSignature = (req) => {
         error: 'Invalid signature',
         error_code: 'INVALID_SIGNATURE'
     };
-
-    // Skip signature verification if API_SECRET is not configured
-    if (!API_SECRET) {
-        return { valid: true };
-    }
 
     const timestamp = req.headers['x-timestamp'];
     const signature = req.headers['x-signature'];
@@ -165,7 +163,8 @@ export const authenticate = async (req, res, next) => {
 
         next();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 };
 

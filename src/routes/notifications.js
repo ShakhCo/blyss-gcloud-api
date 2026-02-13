@@ -28,7 +28,7 @@ router.get('/', authenticate, async (req, res) => {
 
         res.json(notifications);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -43,7 +43,7 @@ router.get('/unread-count', authenticate, async (req, res) => {
 
         res.json({ count: snapshot.data().count });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -69,7 +69,7 @@ router.post('/mark-all-viewed', authenticate, async (req, res) => {
 
         res.json({ message: 'All notifications marked as viewed' });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -101,7 +101,7 @@ router.post('/:id/view', authenticate, async (req, res) => {
             viewed_at: now.toISOString()
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -124,7 +124,7 @@ router.delete('/:id', authenticate, async (req, res) => {
         await doc.ref.delete();
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

@@ -134,7 +134,7 @@ router.get('/', authenticate, async (req, res) => {
         });
         res.json(businesses);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -162,7 +162,7 @@ router.get('/telegram-enabled', async (req, res) => {
 
         res.json(businesses);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -248,7 +248,7 @@ router.get('/:id', authenticate, async (req, res) => {
             }
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -284,7 +284,7 @@ router.get('/owner/:ownerId', async (req, res) => {
         });
         res.json(businesses);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -326,12 +326,8 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
         // Generate tenant URL (without creating DNS record)
         const tenantUrl = generateTenantUrl(business_name, businessId);
 
-        // Generate employee invite token
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        let employeeInviteToken = '';
-        for (let i = 0; i < 7; i++) {
-            employeeInviteToken += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
+        // Generate employee invite token (cryptographically secure)
+        const employeeInviteToken = crypto.randomBytes(4).toString('base64url').slice(0, 7);
 
         // Create business
         const businessData = {
@@ -358,7 +354,7 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             date_created: dateCreated.toISOString()
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -480,7 +476,7 @@ router.put('/:id', authenticate, validate(updateBusinessSchema), async (req, res
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -553,7 +549,7 @@ router.delete('/:id', authenticate, async (req, res) => {
         await docRef.delete();
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -588,7 +584,7 @@ router.patch('/:id/tenant-url', authenticate, async (req, res) => {
             tenant_url
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -637,18 +633,13 @@ router.patch('/:id/telegram-bot', authenticate, async (req, res) => {
             telegram_bot: updatedTelegramBot
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
 // Update business name
 router.patch('/:id/name', authenticate, async (req, res) => {
     try {
-        // Debug logging
-        console.log('PATCH /:id/name - Headers:', req.headers['content-type']);
-        console.log('PATCH /:id/name - Body exists:', !!req.body);
-        console.log('PATCH /:id/name - Raw body:', req.body);
-
         if (!req.body || Object.keys(req.body).length === 0) {
             return res.status(400).json({ error: 'Request body is required with Content-Type: application/json', error_code: 'NO_BODY' });
         }
@@ -681,7 +672,7 @@ router.patch('/:id/name', authenticate, async (req, res) => {
             business_name
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -792,7 +783,7 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             working_hours
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -849,7 +840,7 @@ router.post('/:id/avatar', authenticate, uploadSingle.single('avatar'), async (r
             avatar_updated_at: new Date().toISOString()
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -891,7 +882,7 @@ router.delete('/:id/avatar', authenticate, async (req, res) => {
 
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -945,7 +936,7 @@ router.post('/:id/cover', authenticate, uploadSingle.single('cover'), async (req
             cover_updated_at: new Date().toISOString()
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -983,7 +974,7 @@ router.delete('/:id/cover', authenticate, async (req, res) => {
 
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1044,7 +1035,7 @@ router.post('/:id/photos', authenticate, uploadSingle.single('photo'), validate(
             ...photoData
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1085,7 +1076,7 @@ router.get('/:id/photos', authenticate, validate(getPhotosQuerySchema, 'query'),
 
         res.json(photos);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1148,7 +1139,7 @@ router.delete('/:id/photos/:photoId', authenticate, async (req, res) => {
 
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1180,7 +1171,7 @@ router.patch('/:id/photos/reorder', authenticate, validate(reorderPhotosSchema),
 
         res.json({ updated: photos.length });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1289,7 +1280,7 @@ router.get('/:id/services', authenticate, async (req, res) => {
         });
         res.json(services);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1326,7 +1317,7 @@ router.get('/:id/services/:serviceId', authenticate, async (req, res) => {
             allow_employee_customization: data.allow_employee_customization ?? true
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1385,7 +1376,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             is_active: false
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1470,7 +1461,7 @@ router.put('/:id/services/:serviceId', authenticate, validate(updateServiceSchem
             is_active: currentData.is_active ?? false
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1528,7 +1519,7 @@ router.delete('/:id/services/:serviceId', authenticate, async (req, res) => {
         res.status(204).send();
     } catch (error) {
         console.error('Delete service error:', error);
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1574,7 +1565,7 @@ router.post('/:id/services/:serviceId/activate', authenticate, async (req, res) 
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1621,7 +1612,7 @@ router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res
             date_created: currentData.date_created?.toDate?.().toISOString() || currentData.date_created
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1735,7 +1726,7 @@ router.get('/:id/employees', authenticate, async (req, res) => {
 
         res.json(employees);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -1928,7 +1919,7 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             business_owner_id: employeeBusinessOwnerId
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2031,7 +2022,7 @@ router.get('/:id/employees/:employeeId', authenticate, async (req, res) => {
             is_rejected: data.is_rejected ?? false
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2089,7 +2080,7 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
 
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2157,7 +2148,7 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
             working_hours: updateData.working_hours
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2203,7 +2194,7 @@ router.patch('/:id/employees/:employeeId/is-open-now', authenticate, validate(up
             is_open_now
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2243,7 +2234,7 @@ router.patch('/:id/employees/:employeeId/slot-capacity', authenticate, validate(
             allowed_booking_count_per_slot
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2261,12 +2252,8 @@ router.post('/:id/employee-invite-token', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // Generate 7 character alphanumeric token
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        let token = '';
-        for (let i = 0; i < 7; i++) {
-            token += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
+        // Generate 7 character alphanumeric token (cryptographically secure)
+        const token = crypto.randomBytes(4).toString('base64url').slice(0, 7);
 
         // Update business document
         await db.collection('businesses').doc(req.params.id).update({
@@ -2277,7 +2264,7 @@ router.post('/:id/employee-invite-token', authenticate, async (req, res) => {
             employee_invite_token: token
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2377,7 +2364,7 @@ router.post('/join/:token', authenticate, async (req, res) => {
             is_accepted: false
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2448,7 +2435,7 @@ router.get('/:id/employees/:employeeId/services', authenticate, async (req, res)
 
         res.json(services);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2544,7 +2531,7 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
 
         res.status(201).json(results);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2617,7 +2604,7 @@ router.put('/:id/employees/:employeeId/services/:serviceId', authenticate, valid
             is_active: updatedData.is_active ?? true
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -2667,7 +2654,7 @@ router.delete('/:id/employees/:employeeId/services/:serviceId', authenticate, as
 
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

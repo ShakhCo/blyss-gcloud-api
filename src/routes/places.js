@@ -52,7 +52,7 @@ router.get('/search', authenticate, validate(placeSearchSchema, 'query'), async 
             status: data.status
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -183,10 +183,7 @@ router.get('/:placeId/details', authenticate, async (req, res) => {
         });
 
     } catch (error) {
-        res.status(500).json({
-            error: error.message,
-            error_code: 'INTERNAL_ERROR'
-        });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -215,7 +212,7 @@ router.get('/photo/:photoReference', authenticate, async (req, res) => {
         const buffer = await response.arrayBuffer();
         res.send(Buffer.from(buffer));
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

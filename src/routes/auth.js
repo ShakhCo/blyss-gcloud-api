@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../middleware/authenticate.js';
@@ -15,7 +16,26 @@ import {
 } from '../schemas/auth.js';
 
 const router = Router();
-const OTP_EXPIRY_MINUTES = 15;
+const OTP_EXPIRY_MINUTES = 5;
+
+// Rate limiters for sensitive auth endpoints
+const otpSendLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many OTP requests, please try again later', error_code: 'RATE_LIMITED' },
+    validate: { trustProxy: false }
+});
+
+const otpVerifyLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many verification attempts, please try again later', error_code: 'RATE_LIMITED' },
+    validate: { trustProxy: false }
+});
 
 /**
  * Helper function to set auth cookies
@@ -55,7 +75,7 @@ const clearAuthCookies = (res) => {
 };
 
 // POST /auth/send-otp
-router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
+router.post('/send-otp', otpSendLimiter, validate(sendOtpSchema), async (req, res) => {
     try {
         const { phone_number, user_type } = req.validated;
 
@@ -81,7 +101,7 @@ router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
         }
 
         // Generate OTP
-        const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
+        const otpCode = crypto.randomInt(10000, 100000).toString();
         const dateCreated = new Date();
         const expiresAt = new Date(dateCreated.getTime() + OTP_EXPIRY_MINUTES * 60000);
 
@@ -106,19 +126,18 @@ router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
             delivery_method: result.delivery_method
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
 // POST /auth/verify-otp
-router.post('/verify-otp', validate(verifyOtpSchema), async (req, res) => {
+router.post('/verify-otp', otpVerifyLimiter, validate(verifyOtpSchema), async (req, res) => {
     try {
         const { phone_number, otp_code, user_type } = req.validated;
 
-        // Find OTP by phone number and code
+        // Find latest unused OTP by phone number (without matching code, to track attempts)
         const otpSnapshot = await db.collection('otps')
             .where('phone_number', '==', phone_number)
-            .where('otp_code', '==', String(otp_code))
             .where('is_verified', '==', false)
             .orderBy('date_created', 'desc')
             .limit(1)
@@ -134,6 +153,17 @@ router.post('/verify-otp', validate(verifyOtpSchema), async (req, res) => {
         const otpDoc = otpSnapshot.docs[0];
         const otpData = otpDoc.data();
 
+        // Check attempt limit (max 5 tries per OTP)
+        const attempts = otpData.attempts || 0;
+        if (attempts >= 5) {
+            // Invalidate the OTP
+            await otpDoc.ref.update({ is_verified: true });
+            return res.status(429).json({
+                error: 'Too many failed attempts. Please request a new code.',
+                error_code: 'OTP_MAX_ATTEMPTS'
+            });
+        }
+
         // Check if OTP is expired
         const now = new Date();
         const expiresAt = otpData.expires_at.toDate();
@@ -142,6 +172,16 @@ router.post('/verify-otp', validate(verifyOtpSchema), async (req, res) => {
             return res.status(400).json({
                 error: 'OTP has expired',
                 error_code: 'OTP_EXPIRED'
+            });
+        }
+
+        // Verify OTP code
+        if (otpData.otp_code !== String(otp_code)) {
+            // Increment attempt counter
+            await otpDoc.ref.update({ attempts: attempts + 1 });
+            return res.status(400).json({
+                error: 'Invalid OTP code',
+                error_code: 'INVALID_OTP'
             });
         }
 
@@ -171,7 +211,7 @@ router.post('/verify-otp', validate(verifyOtpSchema), async (req, res) => {
             otp_id: otpDoc.id
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -234,11 +274,10 @@ router.post('/login', validate(loginSchema), async (req, res) => {
         // Mark OTP as used
         await otpDoc.ref.update({ is_used: true });
 
-        // Generate token pair
+        // Generate token pair (no PII in payload)
         const tokenPayload = {
             user_id: userDoc.id,
-            user_type: user_type,
-            phone_number: phone_number
+            user_type: user_type
         };
 
         const { accessToken, refreshToken } = generateTokenPair(tokenPayload);
@@ -268,7 +307,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
         res.json(authResponseSchema.parse(response));
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -376,7 +415,7 @@ router.post('/register', validate(registerSchema), async (req, res) => {
             success: true
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -422,11 +461,10 @@ router.post('/refresh', async (req, res) => {
 
         const userData = userDoc.data();
 
-        // Generate new token pair
+        // Generate new token pair (no PII in payload)
         const tokenPayload = {
             user_id: userDoc.id,
-            user_type: decoded.user_type,
-            phone_number: decoded.phone_number
+            user_type: decoded.user_type
         };
 
         const { accessToken, refreshToken: newRefreshToken } = generateTokenPair(tokenPayload);
@@ -444,7 +482,7 @@ router.post('/refresh', async (req, res) => {
             expires_at: expiresAt.toISOString()
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -456,7 +494,7 @@ router.post('/logout', authenticate, async (req, res) => {
 
         res.json({ message: 'Logged out successfully' });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -468,7 +506,7 @@ router.post('/logout-all', authenticate, async (req, res) => {
 
         res.json({ message: 'Logged out from all devices successfully' });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -490,7 +528,7 @@ router.get('/me', authenticate, async (req, res) => {
 
         res.json(meResponseSchema.parse(response));
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

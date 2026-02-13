@@ -236,7 +236,7 @@ router.get(
             });
         } catch (error) {
             console.error('Error fetching service employees:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );
@@ -464,7 +464,7 @@ router.get(
             });
         } catch (error) {
             console.error('Error fetching available slots:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );
@@ -623,24 +623,63 @@ router.post(
                 exists = existingDoc.exists;
             }
 
-            // Calculate totals
-            const totalPrice = items.reduce((sum, item) => sum + item.price, 0);
-            const totalDuration = items.reduce((sum, item) => sum + item.duration_minutes, 0);
+            // Fetch server-side prices for each item (never trust client-submitted prices)
+            const bookingItems = [];
+            let totalPrice = 0;
+            let totalDuration = 0;
 
-            // Prepare booking items with end times
-            const bookingItems = items.map((item, index) => ({
-                id: crypto.randomBytes(8).toString('hex'),
-                service_id: item.service_id,
-                service_name: item.service_name,
-                employee_id: item.employee_id,
-                employee_name: item.employee_name,
-                start_time: item.start_time,
-                end_time: calculateEndTime(item.start_time, item.duration_minutes),
-                price: item.price,
-                duration_minutes: item.duration_minutes,
-                status: 'confirmed',
-                order_index: index
-            }));
+            for (let index = 0; index < items.length; index++) {
+                const item = items[index];
+
+                // Look up the employee's service record for the real price/duration
+                const empServiceSnapshot = await db.collection('businesses')
+                    .doc(businessId)
+                    .collection('employees')
+                    .doc(item.employee_id)
+                    .collection('employeeServices')
+                    .where('service_id', '==', item.service_id)
+                    .where('is_active', '==', true)
+                    .limit(1)
+                    .get();
+
+                let serverPrice = 0;
+                let serverDuration = item.duration_minutes || 30;
+
+                if (!empServiceSnapshot.empty) {
+                    const empServiceData = empServiceSnapshot.docs[0].data();
+                    serverPrice = empServiceData.price;
+                    serverDuration = empServiceData.duration_minutes || serverDuration;
+                } else {
+                    // Fallback: fetch from service collection
+                    const serviceDoc = await db.collection('businesses')
+                        .doc(businessId)
+                        .collection('services')
+                        .doc(item.service_id)
+                        .get();
+                    if (serviceDoc.exists) {
+                        const serviceData = serviceDoc.data();
+                        serverPrice = serviceData.price || 0;
+                        serverDuration = serviceData.duration_minutes || serverDuration;
+                    }
+                }
+
+                totalPrice += serverPrice;
+                totalDuration += serverDuration;
+
+                bookingItems.push({
+                    id: crypto.randomBytes(8).toString('hex'),
+                    service_id: item.service_id,
+                    service_name: item.service_name,
+                    employee_id: item.employee_id,
+                    employee_name: item.employee_name,
+                    start_time: item.start_time,
+                    end_time: calculateEndTime(item.start_time, serverDuration),
+                    price: serverPrice,
+                    duration_minutes: serverDuration,
+                    status: 'confirmed',
+                    order_index: index
+                });
+            }
 
             const now = new Date();
             const bookingData = {
@@ -693,7 +732,7 @@ router.post(
             });
         } catch (error) {
             console.error('Error creating booking:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );
@@ -765,7 +804,7 @@ router.get(
             });
         } catch (error) {
             console.error('Error fetching user bookings:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );
@@ -854,7 +893,7 @@ router.patch(
             });
         } catch (error) {
             console.error('Error cancelling booking:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );
@@ -991,7 +1030,7 @@ router.get(
             });
         } catch (error) {
             console.error('Error fetching business bookings:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );
@@ -1051,7 +1090,7 @@ router.get(
             });
         } catch (error) {
             console.error('Error fetching booking:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );
@@ -1140,7 +1179,7 @@ router.patch(
             });
         } catch (error) {
             console.error('Error updating booking status:', error);
-            res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+            console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );

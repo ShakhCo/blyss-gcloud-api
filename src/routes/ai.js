@@ -54,7 +54,7 @@ router.post('/translate', authenticate, validate(translateSchema), async (req, r
             translate_to
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -90,7 +90,7 @@ router.post('/validate', authenticate, validate(validateTextSchema), async (req,
             is_valid: result.is_valid
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

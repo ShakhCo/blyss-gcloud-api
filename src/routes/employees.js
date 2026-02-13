@@ -134,7 +134,7 @@ router.get('/business-owner/:businessOwnerId/workplaces', async (req, res) => {
         // Filter out nulls (deleted businesses)
         res.json(workplaces.filter(wp => wp !== null));
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -266,7 +266,7 @@ router.get('/workplaces', authenticate, async (req, res) => {
             }
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -326,7 +326,7 @@ router.get('/workplaces/pending', authenticate, async (req, res) => {
         // Filter out nulls (deleted businesses)
         res.json(pendingInvites.filter(invite => invite !== null));
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -381,7 +381,7 @@ router.post('/workplaces/:employeeId/respond', authenticate, validate(workplaceA
             });
         }
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

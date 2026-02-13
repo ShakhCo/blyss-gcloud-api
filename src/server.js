@@ -17,9 +17,10 @@ app.use(cors({
         const allowed = [
             'https://botservice.blyss.uz',
             'https://miniapp.blyss.uz',
-            "https://barbershop-miniapp-beta.automations.uz"
+            'https://barbershop-miniapp-beta.automations.uz'
         ];
-        if (!origin || allowed.includes(origin) || /^https:\/\/[\w-]+-miniapp\.blyss\.uz$/.test(origin)) {
+        // Only allow [a-z0-9-]+-miniapp.blyss.uz (no underscores or special chars)
+        if (!origin || allowed.includes(origin) || /^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?-miniapp\.blyss\.uz$/.test(origin)) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
@@ -35,26 +36,13 @@ app.use(cookieParser());
 // IMPORTANT: Parse JSON and URL-encoded bodies BEFORE routes
 // Remove express.text() - it interferes with JSON parsing
 app.use(express.json({
-    limit: '25mb',
+    limit: '1mb',
     verify: (req, _res, buf) => { req.rawBody = buf.toString('utf-8'); }
 }));
-app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 app.get('/', (req, res) => {
     res.send('Hello world');
-});
-
-// Debug endpoint to test body parsing
-app.post('/debug-body', (req, res) => {
-    console.log('Headers:', req.headers);
-    console.log('Body:', req.body);
-    res.json({
-        'content-type': req.headers['content-type'],
-        'body-exists': !!req.body,
-        'body-type': typeof req.body,
-        'body-keys': Object.keys(req.body || {}),
-        'body': req.body
-    });
 });
 
 // For multipart/form-data with files, use multer on specific routes

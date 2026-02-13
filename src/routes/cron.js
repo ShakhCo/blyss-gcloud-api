@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { sendBookingStatusUpdateNotification } from '../utils/telegram.js';
 
@@ -8,8 +9,7 @@ const CRON_SECRET = process.env.CRON_SECRET;
 
 /**
  * Middleware to verify cron requests via Bearer token.
- * Set CRON_SECRET env var and configure Cloud Scheduler to send it
- * as Authorization: Bearer <CRON_SECRET>
+ * Uses timing-safe comparison to prevent timing attacks.
  */
 function verifyCronAuth(req, res, next) {
     if (!CRON_SECRET) {
@@ -17,7 +17,18 @@ function verifyCronAuth(req, res, next) {
     }
 
     const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${CRON_SECRET}`) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized', error_code: 'UNAUTHORIZED' });
+    }
+
+    const token = authHeader.slice(7);
+    try {
+        const isValid = token.length === CRON_SECRET.length &&
+            crypto.timingSafeEqual(Buffer.from(token), Buffer.from(CRON_SECRET));
+        if (!isValid) {
+            return res.status(401).json({ error: 'Unauthorized', error_code: 'UNAUTHORIZED' });
+        }
+    } catch {
         return res.status(401).json({ error: 'Unauthorized', error_code: 'UNAUTHORIZED' });
     }
 
@@ -108,7 +119,7 @@ router.post('/expire-pending-bookings', async (req, res) => {
         res.json({ expired: expiredCount });
     } catch (error) {
         console.error('Error expiring pending bookings:', error);
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

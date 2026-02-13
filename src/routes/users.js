@@ -2,11 +2,13 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
+import { authenticate } from '../middleware/authenticate.js';
 import { userSchema, userResponseSchema, loginSchema } from '../schemas/user.js';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+// Protected: requires authentication
+router.get('/', authenticate, async (req, res) => {
     try {
         const usersSnapshot = await db.collection('users').get();
         const users = usersSnapshot.docs.map(doc =>
@@ -14,7 +16,8 @@ router.get('/', async (req, res) => {
         );
         res.json(users);
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -62,7 +65,7 @@ router.post('/register', validate(userSchema), async (req, res) => {
             userResponseSchema.parse({ id: userId, first_name, last_name, phone_number, telegram_id, is_verified: false })
         );
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -82,7 +85,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
         const userDoc = userSnapshot.docs[0];
 
         // Generate OTP
-        const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
+        const otpCode = crypto.randomInt(10000, 100000).toString();
 
         // Store OTP
         await db.collection('otps').add({
@@ -117,7 +120,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
 
         res.json({ message: 'OTP sent', user_id: userDoc.id });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 

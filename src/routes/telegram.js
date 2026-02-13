@@ -1609,7 +1609,7 @@ router.post('/send-otp', validate(telegramSendOtpSchema), async (req, res) => {
         }
 
         // Generate 5-digit OTP
-        const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
+        const otpCode = crypto.randomInt(10000, 100000).toString();
 
         // Store OTP
         const otpRef = await db.collection('telegram_otps').add({

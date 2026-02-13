@@ -18,7 +18,7 @@ const router = Router();
  */
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 500, // limit each IP to 500 requests per windowMs
+    max: 100, // limit each IP to 100 requests per windowMs
     standardHeaders: true,
     legacyHeaders: false,
     // Trust proxy is set to 1 in server.js (single proxy hop for Cloud Run)
@@ -82,7 +82,7 @@ router.get('/business', async (req, res) => {
             tenant_url: businessData.tenant_url
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -159,7 +159,7 @@ router.get('/business/services', async (req, res) => {
             services
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -249,15 +249,13 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
         const employees = await Promise.all(employeesSnapshot.docs.map(async (doc) => {
             const data = doc.data();
 
-            // Get name and phone from business_owners
+            // Get name from business_owners (phone_number excluded from public API)
             let first_name = null;
             let last_name = null;
-            let phone_number = null;
             if (data.business_owner_id && businessOwnersMap.has(data.business_owner_id)) {
                 const ownerData = businessOwnersMap.get(data.business_owner_id);
                 first_name = ownerData.first_name || null;
                 last_name = ownerData.last_name || null;
-                phone_number = ownerData.phone_number || null;
             }
 
             // Fetch employee services
@@ -285,7 +283,6 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
                 id: doc.id,
                 first_name,
                 last_name,
-                phone_number,
                 position: data.position ?? '',
                 availability_type: data.availability_type ?? 'flexible',
                 working_hours: data.working_hours ?? null,
@@ -381,7 +378,7 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
             employees
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -455,7 +452,7 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
             photos
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -610,7 +607,7 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
             }
         });
     } catch (error) {
-        res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
@@ -786,7 +783,7 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
         }
 
         // Generate 5-digit OTP
-        const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
+        const otpCode = crypto.randomInt(10000, 100000).toString();
 
         // Send OTP via SMS + Telegram (handled internally by sendOtpSms)
         const result = await sendOtpSms(phone_number, otpCode, 'user');
@@ -803,7 +800,7 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
             phone_number,
             otp_code: otpCode,
             created_at: new Date(),
-            expires_at: new Date(Date.now() + 15 * 60 * 1000),
+            expires_at: new Date(Date.now() + 5 * 60 * 1000),
             used: false,
             user_type: 'user'
         });
@@ -845,6 +842,17 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
         const otpDoc = otpSnapshot.docs[0];
         const otpData = otpDoc.data();
 
+        // Check attempt limit (max 5 tries per OTP)
+        const attempts = otpData.attempts || 0;
+        if (attempts >= 5) {
+            // Invalidate the OTP
+            await otpDoc.ref.update({ used: true });
+            return res.status(429).json({
+                error: 'Too many failed attempts. Please request a new code.',
+                error_code: 'OTP_MAX_ATTEMPTS'
+            });
+        }
+
         // Check if expired
         if (otpData.expires_at.toDate() < new Date()) {
             return res.status(400).json({
@@ -855,6 +863,8 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
 
         // Verify OTP code
         if (otpData.otp_code !== String(otp_code)) {
+            // Increment attempt counter
+            await otpDoc.ref.update({ attempts: attempts + 1 });
             return res.status(400).json({
                 error: 'Invalid OTP code',
                 error_code: 'INVALID_OTP'
@@ -1088,23 +1098,48 @@ router.get('/my-bookings', verifySignature, authenticate, async (req, res) => {
 
         const bookings = bookingsSnapshot.docs.map(doc => {
             const data = doc.data();
+            // Resolve multilingual business_name
+            let businessName = data.business_name;
+            if (typeof businessName === 'object' && businessName !== null) {
+                businessName = businessName.ru || businessName.uz || '';
+            }
             return {
                 id: doc.id,
                 business_id: data.business_id,
-                business_name: data.business_name || '',
+                business_name: businessName || '',
                 booking_date: data.booking_date,
                 status: data.status,
-                total_price: data.total_price,
-                total_duration_minutes: data.total_duration_minutes,
-                items: (data.items || []).map(item => ({
-                    service_name: item.service_name,
-                    employee_name: item.employee_name,
-                    start_time: item.start_time,
-                    end_time: item.end_time,
-                    price: item.price,
-                    duration_minutes: item.duration_minutes,
-                    status: item.status
-                })),
+                total_price: data.total_price || 0,
+                total_duration_minutes: data.total_duration_minutes || 0,
+                items: (data.items || []).map(item => {
+                    // Resolve multilingual service_name to string
+                    let serviceName = item.service_name;
+                    if (typeof serviceName === 'object' && serviceName !== null) {
+                        serviceName = serviceName.ru || serviceName.uz || '';
+                    }
+
+                    // Convert ISO time strings (e.g. "2026-02-13T10:00") to seconds from midnight
+                    let startTime = item.start_time;
+                    let endTime = item.end_time;
+                    if (typeof startTime === 'string' && startTime.includes('T')) {
+                        const [h, m] = startTime.split('T')[1].split(':').map(Number);
+                        startTime = h * 3600 + (m || 0) * 60;
+                    }
+                    if (typeof endTime === 'string' && endTime.includes('T')) {
+                        const [h, m] = endTime.split('T')[1].split(':').map(Number);
+                        endTime = h * 3600 + (m || 0) * 60;
+                    }
+
+                    return {
+                        service_name: serviceName || '',
+                        employee_name: item.employee_name || '',
+                        start_time: startTime,
+                        end_time: endTime,
+                        price: item.price || 0,
+                        duration_minutes: item.duration_minutes || 0,
+                        status: item.status || 'pending'
+                    };
+                }),
                 created_at: data.created_at?.toDate?.()?.toISOString() || null
             };
         });
