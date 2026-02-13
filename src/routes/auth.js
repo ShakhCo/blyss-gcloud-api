@@ -97,12 +97,13 @@ router.post('/send-otp', validate(sendOtpSchema), async (req, res) => {
             expires_at: expiresAt
         });
 
-        // Send SMS via Eskiz
-        const smsResult = await sendOtpSms(phone_number, otpCode, user_type);
+        // Send OTP via SMS + Telegram
+        const result = await sendOtpSms(phone_number, otpCode, user_type);
 
         res.json({
-            message: smsResult.success ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
-            sms_sent: smsResult.success
+            message: result.success ? 'OTP sent successfully' : 'OTP created but delivery failed',
+            sms_sent: result.success,
+            delivery_method: result.delivery_method
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });

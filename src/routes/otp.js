@@ -3,7 +3,6 @@ import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { verifyOtpSchema, sendOtpSchema } from '../schemas/otp.js';
 import { sendOtpSms } from '../utils/eskiz.js';
-import { sendTelegramMessage } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -33,32 +32,10 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
         // Generate OTP
         const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
 
-        // Try sending SMS via canonical sendOtpSms template
-        const smsResult = await sendOtpSms(phone_number, otpCode, user_type);
+        // Send OTP via SMS + Telegram (handled internally by sendOtpSms)
+        const result = await sendOtpSms(phone_number, otpCode, user_type);
 
-        let deliveryMethod = null;
-
-        if (smsResult.success) {
-            deliveryMethod = 'sms';
-        } else {
-            // SMS failed — try Telegram fallback if user has telegram_id
-            console.log(`[otp/send] SMS failed for ${phone_number}, trying Telegram fallback...`);
-            if (userData.telegram_id) {
-                try {
-                    const tgMessage = user_type === 'business_owner'
-                        ? `${otpCode} BLYSS BUSINESS ga kirish kodi. Код входа в BLYSS BUSINESS.`
-                        : `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`;
-                    await sendTelegramMessage(userData.telegram_id, tgMessage);
-                    deliveryMethod = 'telegram';
-                    console.log(`[otp/send] OTP sent via Telegram to ${collection} ${userDoc.id}`);
-                } catch (telegramError) {
-                    console.error('[otp/send] Telegram fallback also failed:', telegramError);
-                }
-            }
-        }
-
-        // Only store OTP if delivery succeeded
-        if (!deliveryMethod) {
+        if (!result.success) {
             return res.status(503).json({
                 error: 'Failed to deliver OTP. Please try again later.',
                 error_code: 'OTP_DELIVERY_FAILED'
@@ -77,7 +54,7 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
         res.json({
             message: 'OTP sent successfully',
             user_id: userDoc.id,
-            delivery_method: deliveryMethod
+            delivery_method: result.delivery_method
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });

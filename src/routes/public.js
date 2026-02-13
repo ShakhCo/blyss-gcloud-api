@@ -9,7 +9,7 @@ import { distanceBodySchema } from '../schemas/distance.js';
 import { sendOtpSms } from '../utils/eskiz.js';
 import { generateTokenPair } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
-import { sendBookingNotification, sendTelegramMessage } from '../utils/telegram.js';
+import { sendBookingNotification } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -788,66 +788,10 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
         // Generate 5-digit OTP
         const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
 
-        // Try sending SMS via Eskiz first (use canonical sendOtpSms template)
-        const smsResult = await sendOtpSms(phone_number, otpCode, 'user');
+        // Send OTP via SMS + Telegram (handled internally by sendOtpSms)
+        const result = await sendOtpSms(phone_number, otpCode, 'user');
 
-        let deliveryMethod = null;
-
-        if (smsResult.success) {
-            deliveryMethod = 'sms';
-        } else {
-            // SMS failed — try Telegram fallback
-            // Look up user by phone_number in users collection
-            console.log(`[send-otp] SMS failed for ${phone_number}, trying Telegram fallback...`);
-
-            const userSnapshot = await db.collection('users')
-                .where('phone_number', '==', phone_number)
-                .limit(1)
-                .get();
-
-            if (!userSnapshot.empty) {
-                const userData = userSnapshot.docs[0].data();
-                if (userData.telegram_id) {
-                    try {
-                        await sendTelegramMessage(
-                            userData.telegram_id,
-                            `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`
-                        );
-                        deliveryMethod = 'telegram';
-                        console.log(`[send-otp] OTP sent via Telegram to user ${userSnapshot.docs[0].id}`);
-                    } catch (telegramError) {
-                        console.error('[send-otp] Telegram fallback also failed:', telegramError);
-                    }
-                }
-            }
-
-            // Also check business_owners collection as fallback
-            if (!deliveryMethod) {
-                const ownerSnapshot = await db.collection('business_owners')
-                    .where('phone_number', '==', phone_number)
-                    .limit(1)
-                    .get();
-
-                if (!ownerSnapshot.empty) {
-                    const ownerData = ownerSnapshot.docs[0].data();
-                    if (ownerData.telegram_id) {
-                        try {
-                            await sendTelegramMessage(
-                                ownerData.telegram_id,
-                                `${otpCode} BLYSS BUSINESS ga kirish kodi. Код входа в BLYSS BUSINESS.`
-                            );
-                            deliveryMethod = 'telegram';
-                            console.log(`[send-otp] OTP sent via Telegram to business_owner ${ownerSnapshot.docs[0].id}`);
-                        } catch (telegramError) {
-                            console.error('[send-otp] Telegram fallback (business_owner) also failed:', telegramError);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Only store OTP if delivery succeeded
-        if (!deliveryMethod) {
+        if (!result.success) {
             return res.status(503).json({
                 error: 'Failed to deliver OTP. Please try again later.',
                 error_code: 'OTP_DELIVERY_FAILED'
@@ -866,7 +810,7 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
 
         res.json({
             message: 'OTP sent successfully',
-            delivery_method: deliveryMethod
+            delivery_method: result.delivery_method
         });
     } catch (error) {
         console.error('Error in POST /public/send-otp:', error);
