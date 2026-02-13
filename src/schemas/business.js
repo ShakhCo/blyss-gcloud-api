@@ -222,6 +222,15 @@ export const publicVerifyOtpSchema = z.object({
         .max(99999, 'otp_code must be 5 digits')
 });
 
+export const publicRegisterSchema = z.object({
+    otp_id: z.string().min(1, 'otp_id is required'),
+    phone_number: z.string().regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
+    first_name: z.string()
+        .min(2, 'first_name must be at least 2 characters')
+        .regex(/^[^\d]+$/, 'first_name must not contain numbers'),
+    last_name: z.string().default('')
+});
+
 // Public available slots query schema (business_id from URL param)
 export const publicAvailableSlotsQuerySchema = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),

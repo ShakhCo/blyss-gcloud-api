@@ -4,10 +4,10 @@ import crypto from 'crypto';
 import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
-import { nearestBusinessesQuerySchema, publicSendOtpSchema, publicVerifyOtpSchema, publicAvailableSlotsQuerySchema, publicSlotEmployeesQuerySchema, publicCreateBookingSchema } from '../schemas/business.js';
+import { nearestBusinessesQuerySchema, publicSendOtpSchema, publicVerifyOtpSchema, publicAvailableSlotsQuerySchema, publicSlotEmployeesQuerySchema, publicCreateBookingSchema, publicRegisterSchema } from '../schemas/business.js';
 import { distanceBodySchema } from '../schemas/distance.js';
 import { sendOtpSms } from '../utils/eskiz.js';
-import { generateTokenPair } from '../utils/jwt.js';
+import { generateTokenPair, verifyRefreshToken } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 
@@ -821,6 +821,7 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
 /**
  * POST /public/verify-otp
  * Verify OTP and return JWT tokens for public website auth
+ * If user doesn't exist, returns needs_registration: true with otp_id
  */
 router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), async (req, res) => {
     try {
@@ -860,42 +861,34 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
             });
         }
 
-        // Mark OTP as used
-        await otpDoc.ref.update({ used: true });
-
-        // Find or create user by phone_number
+        // Check if user exists by phone_number
         const usersSnapshot = await db.collection('users')
             .where('phone_number', '==', phone_number)
             .limit(1)
             .get();
 
-        let userId;
-        let firstName = '';
-        let lastName = '';
         if (usersSnapshot.empty) {
-            // Create new user
-            const now = new Date();
-            const newUserRef = db.collection('users').doc();
-            await newUserRef.set({
-                phone_number,
-                first_name: '',
-                last_name: '',
-                is_verified: true,
-                created_at: now,
-                updated_at: now
-            });
-            userId = newUserRef.id;
-        } else {
-            const userData = usersSnapshot.docs[0].data();
-            userId = usersSnapshot.docs[0].id;
-            firstName = userData.first_name || '';
-            lastName = userData.last_name || '';
-            // Update verified status
-            await usersSnapshot.docs[0].ref.update({
-                is_verified: true,
-                updated_at: new Date()
+            // Mark OTP as verified but NOT used (registration will mark as used)
+            await otpDoc.ref.update({ verified: true, verified_at: new Date() });
+
+            return res.json({
+                success: true,
+                needs_registration: true,
+                otp_id: otpDoc.id,
+                phone_number
             });
         }
+
+        // Existing user - mark OTP as used and return tokens
+        await otpDoc.ref.update({ used: true });
+
+        const userData = usersSnapshot.docs[0].data();
+        const userId = usersSnapshot.docs[0].id;
+
+        await usersSnapshot.docs[0].ref.update({
+            is_verified: true,
+            updated_at: new Date()
+        });
 
         // Generate JWT pair
         const { accessToken, refreshToken } = generateTokenPair({
@@ -905,15 +898,152 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
 
         res.json({
             success: true,
+            needs_registration: false,
             access_token: accessToken,
             refresh_token: refreshToken,
             user_id: userId,
             phone_number,
-            first_name: firstName,
-            last_name: lastName
+            first_name: userData.first_name || '',
+            last_name: userData.last_name || ''
         });
     } catch (error) {
         console.error('Error in POST /public/verify-otp:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * POST /public/register
+ * Register a new web user after OTP verification
+ */
+router.post('/register', verifySignature, validate(publicRegisterSchema), async (req, res) => {
+    try {
+        const { otp_id, phone_number, first_name, last_name } = req.validated;
+
+        // Verify OTP exists and is verified but not used
+        const otpDoc = await db.collection('otps').doc(otp_id).get();
+        if (!otpDoc.exists) {
+            return res.status(400).json({
+                error: 'Invalid OTP reference',
+                error_code: 'INVALID_OTP'
+            });
+        }
+
+        const otpData = otpDoc.data();
+        if (!otpData.verified || otpData.used) {
+            return res.status(400).json({
+                error: 'OTP not verified or already used',
+                error_code: 'OTP_INVALID_STATE'
+            });
+        }
+
+        if (otpData.phone_number !== phone_number) {
+            return res.status(400).json({
+                error: 'Phone number mismatch',
+                error_code: 'PHONE_MISMATCH'
+            });
+        }
+
+        // Check expiry
+        if (otpData.expires_at.toDate() < new Date()) {
+            return res.status(400).json({
+                error: 'OTP has expired',
+                error_code: 'OTP_EXPIRED'
+            });
+        }
+
+        // Check phone not already registered
+        const existingUser = await db.collection('users')
+            .where('phone_number', '==', phone_number)
+            .limit(1)
+            .get();
+
+        if (!existingUser.empty) {
+            return res.status(409).json({
+                error: 'Phone number already registered',
+                error_code: 'PHONE_EXISTS'
+            });
+        }
+
+        // Mark OTP as used
+        await otpDoc.ref.update({ used: true });
+
+        // Create user with auto-generated ID
+        const now = new Date();
+        const newUserRef = db.collection('users').doc();
+        await newUserRef.set({
+            phone_number,
+            first_name,
+            last_name: last_name || '',
+            is_verified: true,
+            created_at: now,
+            updated_at: now
+        });
+
+        const userId = newUserRef.id;
+
+        // Generate JWT pair
+        const { accessToken, refreshToken } = generateTokenPair({
+            user_id: userId,
+            user_type: 'user'
+        });
+
+        res.status(201).json({
+            success: true,
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            user_id: userId,
+            phone_number,
+            first_name,
+            last_name: last_name || ''
+        });
+    } catch (error) {
+        console.error('Error in POST /public/register:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * POST /public/refresh-token
+ * Refresh access token using refresh token
+ */
+router.post('/refresh-token', verifySignature, async (req, res) => {
+    try {
+        const refreshTokenValue = req.body?.refresh_token;
+        if (!refreshTokenValue) {
+            return res.status(401).json({
+                error: 'Refresh token required',
+                error_code: 'NO_REFRESH_TOKEN'
+            });
+        }
+
+        const decoded = verifyRefreshToken(refreshTokenValue);
+        if (!decoded) {
+            return res.status(401).json({
+                error: 'Invalid or expired refresh token',
+                error_code: 'INVALID_REFRESH_TOKEN'
+            });
+        }
+
+        const userDoc = await db.collection('users').doc(decoded.user_id).get();
+        if (!userDoc.exists) {
+            return res.status(401).json({
+                error: 'User not found',
+                error_code: 'USER_NOT_FOUND'
+            });
+        }
+
+        const { accessToken, refreshToken } = generateTokenPair({
+            user_id: userDoc.id,
+            user_type: 'user'
+        });
+
+        res.json({
+            access_token: accessToken,
+            refresh_token: refreshToken
+        });
+    } catch (error) {
+        console.error('Error in POST /public/refresh-token:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
@@ -929,6 +1059,83 @@ router.get('/me', verifySignature, authenticate, async (req, res) => {
         first_name: req.user.first_name || '',
         last_name: req.user.last_name || '',
     });
+});
+
+/**
+ * GET /public/my-bookings
+ * Get authenticated user's bookings
+ * Query: ?business_id=optional (filter by business)
+ */
+router.get('/my-bookings', verifySignature, authenticate, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const businessId = req.query.business_id;
+
+        let query = db.collection('bookings')
+            .where('user_id', '==', userId)
+            .orderBy('created_at', 'desc')
+            .limit(50);
+
+        if (businessId) {
+            query = db.collection('bookings')
+                .where('user_id', '==', userId)
+                .where('business_id', '==', businessId)
+                .orderBy('created_at', 'desc')
+                .limit(50);
+        }
+
+        const bookingsSnapshot = await query.get();
+
+        const bookings = bookingsSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                business_id: data.business_id,
+                business_name: data.business_name || '',
+                booking_date: data.booking_date,
+                status: data.status,
+                total_price: data.total_price,
+                total_duration_minutes: data.total_duration_minutes,
+                items: (data.items || []).map(item => ({
+                    service_name: item.service_name,
+                    employee_name: item.employee_name,
+                    start_time: item.start_time,
+                    end_time: item.end_time,
+                    price: item.price,
+                    duration_minutes: item.duration_minutes,
+                    status: item.status
+                })),
+                created_at: data.created_at?.toDate?.()?.toISOString() || null
+            };
+        });
+
+        res.json({ bookings });
+    } catch (error) {
+        console.error('Error in GET /public/my-bookings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * PATCH /public/update-profile
+ * Update authenticated user's name
+ */
+router.patch('/update-profile', verifySignature, authenticate, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { first_name, last_name } = req.body;
+
+        const updates = { updated_at: new Date() };
+        if (first_name !== undefined) updates.first_name = first_name;
+        if (last_name !== undefined) updates.last_name = last_name;
+
+        await db.collection('users').doc(userId).update(updates);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error in PATCH /public/update-profile:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
 });
 
 // ─── Public Slot/Employee Endpoints ───
