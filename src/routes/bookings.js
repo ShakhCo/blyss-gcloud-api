@@ -491,6 +491,16 @@ router.post(
                 items
             } = req.validated;
 
+            // Validate booking date is not in the past (Uzbekistan GMT+5)
+            const nowUtc = new Date();
+            const uzbekToday = new Date(nowUtc.getTime() + 5 * 60 * 60 * 1000).toISOString().split('T')[0];
+            if (booking_date < uzbekToday) {
+                return res.status(400).json({
+                    error: 'Cannot book for a past date',
+                    error_code: 'PAST_DATE'
+                });
+            }
+
             // Check per-user active booking limit
             const bookingLimit = await checkUserBookingLimit(req.user.id);
             if (bookingLimit) {

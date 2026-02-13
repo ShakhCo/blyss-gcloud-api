@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import routes from './routes/index.js';
@@ -11,6 +12,9 @@ const PORT = process.env.PORT || 3000;
 // Trust proxy for rate limiting (behind Cloudflare/Google Cloud)
 // Use 1 to trust only the first proxy hop (recommended for Cloud Run)
 app.set('trust proxy', 1);
+
+// Security headers
+app.use(helmet());
 
 app.use(cors({
     origin: (origin, callback) => {

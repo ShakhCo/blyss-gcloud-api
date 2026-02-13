@@ -1628,6 +1628,16 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
         const { date, start_time, services, notes } = req.validated;
         const user_id = req.user.id;
 
+        // Validate booking date is not in the past (Uzbekistan GMT+5)
+        const nowUtc = new Date();
+        const uzbekToday = new Date(nowUtc.getTime() + 5 * 60 * 60 * 1000).toISOString().split('T')[0];
+        if (date < uzbekToday) {
+            return res.status(400).json({
+                error: 'Cannot book for a past date',
+                error_code: 'PAST_DATE'
+            });
+        }
+
         // 1. Get user data
         const userDoc = await db.collection('users').doc(user_id).get();
         if (!userDoc.exists) {
