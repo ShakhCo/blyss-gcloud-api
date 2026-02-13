@@ -926,6 +926,8 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
             .get();
 
         let userId;
+        let firstName = '';
+        let lastName = '';
         if (usersSnapshot.empty) {
             // Create new user
             const now = new Date();
@@ -940,7 +942,10 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
             });
             userId = newUserRef.id;
         } else {
+            const userData = usersSnapshot.docs[0].data();
             userId = usersSnapshot.docs[0].id;
+            firstName = userData.first_name || '';
+            lastName = userData.last_name || '';
             // Update verified status
             await usersSnapshot.docs[0].ref.update({
                 is_verified: true,
@@ -959,12 +964,27 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
             access_token: accessToken,
             refresh_token: refreshToken,
             user_id: userId,
-            phone_number
+            phone_number,
+            first_name: firstName,
+            last_name: lastName
         });
     } catch (error) {
         console.error('Error in POST /public/verify-otp:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
+});
+
+/**
+ * GET /public/me
+ * Get current authenticated user's profile
+ */
+router.get('/me', verifySignature, authenticate, async (req, res) => {
+    res.json({
+        user_id: req.user.id,
+        phone_number: req.user.phone_number || '',
+        first_name: req.user.first_name || '',
+        last_name: req.user.last_name || '',
+    });
 });
 
 // ─── Public Slot/Employee Endpoints ───
