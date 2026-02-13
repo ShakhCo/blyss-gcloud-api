@@ -45,10 +45,10 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
             console.log(`[otp/send] SMS failed for ${phone_number}, trying Telegram fallback...`);
             if (userData.telegram_id) {
                 try {
-                    await sendTelegramMessage(
-                        userData.telegram_id,
-                        `🔐 <b>${otpCode}</b> — BLYSS kirish kodi.\n\nКод входа в BLYSS: <b>${otpCode}</b>`
-                    );
+                    const tgMessage = user_type === 'business_owner'
+                        ? `${otpCode} BLYSS BUSINESS ga kirish kodi. Код входа в BLYSS BUSINESS.`
+                        : `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`;
+                    await sendTelegramMessage(userData.telegram_id, tgMessage);
                     deliveryMethod = 'telegram';
                     console.log(`[otp/send] OTP sent via Telegram to ${collection} ${userDoc.id}`);
                 } catch (telegramError) {

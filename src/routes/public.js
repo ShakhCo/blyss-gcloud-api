@@ -811,7 +811,7 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
                     try {
                         await sendTelegramMessage(
                             userData.telegram_id,
-                            `🔐 <b>${otpCode}</b> — BLYSS kirish kodi.\n\nКод входа в BLYSS: <b>${otpCode}</b>`
+                            `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`
                         );
                         deliveryMethod = 'telegram';
                         console.log(`[send-otp] OTP sent via Telegram to user ${userSnapshot.docs[0].id}`);
@@ -834,7 +834,7 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
                         try {
                             await sendTelegramMessage(
                                 ownerData.telegram_id,
-                                `🔐 <b>${otpCode}</b> — BLYSS kirish kodi.\n\nКод входа в BLYSS: <b>${otpCode}</b>`
+                                `${otpCode} BLYSS BUSINESS ga kirish kodi. Код входа в BLYSS BUSINESS.`
                             );
                             deliveryMethod = 'telegram';
                             console.log(`[send-otp] OTP sent via Telegram to business_owner ${ownerSnapshot.docs[0].id}`);
