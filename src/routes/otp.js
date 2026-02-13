@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { verifyOtpSchema, sendOtpSchema } from '../schemas/otp.js';
+import { sendOtpSms } from '../utils/eskiz.js';
+import { sendTelegramMessage } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -26,9 +28,42 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
         }
 
         const userDoc = userSnapshot.docs[0];
+        const userData = userDoc.data();
 
         // Generate OTP
         const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
+
+        // Try sending SMS via canonical sendOtpSms template
+        const smsResult = await sendOtpSms(phone_number, otpCode, user_type);
+
+        let deliveryMethod = null;
+
+        if (smsResult.success) {
+            deliveryMethod = 'sms';
+        } else {
+            // SMS failed — try Telegram fallback if user has telegram_id
+            console.log(`[otp/send] SMS failed for ${phone_number}, trying Telegram fallback...`);
+            if (userData.telegram_id) {
+                try {
+                    await sendTelegramMessage(
+                        userData.telegram_id,
+                        `🔐 <b>${otpCode}</b> — BLYSS kirish kodi.\n\nКод входа в BLYSS: <b>${otpCode}</b>`
+                    );
+                    deliveryMethod = 'telegram';
+                    console.log(`[otp/send] OTP sent via Telegram to ${collection} ${userDoc.id}`);
+                } catch (telegramError) {
+                    console.error('[otp/send] Telegram fallback also failed:', telegramError);
+                }
+            }
+        }
+
+        // Only store OTP if delivery succeeded
+        if (!deliveryMethod) {
+            return res.status(503).json({
+                error: 'Failed to deliver OTP. Please try again later.',
+                error_code: 'OTP_DELIVERY_FAILED'
+            });
+        }
 
         // Store OTP
         await db.collection('otps').add({
@@ -39,35 +74,10 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
             used: false
         });
 
-        // Send SMS via Eskiz
-        const eskizToken = process.env.ESKIZ_TOKEN;
-        let otpSent = false;
-
-        if (eskizToken) {
-            try {
-                await fetch('https://notify.eskiz.uz/api/message/sms/send', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${eskizToken}`
-                    },
-                    body: JSON.stringify({
-                        mobile_phone: phone_number,
-                        message: `BLYSS ilovasiga kirish uchun tasdiqlash kodi: ${otpCode}`,
-                        from: '4546',
-                        callback_url: ''
-                    })
-                });
-                otpSent = true;
-            } catch (smsError) {
-                console.error('Failed to send SMS:', smsError);
-            }
-        }
-
         res.json({
-            message: otpSent ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
+            message: 'OTP sent successfully',
             user_id: userDoc.id,
-            sms_sent: otpSent
+            delivery_method: deliveryMethod
         });
     } catch (error) {
         res.status(500).json({ error: error.message, error_code: 'INTERNAL_ERROR' });
@@ -113,8 +123,8 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
         await db.collection(collection).doc(user_id).update({ is_verified: true });
 
         // Get updated user
-        const userDoc = await db.collection(collection).doc(user_id).get();
-        const user = { id: userDoc.id, ...userDoc.data() };
+        const userDocRef = await db.collection(collection).doc(user_id).get();
+        const user = { id: userDocRef.id, ...userDocRef.data() };
 
         res.json({ message: 'OTP verified successfully', is_verified: true, user });
     } catch (error) {

@@ -6,10 +6,10 @@ import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import { nearestBusinessesQuerySchema, publicSendOtpSchema, publicVerifyOtpSchema, publicAvailableSlotsQuerySchema, publicSlotEmployeesQuerySchema, publicCreateBookingSchema } from '../schemas/business.js';
 import { distanceBodySchema } from '../schemas/distance.js';
-import { sendSms } from '../utils/eskiz.js';
+import { sendOtpSms } from '../utils/eskiz.js';
 import { generateTokenPair } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
-import { sendBookingNotification } from '../utils/telegram.js';
+import { sendBookingNotification, sendTelegramMessage } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -759,46 +759,114 @@ function secondsToTime(seconds) {
 /**
  * POST /public/send-otp
  * Send OTP to phone number for public website user verification
+ * Tries SMS first, falls back to Telegram if user has telegram_id
  */
 router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSchema), async (req, res) => {
     try {
         const { phone_number } = req.validated;
 
         // Check rate limit - 60 seconds between requests per phone number
-        const recentOtp = await db.collection('otps')
+        const recentOtpSnapshot = await db.collection('otps')
             .where('phone_number', '==', phone_number)
-            .where('created_at', '>', new Date(Date.now() - 60000))
+            .orderBy('created_at', 'desc')
             .limit(1)
             .get();
 
-        if (!recentOtp.empty) {
-            const lastOtp = recentOtp.docs[0].data();
-            const waitTime = Math.ceil((60000 - (Date.now() - lastOtp.created_at.toDate().getTime())) / 1000);
-            return res.status(429).json({
-                error: `Please wait ${waitTime} seconds before requesting another code`,
-                error_code: 'RATE_LIMITED',
-                wait_seconds: waitTime
-            });
+        if (!recentOtpSnapshot.empty) {
+            const lastOtp = recentOtpSnapshot.docs[0].data();
+            const elapsed = Date.now() - lastOtp.created_at.toDate().getTime();
+            if (elapsed < 60000) {
+                const waitTime = Math.ceil((60000 - elapsed) / 1000);
+                return res.status(429).json({
+                    error: `Please wait ${waitTime} seconds before requesting another code`,
+                    error_code: 'RATE_LIMITED',
+                    wait_seconds: waitTime
+                });
+            }
         }
 
         // Generate 5-digit OTP
         const otpCode = Math.floor(10000 + Math.random() * 90000).toString();
 
+        // Try sending SMS via Eskiz first (use canonical sendOtpSms template)
+        const smsResult = await sendOtpSms(phone_number, otpCode, 'user');
+
+        let deliveryMethod = null;
+
+        if (smsResult.success) {
+            deliveryMethod = 'sms';
+        } else {
+            // SMS failed — try Telegram fallback
+            // Look up user by phone_number in users collection
+            console.log(`[send-otp] SMS failed for ${phone_number}, trying Telegram fallback...`);
+
+            const userSnapshot = await db.collection('users')
+                .where('phone_number', '==', phone_number)
+                .limit(1)
+                .get();
+
+            if (!userSnapshot.empty) {
+                const userData = userSnapshot.docs[0].data();
+                if (userData.telegram_id) {
+                    try {
+                        await sendTelegramMessage(
+                            userData.telegram_id,
+                            `🔐 <b>${otpCode}</b> — BLYSS kirish kodi.\n\nКод входа в BLYSS: <b>${otpCode}</b>`
+                        );
+                        deliveryMethod = 'telegram';
+                        console.log(`[send-otp] OTP sent via Telegram to user ${userSnapshot.docs[0].id}`);
+                    } catch (telegramError) {
+                        console.error('[send-otp] Telegram fallback also failed:', telegramError);
+                    }
+                }
+            }
+
+            // Also check business_owners collection as fallback
+            if (!deliveryMethod) {
+                const ownerSnapshot = await db.collection('business_owners')
+                    .where('phone_number', '==', phone_number)
+                    .limit(1)
+                    .get();
+
+                if (!ownerSnapshot.empty) {
+                    const ownerData = ownerSnapshot.docs[0].data();
+                    if (ownerData.telegram_id) {
+                        try {
+                            await sendTelegramMessage(
+                                ownerData.telegram_id,
+                                `🔐 <b>${otpCode}</b> — BLYSS kirish kodi.\n\nКод входа в BLYSS: <b>${otpCode}</b>`
+                            );
+                            deliveryMethod = 'telegram';
+                            console.log(`[send-otp] OTP sent via Telegram to business_owner ${ownerSnapshot.docs[0].id}`);
+                        } catch (telegramError) {
+                            console.error('[send-otp] Telegram fallback (business_owner) also failed:', telegramError);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only store OTP if delivery succeeded
+        if (!deliveryMethod) {
+            return res.status(503).json({
+                error: 'Failed to deliver OTP. Please try again later.',
+                error_code: 'OTP_DELIVERY_FAILED'
+            });
+        }
+
         // Store OTP in otps collection (expires 15 min)
-        const otpRef = await db.collection('otps').add({
+        await db.collection('otps').add({
             phone_number,
             otp_code: otpCode,
             created_at: new Date(),
             expires_at: new Date(Date.now() + 15 * 60 * 1000),
-            used: false
+            used: false,
+            user_type: 'user'
         });
 
-        // Send SMS via Eskiz
-        const smsResult = await sendSms(phone_number, `${otpCode} BLYSS ilovasiga kirish kodi. Код входа в приложение BLYSS.`);
-
         res.json({
-            message: smsResult.success ? 'OTP sent successfully' : 'OTP created but SMS delivery failed',
-            sms_sent: smsResult.success
+            message: 'OTP sent successfully',
+            delivery_method: deliveryMethod
         });
     } catch (error) {
         console.error('Error in POST /public/send-otp:', error);
