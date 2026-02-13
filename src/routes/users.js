@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
@@ -87,10 +88,11 @@ router.post('/login', validate(loginSchema), async (req, res) => {
         // Generate OTP
         const otpCode = crypto.randomInt(10000, 100000).toString();
 
-        // Store OTP
+        // Hash and store OTP
+        const otpHash = await bcrypt.hash(otpCode, 10);
         await db.collection('otps').add({
             user_id: userDoc.id,
-            otp_code: otpCode,
+            otp_code: otpHash,
             date_created: new Date(),
             used: false
         });

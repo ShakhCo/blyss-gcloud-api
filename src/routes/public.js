@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
@@ -795,10 +796,11 @@ router.post('/send-otp', verifySignature, otpLimiter, validate(publicSendOtpSche
             });
         }
 
-        // Store OTP in otps collection (expires 15 min)
+        // Hash and store OTP
+        const otpHash = await bcrypt.hash(otpCode, 10);
         await db.collection('otps').add({
             phone_number,
-            otp_code: otpCode,
+            otp_code: otpHash,
             created_at: new Date(),
             expires_at: new Date(Date.now() + 5 * 60 * 1000),
             used: false,
@@ -861,8 +863,15 @@ router.post('/verify-otp', verifySignature, validate(publicVerifyOtpSchema), asy
             });
         }
 
-        // Verify OTP code
-        if (otpData.otp_code !== String(otp_code)) {
+        // Verify OTP code (supports both bcrypt hash and legacy plaintext)
+        const storedCode = otpData.otp_code;
+        const inputCode = String(otp_code);
+        const isBcryptHash = storedCode.startsWith('$2');
+        const isMatch = isBcryptHash
+            ? await bcrypt.compare(inputCode, storedCode)
+            : storedCode === inputCode;
+
+        if (!isMatch) {
             // Increment attempt counter
             await otpDoc.ref.update({ attempts: attempts + 1 });
             return res.status(400).json({
@@ -1749,41 +1758,10 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
             });
         }
 
-        // 4. Get existing bookings
-        const bookingsSnapshot = await db.collection('bookings')
-            .where('business_id', '==', businessId)
-            .where('booking_date', '==', date)
-            .where('status', 'in', ['pending', 'confirmed'])
-            .get();
-
-        const employeeBookings = new Map();
-        for (const bookingDoc of bookingsSnapshot.docs) {
-            for (const item of bookingDoc.data().items || []) {
-                if (!item.employee_id || !item.start_time) continue;
-
-                if (!employeeBookings.has(item.employee_id)) {
-                    employeeBookings.set(item.employee_id, []);
-                }
-
-                const timePart = item.start_time.split('T')[1];
-                const [hours, minutes] = timePart.split(':').map(Number);
-                const startSec = hours * 3600 + minutes * 60;
-                const endSec = startSec + (item.duration_minutes || 30) * 60;
-
-                employeeBookings.get(item.employee_id).push({ start: startSec, end: endSec });
-            }
-        }
-
-        // 5. Build booking items chain
-        const bookingItems = [];
-        let currentTime = start_time;
-        let totalPrice = 0;
-        let totalDuration = 0;
-
-        for (let i = 0; i < services.length; i++) {
-            const { service_id, employee_id } = services[i];
-
-            // Get service details
+        // 4. Pre-fetch service data (doesn't race — can stay outside transaction)
+        const serviceDataMap = new Map();
+        for (const { service_id } of services) {
+            if (serviceDataMap.has(service_id)) continue;
             const serviceDoc = await db.collection('businesses')
                 .doc(businessId)
                 .collection('services')
@@ -1804,43 +1782,132 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                     error_code: 'SERVICE_NOT_ACTIVE'
                 });
             }
+            serviceDataMap.set(service_id, serviceData);
+        }
 
-            // Find employee (assigned or any available)
-            let selectedEmployee = null;
-            let selectedEmpService = null;
+        // Pre-validate employee assignments (static data, doesn't race)
+        for (const { service_id, employee_id } of services) {
+            if (!employee_id) continue;
+            const emp = employeeMap.get(employee_id);
+            if (!emp) {
+                return res.status(400).json({
+                    error: `Employee ${employee_id} not found`,
+                    error_code: 'EMPLOYEE_NOT_FOUND'
+                });
+            }
+            if (!emp.services.has(service_id)) {
+                return res.status(400).json({
+                    error: `Employee ${employee_id} does not offer service ${service_id}`,
+                    error_code: 'EMPLOYEE_SERVICE_NOT_FOUND'
+                });
+            }
+        }
 
-            if (employee_id) {
-                const emp = employeeMap.get(employee_id);
-                if (!emp) {
-                    return res.status(400).json({
-                        error: `Employee ${employee_id} not found`,
-                        error_code: 'EMPLOYEE_NOT_FOUND'
-                    });
+        const bookingId = crypto.randomBytes(16).toString('hex');
+
+        // 5. Transaction: atomic availability check + booking write
+        let bookingPayload;
+        let bookingItems;
+        let totalPrice;
+        let totalDuration;
+
+        try {
+            await db.runTransaction(async (transaction) => {
+                // Read existing bookings within the transaction
+                const bookingsSnapshot = await transaction.get(
+                    db.collection('bookings')
+                        .where('business_id', '==', businessId)
+                        .where('booking_date', '==', date)
+                        .where('status', 'in', ['pending', 'confirmed'])
+                );
+
+                const employeeBookings = new Map();
+                for (const bookingDoc of bookingsSnapshot.docs) {
+                    for (const item of bookingDoc.data().items || []) {
+                        if (!item.employee_id || !item.start_time) continue;
+
+                        if (!employeeBookings.has(item.employee_id)) {
+                            employeeBookings.set(item.employee_id, []);
+                        }
+
+                        const timePart = item.start_time.split('T')[1];
+                        const [hours, minutes] = timePart.split(':').map(Number);
+                        const startSec = hours * 3600 + minutes * 60;
+                        const endSec = startSec + (item.duration_minutes || 30) * 60;
+
+                        employeeBookings.get(item.employee_id).push({ start: startSec, end: endSec });
+                    }
                 }
 
-                if (!emp.services.has(service_id)) {
-                    return res.status(400).json({
-                        error: `Employee ${employee_id} does not offer service ${service_id}`,
-                        error_code: 'EMPLOYEE_SERVICE_NOT_FOUND'
-                    });
-                }
+                // Build booking items chain
+                bookingItems = [];
+                let currentTime = start_time;
+                totalPrice = 0;
+                totalDuration = 0;
 
-                selectedEmployee = emp;
-                selectedEmpService = emp.services.get(service_id);
-            } else {
-                // Find any available employee
-                for (const [empId, emp] of employeeMap) {
-                    if (!emp.services.has(service_id)) continue;
+                for (let i = 0; i < services.length; i++) {
+                    const { service_id, employee_id } = services[i];
+                    const serviceData = serviceDataMap.get(service_id);
 
-                    const empService = emp.services.get(service_id);
-                    const slotEnd = currentTime + empService.duration_minutes * 60;
+                    let selectedEmployee = null;
+                    let selectedEmpService = null;
 
-                    const empHours = emp.working_hours?.[dayName];
-                    if (empHours && !empHours.is_open) continue;
-                    if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) continue;
-                    if (slotEnd > businessHours.end) continue;
+                    if (employee_id) {
+                        selectedEmployee = employeeMap.get(employee_id);
+                        selectedEmpService = selectedEmployee.services.get(service_id);
+                    } else {
+                        for (const [empId, emp] of employeeMap) {
+                            if (!emp.services.has(service_id)) continue;
 
-                    const empBookings = employeeBookings.get(empId) || [];
+                            const empService = emp.services.get(service_id);
+                            const slotEnd = currentTime + empService.duration_minutes * 60;
+
+                            const empHours = emp.working_hours?.[dayName];
+                            if (empHours && !empHours.is_open) continue;
+                            if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) continue;
+                            if (slotEnd > businessHours.end) continue;
+
+                            const empBookings = employeeBookings.get(empId) || [];
+                            let bookingCount = 0;
+                            for (const booking of empBookings) {
+                                if (!(slotEnd <= booking.start || currentTime >= booking.end)) {
+                                    bookingCount++;
+                                }
+                            }
+
+                            if (bookingCount < emp.allowed_booking_count_per_slot) {
+                                selectedEmployee = emp;
+                                selectedEmpService = empService;
+                                break;
+                            }
+                        }
+
+                        if (!selectedEmployee) {
+                            const err = new Error('NO_EMPLOYEE_AVAILABLE');
+                            err.details = { service_id, time: secondsToTime(currentTime) };
+                            throw err;
+                        }
+                    }
+
+                    // Validate selected employee availability
+                    const slotEnd = currentTime + selectedEmpService.duration_minutes * 60;
+
+                    const empHours = selectedEmployee.working_hours?.[dayName];
+                    if (empHours && !empHours.is_open) {
+                        const err = new Error('EMPLOYEE_NOT_WORKING');
+                        err.details = { employee_id: selectedEmployee.id };
+                        throw err;
+                    }
+                    if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) {
+                        const err = new Error('EMPLOYEE_NOT_AVAILABLE');
+                        err.details = { employee_id: selectedEmployee.id, time: secondsToTime(currentTime) };
+                        throw err;
+                    }
+                    if (slotEnd > businessHours.end) {
+                        throw new Error('EXCEEDS_BUSINESS_HOURS');
+                    }
+
+                    const empBookings = employeeBookings.get(selectedEmployee.id) || [];
                     let bookingCount = 0;
                     for (const booking of empBookings) {
                         if (!(slotEnd <= booking.start || currentTime >= booking.end)) {
@@ -1848,162 +1915,144 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                         }
                     }
 
-                    if (bookingCount < emp.allowed_booking_count_per_slot) {
-                        selectedEmployee = emp;
-                        selectedEmpService = empService;
-                        break;
+                    if (bookingCount >= selectedEmployee.allowed_booking_count_per_slot) {
+                        const err = new Error('SLOT_NOT_AVAILABLE');
+                        err.details = { employee_id: selectedEmployee.id, time: secondsToTime(currentTime) };
+                        throw err;
+                    }
+
+                    // Add to employee bookings map (for subsequent services in chain)
+                    if (!employeeBookings.has(selectedEmployee.id)) {
+                        employeeBookings.set(selectedEmployee.id, []);
+                    }
+                    employeeBookings.get(selectedEmployee.id).push({ start: currentTime, end: slotEnd });
+
+                    const startTimeStr = `${date}T${secondsToTime(currentTime)}`;
+                    const endTimeStr = `${date}T${secondsToTime(slotEnd)}`;
+                    const employeeName = [selectedEmployee.first_name, selectedEmployee.last_name].filter(Boolean).join(' ') || '';
+
+                    bookingItems.push({
+                        id: crypto.randomBytes(8).toString('hex'),
+                        service_id,
+                        service_name: serviceData.name || { uz: '', ru: '' },
+                        employee_id: selectedEmployee.id,
+                        employee_name: employeeName,
+                        start_time: startTimeStr,
+                        end_time: endTimeStr,
+                        price: selectedEmpService.price,
+                        duration_minutes: selectedEmpService.duration_minutes,
+                        status: 'pending',
+                        order_index: i
+                    });
+
+                    totalPrice += selectedEmpService.price;
+                    totalDuration += selectedEmpService.duration_minutes;
+                    currentTime = slotEnd;
+                }
+
+                // Check user booking conflicts
+                const bookingEndTime = currentTime;
+                const userBookingsSnapshot = await transaction.get(
+                    db.collection('bookings')
+                        .where('user_id', '==', user_id)
+                        .where('booking_date', '==', date)
+                        .where('status', 'in', ['pending', 'confirmed'])
+                );
+
+                for (const existingBookingDoc of userBookingsSnapshot.docs) {
+                    const existingBooking = existingBookingDoc.data();
+                    const existingItems = existingBooking.items || [];
+                    if (existingItems.length === 0) continue;
+
+                    const firstItem = existingItems[0];
+                    const lastItemExist = existingItems[existingItems.length - 1];
+
+                    const existingStartTime = firstItem.start_time.split('T')[1];
+                    const [startHours, startMinutes] = existingStartTime.split(':').map(Number);
+                    const existingStart = startHours * 3600 + startMinutes * 60;
+
+                    const existingEndTime = lastItemExist.end_time.split('T')[1];
+                    const [endHours, endMinutes] = existingEndTime.split(':').map(Number);
+                    const existingEnd = endHours * 3600 + endMinutes * 60;
+
+                    const hasOverlap = !(bookingEndTime <= existingStart || start_time >= existingEnd);
+
+                    if (hasOverlap) {
+                        const err = new Error('USER_TIME_CONFLICT');
+                        err.details = {
+                            id: existingBookingDoc.id,
+                            business_name: existingBooking.business_name,
+                            start_time: firstItem.start_time,
+                            end_time: lastItemExist.end_time
+                        };
+                        throw err;
                     }
                 }
 
-                if (!selectedEmployee) {
-                    return res.status(409).json({
-                        error: `No available employee for service ${service_id} at ${secondsToTime(currentTime)}`,
-                        error_code: 'NO_EMPLOYEE_AVAILABLE'
-                    });
-                }
-            }
+                // Write booking atomically
+                const now = new Date();
+                const customerName = [userData.first_name, userData.last_name].filter(Boolean).join(' ') || 'Website User';
 
-            // Validate selected employee availability
-            const slotEnd = currentTime + selectedEmpService.duration_minutes * 60;
+                bookingPayload = {
+                    business_id: businessId,
+                    business_name: businessData.business_name,
+                    user_id,
+                    customer_name: customerName,
+                    customer_phone: userData.phone_number || '',
+                    booking_date: date,
+                    status: 'confirmed',
+                    total_price: totalPrice,
+                    total_duration_minutes: totalDuration,
+                    notes: notes || '',
+                    items: bookingItems,
+                    created_at: now,
+                    updated_at: now
+                };
 
-            const empHours = selectedEmployee.working_hours?.[dayName];
-            if (empHours && !empHours.is_open) {
+                transaction.set(db.collection('bookings').doc(bookingId), bookingPayload);
+            });
+        } catch (txError) {
+            if (txError.message === 'SLOT_NOT_AVAILABLE') {
                 return res.status(409).json({
-                    error: `Employee ${selectedEmployee.id} is not working on this day`,
+                    error: `Employee ${txError.details.employee_id} is fully booked at ${txError.details.time}`,
+                    error_code: 'SLOT_NOT_AVAILABLE'
+                });
+            }
+            if (txError.message === 'NO_EMPLOYEE_AVAILABLE') {
+                return res.status(409).json({
+                    error: `No available employee for service ${txError.details.service_id} at ${txError.details.time}`,
+                    error_code: 'NO_EMPLOYEE_AVAILABLE'
+                });
+            }
+            if (txError.message === 'EMPLOYEE_NOT_WORKING') {
+                return res.status(409).json({
+                    error: `Employee ${txError.details.employee_id} is not working on this day`,
                     error_code: 'EMPLOYEE_NOT_WORKING'
                 });
             }
-            if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) {
+            if (txError.message === 'EMPLOYEE_NOT_AVAILABLE') {
                 return res.status(409).json({
-                    error: `Employee ${selectedEmployee.id} is not available at ${secondsToTime(currentTime)}`,
+                    error: `Employee ${txError.details.employee_id} is not available at ${txError.details.time}`,
                     error_code: 'EMPLOYEE_NOT_AVAILABLE'
                 });
             }
-            if (slotEnd > businessHours.end) {
+            if (txError.message === 'EXCEEDS_BUSINESS_HOURS') {
                 return res.status(409).json({
                     error: 'Booking exceeds business hours',
                     error_code: 'EXCEEDS_BUSINESS_HOURS'
                 });
             }
-
-            const empBookings = employeeBookings.get(selectedEmployee.id) || [];
-            let bookingCount = 0;
-            for (const booking of empBookings) {
-                if (!(slotEnd <= booking.start || currentTime >= booking.end)) {
-                    bookingCount++;
-                }
-            }
-
-            if (bookingCount >= selectedEmployee.allowed_booking_count_per_slot) {
-                return res.status(409).json({
-                    error: `Employee ${selectedEmployee.id} is fully booked at ${secondsToTime(currentTime)}`,
-                    error_code: 'SLOT_NOT_AVAILABLE'
-                });
-            }
-
-            // Add to employee bookings map (for subsequent services)
-            if (!employeeBookings.has(selectedEmployee.id)) {
-                employeeBookings.set(selectedEmployee.id, []);
-            }
-            employeeBookings.get(selectedEmployee.id).push({ start: currentTime, end: slotEnd });
-
-            // Build booking item
-            const startTimeStr = `${date}T${secondsToTime(currentTime)}`;
-            const endTimeStr = `${date}T${secondsToTime(slotEnd)}`;
-            const employeeName = [selectedEmployee.first_name, selectedEmployee.last_name].filter(Boolean).join(' ') || '';
-
-            bookingItems.push({
-                id: crypto.randomBytes(8).toString('hex'),
-                service_id,
-                service_name: serviceData.name || { uz: '', ru: '' },
-                employee_id: selectedEmployee.id,
-                employee_name: employeeName,
-                start_time: startTimeStr,
-                end_time: endTimeStr,
-                price: selectedEmpService.price,
-                duration_minutes: selectedEmpService.duration_minutes,
-                status: 'pending',
-                order_index: i
-            });
-
-            totalPrice += selectedEmpService.price;
-            totalDuration += selectedEmpService.duration_minutes;
-            currentTime = slotEnd;
-        }
-
-        // 6. Check for user booking conflicts across all businesses
-        const bookingEndTime = currentTime;
-        const userBookingsSnapshot = await db.collection('bookings')
-            .where('user_id', '==', user_id)
-            .where('booking_date', '==', date)
-            .where('status', 'in', ['pending', 'confirmed'])
-            .get();
-
-        for (const existingBookingDoc of userBookingsSnapshot.docs) {
-            const existingBooking = existingBookingDoc.data();
-            const items = existingBooking.items || [];
-
-            if (items.length === 0) continue;
-
-            const firstItem = items[0];
-            const lastItem = items[items.length - 1];
-
-            const existingStartTime = firstItem.start_time.split('T')[1];
-            const [startHours, startMinutes] = existingStartTime.split(':').map(Number);
-            const existingStart = startHours * 3600 + startMinutes * 60;
-
-            const existingEndTime = lastItem.end_time.split('T')[1];
-            const [endHours, endMinutes] = existingEndTime.split(':').map(Number);
-            const existingEnd = endHours * 3600 + endMinutes * 60;
-
-            const hasOverlap = !(bookingEndTime <= existingStart || start_time >= existingEnd);
-
-            if (hasOverlap) {
+            if (txError.message === 'USER_TIME_CONFLICT') {
                 return res.status(409).json({
                     error: 'You already have a booking during this time',
                     error_code: 'USER_TIME_CONFLICT',
-                    conflicting_booking: {
-                        id: existingBookingDoc.id,
-                        business_name: existingBooking.business_name,
-                        start_time: firstItem.start_time,
-                        end_time: lastItem.end_time
-                    }
+                    conflicting_booking: txError.details
                 });
             }
+            throw txError;
         }
 
-        // 7. Generate unique booking ID
-        let bookingId;
-        let exists = true;
-        while (exists) {
-            bookingId = crypto.randomBytes(16).toString('hex');
-            const existingDoc = await db.collection('bookings').doc(bookingId).get();
-            exists = existingDoc.exists;
-        }
-
-        // 8. Create booking
-        const now = new Date();
-        const customerName = [userData.first_name, userData.last_name].filter(Boolean).join(' ') || 'Website User';
-
-        const bookingPayload = {
-            business_id: businessId,
-            business_name: businessData.business_name,
-            user_id,
-            customer_name: customerName,
-            customer_phone: userData.phone_number || '',
-            booking_date: date,
-            status: 'confirmed',
-            total_price: totalPrice,
-            total_duration_minutes: totalDuration,
-            notes: notes || '',
-            items: bookingItems,
-            created_at: now,
-            updated_at: now
-        };
-
-        await db.collection('bookings').doc(bookingId).set(bookingPayload);
-
-        // 9. Send Telegram notification
+        // 6. Send Telegram notification (post-transaction)
         if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
             try {
                 const firstItem = bookingItems[0];
@@ -2028,8 +2077,8 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
         res.status(201).json({
             id: bookingId,
             ...bookingPayload,
-            created_at: now.toISOString(),
-            updated_at: now.toISOString()
+            created_at: bookingPayload.created_at.toISOString(),
+            updated_at: bookingPayload.updated_at.toISOString()
         });
     } catch (error) {
         console.error('Error in POST /public/businesses/:businessId/bookings-v2:', error);

@@ -523,9 +523,10 @@ router.post(
 
             const businessData = businessDoc.data();
 
-            // Verify slots are still available
+            // Pre-transaction: validate employees and fetch server-side prices
+            const employeeDataMap = new Map();
             for (const item of items) {
-                // Get employee
+                if (employeeDataMap.has(item.employee_id)) continue;
                 const employeeDoc = await db.collection('businesses')
                     .doc(businessId)
                     .collection('employees')
@@ -538,102 +539,10 @@ router.post(
                         error_code: 'EMPLOYEE_NOT_FOUND'
                     });
                 }
-
-                const employeeData = employeeDoc.data();
-                const allowedCount = employeeData.allowed_booking_count_per_slot || 1;
-
-                // Check existing bookings for this slot
-                const slotTime = item.start_time.split('T')[1];
-                const existingBookings = await db.collection('bookings')
-                    .where('business_id', '==', businessId)
-                    .where('booking_date', '==', booking_date)
-                    .where('status', 'in', ['pending', 'confirmed'])
-                    .get();
-
-                let slotCount = 0;
-                for (const bookingDoc of existingBookings.docs) {
-                    const bookingData = bookingDoc.data();
-                    for (const bookingItem of bookingData.items || []) {
-                        if (bookingItem.employee_id === item.employee_id) {
-                            const bookingSlotTime = bookingItem.start_time.split('T')[1];
-                            // Check if slots overlap
-                            const itemStart = timeToMinutes(slotTime);
-                            const itemEnd = itemStart + item.duration_minutes;
-                            const bookingStart = timeToMinutes(bookingSlotTime);
-                            const bookingEnd = bookingStart + (bookingItem.duration_minutes || 30);
-
-                            if (!(itemEnd <= bookingStart || itemStart >= bookingEnd)) {
-                                slotCount++;
-                            }
-                        }
-                    }
-                }
-
-                if (slotCount >= allowedCount) {
-                    return res.status(409).json({
-                        error: `Slot ${item.start_time} is no longer available for this employee`,
-                        error_code: 'SLOT_NOT_AVAILABLE'
-                    });
-                }
+                employeeDataMap.set(item.employee_id, employeeDoc.data());
             }
 
-            // Check for user time conflicts across all businesses
-            const firstItemTime = items[0].start_time.split('T')[1];
-            const [firstH, firstM] = firstItemTime.split(':').map(Number);
-            const newBookingStart = firstH * 3600 + firstM * 60;
-
-            // Calculate end from last item
-            const lastItem = items[items.length - 1];
-            const lastItemTime = lastItem.start_time.split('T')[1];
-            const [lastH, lastM] = lastItemTime.split(':').map(Number);
-            const newBookingEnd = lastH * 3600 + lastM * 60 + lastItem.duration_minutes * 60;
-
-            const userBookingsSnapshot = await db.collection('bookings')
-                .where('user_id', '==', req.user.id)
-                .where('booking_date', '==', booking_date)
-                .where('status', 'in', ['pending', 'confirmed'])
-                .get();
-
-            for (const existingBookingDoc of userBookingsSnapshot.docs) {
-                const existingBooking = existingBookingDoc.data();
-                const existingItems = existingBooking.items || [];
-                if (existingItems.length === 0) continue;
-
-                const existFirstItem = existingItems[0];
-                const existLastItem = existingItems[existingItems.length - 1];
-
-                const existStartTime = existFirstItem.start_time.split('T')[1];
-                const [esH, esM] = existStartTime.split(':').map(Number);
-                const existStart = esH * 3600 + esM * 60;
-
-                const existEndTime = existLastItem.end_time.split('T')[1];
-                const [eeH, eeM] = existEndTime.split(':').map(Number);
-                const existEnd = eeH * 3600 + eeM * 60;
-
-                if (!(newBookingEnd <= existStart || newBookingStart >= existEnd)) {
-                    return res.status(409).json({
-                        error: 'You already have a booking during this time',
-                        error_code: 'USER_TIME_CONFLICT',
-                        conflicting_booking: {
-                            id: existingBookingDoc.id,
-                            business_name: existingBooking.business_name,
-                            start_time: existFirstItem.start_time,
-                            end_time: existLastItem.end_time
-                        }
-                    });
-                }
-            }
-
-            // Generate booking ID
-            let bookingId;
-            let exists = true;
-            while (exists) {
-                bookingId = crypto.randomBytes(16).toString('hex');
-                const existingDoc = await db.collection('bookings').doc(bookingId).get();
-                exists = existingDoc.exists;
-            }
-
-            // Fetch server-side prices for each item (never trust client-submitted prices)
+            // Pre-transaction: fetch server-side prices (never trust client-submitted prices)
             const bookingItems = [];
             let totalPrice = 0;
             let totalDuration = 0;
@@ -641,7 +550,6 @@ router.post(
             for (let index = 0; index < items.length; index++) {
                 const item = items[index];
 
-                // Look up the employee's service record for the real price/duration
                 const empServiceSnapshot = await db.collection('businesses')
                     .doc(businessId)
                     .collection('employees')
@@ -660,7 +568,6 @@ router.post(
                     serverPrice = empServiceData.price;
                     serverDuration = empServiceData.duration_minutes || serverDuration;
                 } else {
-                    // Fallback: fetch from service collection
                     const serviceDoc = await db.collection('businesses')
                         .doc(businessId)
                         .collection('services')
@@ -691,6 +598,17 @@ router.post(
                 });
             }
 
+            // Pre-compute time bounds for user conflict check
+            const firstItemTime = items[0].start_time.split('T')[1];
+            const [firstH, firstM] = firstItemTime.split(':').map(Number);
+            const newBookingStart = firstH * 3600 + firstM * 60;
+
+            const lastItem = items[items.length - 1];
+            const lastItemTime = lastItem.start_time.split('T')[1];
+            const [lastH, lastM] = lastItemTime.split(':').map(Number);
+            const newBookingEnd = lastH * 3600 + lastM * 60 + lastItem.duration_minutes * 60;
+
+            const bookingId = crypto.randomBytes(16).toString('hex');
             const now = new Date();
             const bookingData = {
                 business_id: businessId,
@@ -709,7 +627,101 @@ router.post(
                 updated_at: now
             };
 
-            await db.collection('bookings').doc(bookingId).set(bookingData);
+            // Transaction: atomic availability check + booking write
+            try {
+                await db.runTransaction(async (transaction) => {
+                    // Read existing bookings for this business+date
+                    const existingBookings = await transaction.get(
+                        db.collection('bookings')
+                            .where('business_id', '==', businessId)
+                            .where('booking_date', '==', booking_date)
+                            .where('status', 'in', ['pending', 'confirmed'])
+                    );
+
+                    // Check slot availability for each item
+                    for (const item of bookingItems) {
+                        const allowedCount = employeeDataMap.get(item.employee_id)?.allowed_booking_count_per_slot || 1;
+                        const slotTime = item.start_time.split('T')[1];
+                        let slotCount = 0;
+
+                        for (const doc of existingBookings.docs) {
+                            for (const bookingItem of doc.data().items || []) {
+                                if (bookingItem.employee_id === item.employee_id) {
+                                    const bookingSlotTime = bookingItem.start_time.split('T')[1];
+                                    const itemStart = timeToMinutes(slotTime);
+                                    const itemEnd = itemStart + item.duration_minutes;
+                                    const bookingStart = timeToMinutes(bookingSlotTime);
+                                    const bookingEnd = bookingStart + (bookingItem.duration_minutes || 30);
+
+                                    if (!(itemEnd <= bookingStart || itemStart >= bookingEnd)) {
+                                        slotCount++;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (slotCount >= allowedCount) {
+                            const err = new Error('SLOT_NOT_AVAILABLE');
+                            err.details = { start_time: item.start_time };
+                            throw err;
+                        }
+                    }
+
+                    // Check user time conflicts
+                    const userBookingsSnapshot = await transaction.get(
+                        db.collection('bookings')
+                            .where('user_id', '==', req.user.id)
+                            .where('booking_date', '==', booking_date)
+                            .where('status', 'in', ['pending', 'confirmed'])
+                    );
+
+                    for (const existingBookingDoc of userBookingsSnapshot.docs) {
+                        const existingBooking = existingBookingDoc.data();
+                        const existingItems = existingBooking.items || [];
+                        if (existingItems.length === 0) continue;
+
+                        const existFirstItem = existingItems[0];
+                        const existLastItem = existingItems[existingItems.length - 1];
+
+                        const existStartTime = existFirstItem.start_time.split('T')[1];
+                        const [esH, esM] = existStartTime.split(':').map(Number);
+                        const existStart = esH * 3600 + esM * 60;
+
+                        const existEndTime = existLastItem.end_time.split('T')[1];
+                        const [eeH, eeM] = existEndTime.split(':').map(Number);
+                        const existEnd = eeH * 3600 + eeM * 60;
+
+                        if (!(newBookingEnd <= existStart || newBookingStart >= existEnd)) {
+                            const err = new Error('USER_TIME_CONFLICT');
+                            err.details = {
+                                id: existingBookingDoc.id,
+                                business_name: existingBooking.business_name,
+                                start_time: existFirstItem.start_time,
+                                end_time: existLastItem.end_time
+                            };
+                            throw err;
+                        }
+                    }
+
+                    // Write booking atomically
+                    transaction.set(db.collection('bookings').doc(bookingId), bookingData);
+                });
+            } catch (txError) {
+                if (txError.message === 'SLOT_NOT_AVAILABLE') {
+                    return res.status(409).json({
+                        error: `Slot ${txError.details.start_time} is no longer available for this employee`,
+                        error_code: 'SLOT_NOT_AVAILABLE'
+                    });
+                }
+                if (txError.message === 'USER_TIME_CONFLICT') {
+                    return res.status(409).json({
+                        error: 'You already have a booking during this time',
+                        error_code: 'USER_TIME_CONFLICT',
+                        conflicting_booking: txError.details
+                    });
+                }
+                throw txError;
+            }
 
             // Send Telegram notification to business if enabled
             if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
@@ -763,13 +775,29 @@ router.get(
         try {
             const { page, page_size, status, date_from, date_to } = req.validated;
 
-            // Build query
+            // Build query with Firestore-level filtering
             let query = db.collection('bookings')
-                .where('user_id', '==', req.user.id)
-                .orderBy('created_at', 'desc');
+                .where('user_id', '==', req.user.id);
 
-            // Note: Firestore doesn't support multiple inequality filters on different fields
-            // So we filter status in-memory if needed
+            if (status) {
+                query = query.where('status', '==', status);
+            }
+
+            // Date range filters use booking_date (string comparison works for YYYY-MM-DD)
+            if (date_from) {
+                query = query.where('booking_date', '>=', date_from);
+            }
+            if (date_to) {
+                query = query.where('booking_date', '<=', date_to);
+            }
+
+            // Order by booking_date when date filters are used, otherwise by created_at
+            if (date_from || date_to) {
+                query = query.orderBy('booking_date', 'desc');
+            } else {
+                query = query.orderBy('created_at', 'desc');
+            }
+
             const bookingsSnapshot = await query.get();
 
             let bookings = bookingsSnapshot.docs.map(doc => {
@@ -781,19 +809,6 @@ router.get(
                     updated_at: data.updated_at?.toDate?.().toISOString() || data.updated_at
                 };
             });
-
-            // Apply filters in memory
-            if (status) {
-                bookings = bookings.filter(b => b.status === status);
-            }
-
-            if (date_from) {
-                bookings = bookings.filter(b => b.booking_date >= date_from);
-            }
-
-            if (date_to) {
-                bookings = bookings.filter(b => b.booking_date <= date_to);
-            }
 
             // Calculate pagination
             const total = bookings.length;
@@ -962,11 +977,28 @@ router.get(
                 });
             }
 
-            // Fetch bookings
-            const bookingsSnapshot = await db.collection('bookings')
-                .where('business_id', '==', businessId)
-                .orderBy('created_at', 'desc')
-                .get();
+            // Build query with Firestore-level filtering
+            let query = db.collection('bookings')
+                .where('business_id', '==', businessId);
+
+            if (status) {
+                query = query.where('status', '==', status);
+            }
+
+            if (date_from) {
+                query = query.where('booking_date', '>=', date_from);
+            }
+            if (date_to) {
+                query = query.where('booking_date', '<=', date_to);
+            }
+
+            if (date_from || date_to) {
+                query = query.orderBy('booking_date', 'desc');
+            } else {
+                query = query.orderBy('created_at', 'desc');
+            }
+
+            const bookingsSnapshot = await query.get();
 
             let bookings = bookingsSnapshot.docs.map(doc => {
                 const data = doc.data();
@@ -999,26 +1031,13 @@ router.get(
                 }))
             }));
 
-            // Apply filters in memory
-            if (status) {
-                bookings = bookings.filter(b => b.status === status);
-            }
-
-            // For employees, force filter to their own bookings only
+            // Employee filter must remain in-memory (employee_id is nested inside items array)
             const effectiveEmployeeId = isEmployee ? employeeDocId : employee_id;
 
             if (effectiveEmployeeId) {
                 bookings = bookings.filter(b =>
                     b.items?.some(item => item.employee_id === effectiveEmployeeId)
                 );
-            }
-
-            if (date_from) {
-                bookings = bookings.filter(b => b.booking_date >= date_from);
-            }
-
-            if (date_to) {
-                bookings = bookings.filter(b => b.booking_date <= date_to);
             }
 
             // Calculate pagination

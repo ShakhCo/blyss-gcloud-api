@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { botCreateBookingSchema } from '../schemas/booking.js';
 import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
@@ -164,11 +165,13 @@ router.post('/otp/send', async (req, res) => {
         const now = new Date();
         const expiresAt = new Date(now.getTime() + 5 * 60 * 1000); // 5 minutes
 
+        // Hash OTP before storing
+        const otpHash = await bcrypt.hash(otpCode, 10);
         const otpRef = db.collection('bot_otps').doc();
         await otpRef.set({
             telegram_id: Number(telegram_id),
             phone_number,
-            otp_code: otpCode,
+            otp_code: otpHash,
             created_at: now,
             expires_at: expiresAt,
             used: false
@@ -239,7 +242,15 @@ router.post('/otp/verify', async (req, res) => {
             });
         }
 
-        if (otpData.otp_code !== String(otp_code)) {
+        // Verify OTP code (supports both bcrypt hash and legacy plaintext)
+        const storedCode = otpData.otp_code;
+        const inputCode = String(otp_code);
+        const isBcryptHash = storedCode.startsWith('$2');
+        const isMatch = isBcryptHash
+            ? await bcrypt.compare(inputCode, storedCode)
+            : storedCode === inputCode;
+
+        if (!isMatch) {
             return res.status(400).json({
                 error: 'Invalid OTP code',
                 error_code: 'INVALID_OTP'

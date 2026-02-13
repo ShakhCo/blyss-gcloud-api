@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { telegramAuth } from '../middleware/telegramAuth.js';
 import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { nearestBusinessesQuerySchema, telegramAvailableSlotsQuerySchema, telegramSlotEmployeesQuerySchema, telegramCreateBookingSchemaV2, telegramSendOtpSchema, telegramVerifyOtpSchema } from '../schemas/business.js';
 import { distanceQuerySchema } from '../schemas/distance.js';
 import { userBookingsQuerySchema } from '../schemas/booking.js';
@@ -1611,11 +1612,12 @@ router.post('/send-otp', validate(telegramSendOtpSchema), async (req, res) => {
         // Generate 5-digit OTP
         const otpCode = crypto.randomInt(10000, 100000).toString();
 
-        // Store OTP
+        // Hash and store OTP
+        const otpHash = await bcrypt.hash(otpCode, 10);
         const otpRef = await db.collection('telegram_otps').add({
             user_id,
             phone_number,
-            otp_code: otpCode,
+            otp_code: otpHash,
             created_at: new Date(),
             expires_at: new Date(Date.now() + 5 * 60 * 1000),
             used: false
@@ -1682,8 +1684,15 @@ router.post('/verify-otp', validate(telegramVerifyOtpSchema), async (req, res) =
             });
         }
 
-        // Verify OTP code
-        if (otpData.otp_code !== String(otp_code)) {
+        // Verify OTP code (supports both bcrypt hash and legacy plaintext)
+        const storedCode = otpData.otp_code;
+        const inputCode = String(otp_code);
+        const isBcryptHash = storedCode.startsWith('$2');
+        const isMatch = isBcryptHash
+            ? await bcrypt.compare(inputCode, storedCode)
+            : storedCode === inputCode;
+
+        if (!isMatch) {
             return res.status(400).json({
                 error: 'Invalid OTP code',
                 error_code: 'INVALID_OTP'

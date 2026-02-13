@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
@@ -105,10 +106,13 @@ router.post('/send-otp', otpSendLimiter, validate(sendOtpSchema), async (req, re
         const dateCreated = new Date();
         const expiresAt = new Date(dateCreated.getTime() + OTP_EXPIRY_MINUTES * 60000);
 
+        // Hash OTP before storing
+        const otpHash = await bcrypt.hash(otpCode, 10);
+
         // Create OTP document
         const otpDoc = await db.collection('otps').add({
             phone_number,
-            otp_code: otpCode,
+            otp_code: otpHash,
             is_verified: false,
             is_used: false,
             user_type,
@@ -175,8 +179,15 @@ router.post('/verify-otp', otpVerifyLimiter, validate(verifyOtpSchema), async (r
             });
         }
 
-        // Verify OTP code
-        if (otpData.otp_code !== String(otp_code)) {
+        // Verify OTP code (supports both bcrypt hash and legacy plaintext)
+        const storedCode = otpData.otp_code;
+        const inputCode = String(otp_code);
+        const isBcryptHash = storedCode.startsWith('$2');
+        const isMatch = isBcryptHash
+            ? await bcrypt.compare(inputCode, storedCode)
+            : storedCode === inputCode;
+
+        if (!isMatch) {
             // Increment attempt counter
             await otpDoc.ref.update({ attempts: attempts + 1 });
             return res.status(400).json({

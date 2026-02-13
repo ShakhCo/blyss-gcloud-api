@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { verifyOtpSchema, sendOtpSchema } from '../schemas/otp.js';
@@ -43,11 +44,12 @@ router.post('/send', validate(sendOtpSchema), async (req, res) => {
             });
         }
 
-        // Store OTP
+        // Hash and store OTP
+        const otpHash = await bcrypt.hash(otpCode, 10);
         await db.collection('otps').add({
             user_id: userDoc.id,
             user_type,
-            otp_code: otpCode,
+            otp_code: otpHash,
             date_created: new Date(),
             used: false
         });
@@ -104,8 +106,15 @@ router.post('/verify', validate(verifyOtpSchema), async (req, res) => {
             return res.status(400).json({ error: 'OTP has expired', error_code: 'OTP_EXPIRED' });
         }
 
-        // Verify OTP code
-        if (otpData.otp_code !== String(otp_code)) {
+        // Verify OTP code (supports both bcrypt hash and legacy plaintext)
+        const storedCode = otpData.otp_code;
+        const inputCode = String(otp_code);
+        const isBcryptHash = storedCode.startsWith('$2');
+        const isMatch = isBcryptHash
+            ? await bcrypt.compare(inputCode, storedCode)
+            : storedCode === inputCode;
+
+        if (!isMatch) {
             // Increment attempt counter
             await otpDoc.ref.update({ attempts: attempts + 1 });
             return res.status(400).json({ error: 'Invalid OTP code', error_code: 'INVALID_OTP' });
