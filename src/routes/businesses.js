@@ -11,6 +11,7 @@ import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeService
 import { sendBusinessInvitationSms } from '../utils/eskiz.js';
 import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
 import { uploadFile, deleteFile, getFilenameFromUrl } from '../utils/storage.js';
+import { checkAndUpdateBusinessStatus } from '../utils/businessStatus.js';
 
 const router = Router();
 
@@ -834,6 +835,8 @@ router.post('/:id/avatar', authenticate, uploadSingle.single('avatar'), async (r
             avatar_updated_at: new Date()
         });
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.json({
             id: req.params.id,
             avatar_url: avatarUrl,
@@ -879,6 +882,8 @@ router.delete('/:id/avatar', authenticate, async (req, res) => {
             avatar_url: null,
             avatar_updated_at: new Date()
         });
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(204).send();
     } catch (error) {
@@ -930,6 +935,8 @@ router.post('/:id/cover', authenticate, uploadSingle.single('cover'), async (req
             cover_updated_at: new Date()
         });
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.json({
             id: req.params.id,
             cover_url: coverUrl,
@@ -971,6 +978,8 @@ router.delete('/:id/cover', authenticate, async (req, res) => {
             cover_url: null,
             cover_updated_at: new Date()
         });
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(204).send();
     } catch (error) {
@@ -1029,6 +1038,8 @@ router.post('/:id/photos', authenticate, uploadSingle.single('photo'), validate(
             .doc(req.params.id)
             .collection('photos')
             .add(photoData);
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(201).json({
             id: photoRef.id,
@@ -1136,6 +1147,8 @@ router.delete('/:id/photos/:photoId', authenticate, async (req, res) => {
             });
             await batch.commit();
         }
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(204).send();
     } catch (error) {
@@ -1368,6 +1381,8 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             .doc(serviceId)
             .set(serviceData);
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.status(201).json({
             id: serviceId,
             business_id: req.params.id,
@@ -1516,6 +1531,8 @@ router.delete('/:id/services/:serviceId', authenticate, async (req, res) => {
             .doc(req.params.serviceId)
             .delete();
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.status(204).send();
     } catch (error) {
         console.error('Delete service error:', error);
@@ -1553,6 +1570,8 @@ router.post('/:id/services/:serviceId/activate', authenticate, async (req, res) 
             .update({ is_active: true });
 
         const currentData = serviceDoc.data();
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.json({
             id: req.params.serviceId,
@@ -1600,6 +1619,8 @@ router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res
             .update({ is_active: false });
 
         const currentData = serviceDoc.data();
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.json({
             id: req.params.serviceId,
@@ -1906,6 +1927,8 @@ router.post('/:id/employees', authenticate, validate(employeeSchema), async (req
             }
         }
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.status(201).json({
             id: employeeId,
             phone_number,
@@ -2077,6 +2100,8 @@ router.delete('/:id/employees/:employeeId', authenticate, async (req, res) => {
                 }
             }
         }
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(204).send();
     } catch (error) {
@@ -2529,6 +2554,8 @@ router.post('/:id/employees/:employeeId/services', authenticate, validate(addEmp
 
         await batch.commit();
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.status(201).json(results);
     } catch (error) {
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
@@ -2595,6 +2622,8 @@ router.put('/:id/employees/:employeeId/services/:serviceId', authenticate, valid
 
         const serviceName = businessServiceDoc.exists ? businessServiceDoc.data().name : updatedData.name;
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.json({
             id: req.params.serviceId,
             service_id: updatedData.service_id,
@@ -2651,6 +2680,8 @@ router.delete('/:id/employees/:employeeId/services/:serviceId', authenticate, as
         }
 
         await employeeServiceDoc.ref.delete();
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(204).send();
     } catch (error) {
