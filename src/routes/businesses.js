@@ -779,6 +779,8 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
         // Execute all employee updates and business update in parallel
         await Promise.all([...updatePromises, docRef.update({ working_hours })]);
 
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
+
         res.json({
             id: req.params.id,
             working_hours
@@ -2166,6 +2168,8 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
         };
 
         await employeeDoc.ref.update(updateData);
+
+        checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.json({
             id: req.params.employeeId,
