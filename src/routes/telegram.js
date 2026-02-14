@@ -198,7 +198,9 @@ router.get('/nearest-businesses', validate(nearestBusinessesQuerySchema, 'query'
     try {
         const { lat, lng, radius = 1000, page = 1, page_size = 5 } = req.validated;
 
-        const businessesSnapshot = await db.collection('businesses').get();
+        const businessesSnapshot = await db.collection('businesses')
+            .where('business_status', '==', 'verified')
+            .get();
 
         if (businessesSnapshot.empty) {
             return res.json({

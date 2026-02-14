@@ -493,8 +493,9 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
     try {
         const { lat, lng, radius = 10, page = 1, page_size = 5 } = req.validated;
 
-        // Fetch all businesses with locations
+        // Fetch only verified businesses
         const businessesSnapshot = await db.collection('businesses')
+            .where('business_status', '==', 'verified')
             .get();
 
         if (businessesSnapshot.empty) {
