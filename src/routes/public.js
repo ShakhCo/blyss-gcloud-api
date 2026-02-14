@@ -491,7 +491,7 @@ function calculateDistance(lat1, lng1, lat2, lng2) {
  */
 router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQuerySchema, 'query'), async (req, res) => {
     try {
-        const { lat, lng, radius = 10, page = 1, page_size = 5 } = req.validated;
+        const { lat, lng, radius, page = 1, page_size = 5 } = req.validated;
 
         // Fetch only verified businesses
         const businessesSnapshot = await db.collection('businesses')
@@ -522,7 +522,7 @@ router.get('/businesses/nearest', verifySignature, validate(nearestBusinessesQue
 
             const distance = calculateDistance(lat, lng, business.location.lat, business.location.lng);
 
-            if (distance <= radius) {
+            if (!radius || distance <= radius) {
                 businessesInRadius.push({ ...business, distance });
             }
         }
