@@ -85,6 +85,8 @@ export async function checkAndUpdateBusinessStatus(db, businessId) {
     const allMet = hasAvatar && hasCover && hasEnoughPhotos && hasActiveService && hasBusinessHours && hasQualifiedEmployee;
     const newStatus = allMet ? 'verified' : 'pending';
 
+    console.log(`[BusinessStatus] ${businessId}: avatar=${hasAvatar}, cover=${hasCover}, photos=${photosSnapshot.size}/4, activeService=${hasActiveService}, bizHours=${hasBusinessHours}, qualifiedEmp=${hasQualifiedEmployee} → ${newStatus} (was ${currentStatus})`);
+
     if (currentStatus !== newStatus) {
         await businessRef.update({ business_status: newStatus });
     }
