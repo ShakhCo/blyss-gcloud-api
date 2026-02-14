@@ -61,11 +61,13 @@ export async function checkAndUpdateBusinessStatus(db, businessId) {
 
     // 6. At least 1 employee with 1+ employeeService AND valid working hours
     let hasQualifiedEmployee = false;
+    console.log(`[BusinessStatus] ${businessId}: ${employeesSnapshot.size} employee(s) found`);
     for (const empDoc of employeesSnapshot.docs) {
         const empData = empDoc.data();
 
         // Flexible employees are always considered to have valid hours
         const empHasValidHours = empData.availability_type === 'flexible' || hasValidWorkingHours(empData.working_hours);
+        console.log(`[BusinessStatus] employee ${empDoc.id}: type=${empData.availability_type}, validHours=${empHasValidHours}`);
         if (!empHasValidHours) continue;
 
         const empServicesSnapshot = await db.collection('businesses')
@@ -76,6 +78,7 @@ export async function checkAndUpdateBusinessStatus(db, businessId) {
             .limit(1)
             .get();
 
+        console.log(`[BusinessStatus] employee ${empDoc.id}: services=${empServicesSnapshot.size}`);
         if (!empServicesSnapshot.empty) {
             hasQualifiedEmployee = true;
             break;
