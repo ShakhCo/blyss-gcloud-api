@@ -10,8 +10,6 @@ import { distanceBodySchema } from '../schemas/distance.js';
 import { sendOtpSms } from '../utils/eskiz.js';
 import { generateTokenPair, verifyRefreshToken } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
-import { sendBookingNotification } from '../utils/telegram.js';
-
 const router = Router();
 
 /**
@@ -2051,28 +2049,6 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                 });
             }
             throw txError;
-        }
-
-        // 6. Send Telegram notification (post-transaction)
-        if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
-            try {
-                const firstItem = bookingItems[0];
-                const serviceName = typeof firstItem.service_name === 'object'
-                    ? firstItem.service_name.uz || firstItem.service_name.ru
-                    : firstItem.service_name;
-
-                await sendBookingNotification(businessData.telegram_bot.chat_id, {
-                    serviceName,
-                    customerName: bookingPayload.customer_name,
-                    customerPhone: bookingPayload.customer_phone || 'N/A',
-                    date,
-                    time: secondsToTime(start_time),
-                    employeeName: firstItem.employee_name,
-                    totalPrice
-                });
-            } catch (telegramError) {
-                console.error('Failed to send Telegram notification:', telegramError);
-            }
         }
 
         res.status(201).json({

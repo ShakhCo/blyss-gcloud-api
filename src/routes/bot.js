@@ -4,7 +4,6 @@ import { validate } from '../middleware/validate.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { botCreateBookingSchema } from '../schemas/booking.js';
-import { sendBookingNotification } from '../utils/telegram.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
@@ -666,28 +665,6 @@ router.post('/businesses/:businessId/bookings', bookingCreateLimiter, validate(b
         };
 
         await db.collection('bookings').doc(bookingId).set(bookingPayload);
-
-        // 10. Send Telegram notification to business
-        if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
-            try {
-                const firstItem = bookingItems[0];
-                const serviceName = typeof firstItem.service_name === 'object'
-                    ? firstItem.service_name.uz || firstItem.service_name.ru
-                    : firstItem.service_name;
-
-                await sendBookingNotification(businessData.telegram_bot.chat_id, {
-                    serviceName,
-                    customerName: customer_name,
-                    customerPhone: customer_phone || 'N/A',
-                    date,
-                    time: secondsToTime(start_time),
-                    employeeName: firstItem.employee_name,
-                    totalPrice
-                });
-            } catch (telegramError) {
-                console.error('Failed to send Telegram notification:', telegramError);
-            }
-        }
 
         res.status(201).json({
             id: bookingId,

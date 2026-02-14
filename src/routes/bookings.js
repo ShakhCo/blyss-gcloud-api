@@ -13,7 +13,6 @@ import {
     serviceEmployeesQuerySchema
 } from '../schemas/booking.js';
 import {
-    sendBookingNotification,
     sendBookingCancellationNotification,
     sendBookingStatusUpdateNotification
 } from '../utils/telegram.js';
@@ -721,29 +720,6 @@ router.post(
                     });
                 }
                 throw txError;
-            }
-
-            // Send Telegram notification to business if enabled
-            if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
-                try {
-                    const firstItem = items[0];
-                    const serviceName = typeof firstItem.service_name === 'object'
-                        ? firstItem.service_name.uz || firstItem.service_name.ru
-                        : firstItem.service_name;
-
-                    await sendBookingNotification(businessData.telegram_bot.chat_id, {
-                        serviceName,
-                        customerName: customer_name,
-                        customerPhone: customer_phone,
-                        date: booking_date,
-                        time: firstItem.start_time.split('T')[1],
-                        employeeName: firstItem.employee_name,
-                        totalPrice
-                    });
-                } catch (telegramError) {
-                    console.error('Failed to send Telegram notification:', telegramError);
-                    // Don't fail the booking if notification fails
-                }
             }
 
             res.status(201).json({
