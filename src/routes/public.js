@@ -369,6 +369,7 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
                 tenant_url: businessData.tenant_url,
                 avatar_url: businessData.avatar_url || null,
                 cover_url: businessData.cover_url || null,
+                primary_color: businessData.primary_color || null,
             },
             photos: photosSnapshot.docs.map(doc => ({
                 id: doc.id,
