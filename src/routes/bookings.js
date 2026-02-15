@@ -1168,15 +1168,29 @@ router.patch(
                 updated_at: now
             });
 
-            // Send notification to customer if they have telegram_id
-            if (bookingData.customer_telegram_id) {
+            // Send notification to customer via Telegram
+            let customerTelegramId = bookingData.customer_telegram_id;
+
+            // If no telegram_id on booking, look up from users collection
+            if (!customerTelegramId && bookingData.user_id) {
+                try {
+                    const userDoc = await db.collection('users').doc(bookingData.user_id).get();
+                    if (userDoc.exists) {
+                        customerTelegramId = userDoc.data().telegram_id || null;
+                    }
+                } catch (lookupError) {
+                    console.error('Failed to look up customer telegram_id:', lookupError);
+                }
+            }
+
+            if (customerTelegramId) {
                 try {
                     const firstItem = bookingData.items?.[0];
                     const serviceName = typeof firstItem?.service_name === 'object'
                         ? firstItem.service_name.uz || firstItem.service_name.ru
                         : firstItem?.service_name || 'Service';
 
-                    await sendBookingStatusUpdateNotification(bookingData.customer_telegram_id, {
+                    await sendBookingStatusUpdateNotification(customerTelegramId, {
                         businessName: businessData.business_name,
                         serviceName,
                         date: bookingData.booking_date,

@@ -1221,25 +1221,63 @@ router.patch('/my-bookings/:bookingId/cancel', verifySignature, authenticate, as
             updated_at: now
         });
 
-        // Send Telegram notification to business
+        // Prepare notification details
+        const firstItem = bookingData.items?.[0];
+        const serviceName = typeof firstItem?.service_name === 'object'
+            ? firstItem.service_name.uz || firstItem.service_name.ru
+            : firstItem?.service_name || 'Service';
+        const notificationDetails = {
+            serviceName,
+            customerName: bookingData.customer_name,
+            date: bookingData.booking_date,
+            time: firstItem?.start_time?.split('T')[1] || ''
+        };
+
+        // Send Telegram notifications
         const businessDoc = await db.collection('businesses').doc(bookingData.business_id).get();
         if (businessDoc.exists) {
             const businessData = businessDoc.data();
+
+            // 1. Notify business bot channel
             if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
                 try {
-                    const firstItem = bookingData.items?.[0];
-                    const serviceName = typeof firstItem?.service_name === 'object'
-                        ? firstItem.service_name.uz || firstItem.service_name.ru
-                        : firstItem?.service_name || 'Service';
-
-                    await sendBookingCancellationNotification(businessData.telegram_bot.chat_id, {
-                        serviceName,
-                        customerName: bookingData.customer_name,
-                        date: bookingData.booking_date,
-                        time: firstItem?.start_time?.split('T')[1] || ''
-                    });
+                    await sendBookingCancellationNotification(businessData.telegram_bot.chat_id, notificationDetails);
                 } catch (telegramError) {
-                    console.error('Failed to send cancellation notification:', telegramError);
+                    console.error('Failed to send cancellation notification to bot:', telegramError);
+                }
+            }
+
+            // 2. Notify business owner via personal Telegram
+            try {
+                const ownerDoc = await db.collection('users').doc(businessData.business_owner_id).get();
+                if (ownerDoc.exists && ownerDoc.data().telegram_id) {
+                    await sendBookingCancellationNotification(ownerDoc.data().telegram_id, notificationDetails);
+                }
+            } catch (ownerError) {
+                console.error('Failed to send cancellation notification to owner:', ownerError);
+            }
+
+            // 3. Notify assigned employees via personal Telegram
+            const employeeIds = [...new Set(bookingData.items?.map(item => item.employee_id).filter(Boolean) || [])];
+            for (const employeeId of employeeIds) {
+                try {
+                    const employeeDoc = await db.collection('businesses').doc(bookingData.business_id)
+                        .collection('employees').doc(employeeId).get();
+                    if (!employeeDoc.exists) continue;
+
+                    const phoneNumber = employeeDoc.data().phone_number;
+                    if (!phoneNumber) continue;
+
+                    const usersSnapshot = await db.collection('users')
+                        .where('phone_number', '==', phoneNumber)
+                        .limit(1)
+                        .get();
+
+                    if (!usersSnapshot.empty && usersSnapshot.docs[0].data().telegram_id) {
+                        await sendBookingCancellationNotification(usersSnapshot.docs[0].data().telegram_id, notificationDetails);
+                    }
+                } catch (empError) {
+                    console.error(`Failed to send cancellation notification to employee ${employeeId}:`, empError);
                 }
             }
         }
