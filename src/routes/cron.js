@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { db } from '../db/db.js';
-import { sendBookingStatusUpdateNotification } from '../utils/telegram.js';
+import { sendBookingStatusUpdateNotification, sendTelegramMessage } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -120,6 +120,116 @@ router.post('/expire-pending-bookings', async (req, res) => {
     } catch (error) {
         console.error('Error expiring pending bookings:', error);
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * POST /cron/notify-upcoming-bookings
+ * Send Telegram reminder to customers with confirmed bookings starting within 1 hour.
+ * Only notifies once per booking (sets is_notified = true).
+ * Intended to be called by Google Cloud Scheduler every 10-15 minutes.
+ */
+router.post('/notify-upcoming-bookings', async (req, res) => {
+    try {
+        // Get current time in Uzbekistan (UTC+5)
+        const now = new Date();
+        const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const uzbekNow = new Date(utcNow + (5 * 3600000));
+        const oneHourLater = new Date(uzbekNow.getTime() + 60 * 60 * 1000);
+
+        const todayStr = uzbekNow.toISOString().split('T')[0];
+        const tomorrowStr = oneHourLater.toISOString().split('T')[0];
+
+        // Query confirmed bookings for today (and possibly tomorrow if near midnight)
+        const datesToQuery = [todayStr];
+        if (tomorrowStr !== todayStr) {
+            datesToQuery.push(tomorrowStr);
+        }
+
+        let allBookingDocs = [];
+        for (const dateStr of datesToQuery) {
+            const snapshot = await db.collection('bookings')
+                .where('status', '==', 'confirmed')
+                .where('is_notified', '==', false)
+                .where('booking_date', '==', dateStr)
+                .get();
+            allBookingDocs.push(...snapshot.docs);
+        }
+
+        if (allBookingDocs.length === 0) {
+            return res.json({ notified: 0 });
+        }
+
+        // Format current Uzbekistan time as comparable string
+        const uzbekNowMinutes = uzbekNow.getHours() * 60 + uzbekNow.getMinutes();
+        const oneHourLaterMinutes = uzbekNowMinutes + 60;
+
+        let notifiedCount = 0;
+
+        for (const bookingDoc of allBookingDocs) {
+            const bookingData = bookingDoc.data();
+            const firstItem = bookingData.items?.[0];
+            if (!firstItem?.start_time) continue;
+
+            // Parse start_time (format: YYYY-MM-DDTHH:mm)
+            const timePart = firstItem.start_time.split('T')[1];
+            if (!timePart) continue;
+
+            const [hours, minutes] = timePart.split(':').map(Number);
+            const bookingDateStr = bookingData.booking_date;
+
+            // Calculate booking time in minutes from midnight
+            const bookingMinutes = hours * 60 + minutes;
+
+            // For same-day bookings: check if within window
+            // For cross-midnight: handle the date boundary
+            let isWithinWindow = false;
+            if (bookingDateStr === todayStr) {
+                isWithinWindow = bookingMinutes >= uzbekNowMinutes && bookingMinutes <= oneHourLaterMinutes;
+            } else if (bookingDateStr === tomorrowStr && oneHourLaterMinutes > 1440) {
+                // Cross-midnight case: oneHourLaterMinutes wrapped into next day
+                const wrappedMinutes = oneHourLaterMinutes - 1440;
+                isWithinWindow = bookingMinutes <= wrappedMinutes;
+            }
+
+            if (!isWithinWindow) continue;
+
+            // Check if customer has telegram_id
+            const customerTelegramId = bookingData.customer_telegram_id;
+            if (!customerTelegramId) {
+                // No telegram ID on booking, mark as notified to skip next time
+                await bookingDoc.ref.update({ is_notified: true });
+                continue;
+            }
+
+            // Send reminder notification
+            try {
+                const serviceName = typeof firstItem.service_name === 'object'
+                    ? firstItem.service_name.uz || firstItem.service_name.ru
+                    : firstItem.service_name || 'Xizmat';
+
+                const message = `🔔 <b>Eslatma: Sizda yaqinlashayotgan buyurtma bor!</b>\n\n` +
+                    `🏢 <b>Biznes:</b> ${bookingData.business_name}\n` +
+                    `📋 <b>Xizmat:</b> ${serviceName}\n` +
+                    `📅 <b>Sana:</b> ${bookingData.booking_date}\n` +
+                    `🕐 <b>Vaqt:</b> ${timePart}\n\n` +
+                    `Iltimos, o'z vaqtida tashrif buyuring!`;
+
+                await sendTelegramMessage(customerTelegramId, message);
+                notifiedCount++;
+            } catch (telegramError) {
+                console.error(`Failed to notify customer ${customerTelegramId} for booking ${bookingDoc.id}:`, telegramError);
+            }
+
+            // Mark booking as notified regardless of telegram success to avoid retries
+            await bookingDoc.ref.update({ is_notified: true });
+        }
+
+        console.log(`Notified ${notifiedCount} upcoming bookings`);
+        res.json({ notified: notifiedCount });
+    } catch (error) {
+        console.error('Error notifying upcoming bookings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
