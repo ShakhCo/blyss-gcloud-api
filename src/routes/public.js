@@ -173,21 +173,31 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
         const zoneDomain = process.env.CLOUDFLARE_ZONE_DOMAIN || 'blyss.uz';
         const tenantUrl = `${slug}.${zoneDomain}`;
 
-        // Find business by tenant_url
+        // Find business by tenant_url first, then fallback to document ID
+        let businessDoc;
+        let businessId;
+
         const businessesSnapshot = await db.collection('businesses')
             .where('tenant_url', '==', tenantUrl)
             .limit(1)
             .get();
 
-        if (businessesSnapshot.empty) {
-            return res.status(404).json({
-                error: 'Business not found',
-                error_code: 'BUSINESS_NOT_FOUND'
-            });
+        if (!businessesSnapshot.empty) {
+            businessDoc = businessesSnapshot.docs[0];
+            businessId = businessDoc.id;
+        } else {
+            // Fallback: try by document ID
+            const byIdDoc = await db.collection('businesses').doc(slug).get();
+            if (!byIdDoc.exists) {
+                return res.status(404).json({
+                    error: 'Business not found',
+                    error_code: 'BUSINESS_NOT_FOUND'
+                });
+            }
+            businessDoc = byIdDoc;
+            businessId = byIdDoc.id;
         }
 
-        const businessDoc = businessesSnapshot.docs[0];
-        const businessId = businessDoc.id;
         const businessData = businessDoc.data();
 
         // Get active services, accepted employees, and photos in parallel
