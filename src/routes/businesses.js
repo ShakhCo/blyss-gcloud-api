@@ -2784,8 +2784,8 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
             if (data.customer_name) {
                 customer.customer_name = data.customer_name;
             }
-            // Only track dates for non-cancelled bookings
-            if (!isCancelled && bookingDate) {
+            // Only track dates for completed bookings
+            if (isCompleted && bookingDate) {
                 if (!customer.last_booking_date || bookingDate > customer.last_booking_date) {
                     customer.last_booking_date = bookingDate;
                 }
