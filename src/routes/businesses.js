@@ -124,6 +124,7 @@ router.get('/', authenticate, async (req, res) => {
                 id: doc.id,
                 business_name: data.business_name,
                 business_type: data.business_type,
+                bio: data.bio || '',
                 location: data.location,
                 working_hours: data.working_hours,
                 business_phone_number: data.business_phone_number,
@@ -218,6 +219,7 @@ router.get('/:id', authenticate, async (req, res) => {
             id: doc.id,
             business_name: data.business_name,
             business_type: data.business_type,
+            bio: data.bio || '',
             location: data.location,
             working_hours: data.working_hours,
             business_phone_number: data.business_phone_number,
@@ -272,6 +274,7 @@ router.get('/owner/:ownerId', async (req, res) => {
                 id: doc.id,
                 business_name: data.business_name,
                 business_type: data.business_type,
+                bio: data.bio || '',
                 location: data.location,
                 working_hours: data.working_hours,
                 business_phone_number: data.business_phone_number,
@@ -334,6 +337,7 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
         const businessData = {
             business_name,
             business_type,
+            bio: '',
             location,
             working_hours,
             business_phone_number,
@@ -645,7 +649,7 @@ router.patch('/:id/name', authenticate, async (req, res) => {
             return res.status(400).json({ error: 'Request body is required with Content-Type: application/json', error_code: 'NO_BODY' });
         }
 
-        const { business_name } = req.body;
+        const { business_name, bio } = req.body;
 
         if (!business_name) {
             return res.status(400).json({ error: 'business_name is required', error_code: 'MISSING_BUSINESS_NAME' });
@@ -665,12 +669,18 @@ router.patch('/:id/name', authenticate, async (req, res) => {
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // Update only business_name
-        await docRef.update({ business_name });
+        // Build update object
+        const updateData = { business_name };
+        if (bio !== undefined) {
+            updateData.bio = typeof bio === 'string' ? bio.trim() : '';
+        }
+
+        await docRef.update(updateData);
 
         res.json({
             id: req.params.id,
-            business_name
+            business_name,
+            bio: updateData.bio !== undefined ? updateData.bio : (currentData.bio || '')
         });
     } catch (error) {
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });

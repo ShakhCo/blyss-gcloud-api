@@ -75,6 +75,7 @@ router.get('/business', async (req, res) => {
 
         res.json({
             business_name: businessData.business_name,
+            bio: businessData.bio || '',
             business_type: businessData.business_type,
             location: businessData.location,
             working_hours: businessData.working_hours,
@@ -371,6 +372,7 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
             business: {
                 id: businessId,
                 name: businessData.business_name,
+                bio: businessData.bio || '',
                 business_type: businessData.business_type,
                 location: businessData.location,
                 working_hours: formatWorkingHours(businessData.working_hours),
@@ -446,6 +448,7 @@ router.get('/businesses/:businessId/details', verifySignature, async (req, res) 
         res.json({
             business_id: businessId,
             business_name: businessData.business_name,
+            bio: businessData.bio || '',
             business_location: {
                 city: location.city || '',
                 country: location.country || '',

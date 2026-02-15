@@ -516,6 +516,7 @@ router.get('/business-details', async (req, res) => {
         res.json({
             business_id,
             business_name: businessData.business_name,
+            bio: businessData.bio || '',
             business_location: {
                 city: location.city || '',
                 country: location.country || '',
