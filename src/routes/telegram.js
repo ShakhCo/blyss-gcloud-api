@@ -10,6 +10,7 @@ import { userBookingsQuerySchema } from '../schemas/booking.js';
 import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
+import { sendBookingCancellationNotification } from '../utils/telegram.js';
 
 const router = Router();
 
@@ -1494,9 +1495,20 @@ router.get('/bookings', validate(userBookingsQuerySchema, 'query'), async (req, 
         const userId = String(telegramUser.id);
         const { page, page_size, status, business_id, date_from, date_to } = req.validated;
 
-        // Query bookings by user_id (stored as String(telegram_id))
+        // Fetch user's phone number to find all bookings across apps
+        const userDoc = await db.collection('users').doc(userId).get();
+        const phoneNumber = userDoc.exists ? userDoc.data().phone_number : null;
+
+        if (!phoneNumber) {
+            return res.json({
+                data: [],
+                pagination: { page, page_size, total: 0, total_pages: 0, has_next: false, has_prev: false }
+            });
+        }
+
+        // Query bookings by customer_phone (common field across tenant and telegram bookings)
         let query = db.collection('bookings')
-            .where('user_id', '==', userId)
+            .where('customer_phone', '==', phoneNumber)
             .orderBy('created_at', 'desc');
 
         const bookingsSnapshot = await query.get();
@@ -1547,6 +1559,106 @@ router.get('/bookings', validate(userBookingsQuerySchema, 'query'), async (req, 
         });
     } catch (error) {
         console.error('Error in GET /telegram/bookings:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
+/**
+ * PATCH /telegram/bookings/:bookingId/cancel
+ * Cancel a booking (verified by phone number ownership)
+ */
+router.patch('/bookings/:bookingId/cancel', async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+        const telegramUser = req.telegramUser;
+        const userId = String(telegramUser.id);
+
+        // Get user's phone number
+        const userDoc = await db.collection('users').doc(userId).get();
+        if (!userDoc.exists || !userDoc.data().phone_number) {
+            return res.status(403).json({
+                error: 'Phone number required to cancel bookings',
+                error_code: 'PHONE_NUMBER_REQUIRED'
+            });
+        }
+        const phoneNumber = userDoc.data().phone_number;
+
+        // Fetch booking
+        const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+        if (!bookingDoc.exists) {
+            return res.status(404).json({
+                error: 'Booking not found',
+                error_code: 'BOOKING_NOT_FOUND'
+            });
+        }
+
+        const bookingData = bookingDoc.data();
+
+        // Verify ownership by phone number
+        if (bookingData.customer_phone !== phoneNumber) {
+            return res.status(403).json({
+                error: 'Access denied',
+                error_code: 'FORBIDDEN'
+            });
+        }
+
+        // Check if booking can be cancelled
+        if (bookingData.status === 'cancelled') {
+            return res.status(400).json({
+                error: 'Booking is already cancelled',
+                error_code: 'ALREADY_CANCELLED'
+            });
+        }
+
+        if (bookingData.status === 'completed') {
+            return res.status(400).json({
+                error: 'Cannot cancel a completed booking',
+                error_code: 'CANNOT_CANCEL_COMPLETED'
+            });
+        }
+
+        // Update booking status
+        const now = new Date();
+        await bookingDoc.ref.update({
+            status: 'cancelled',
+            updated_at: now
+        });
+
+        // Send Telegram notification to business
+        const businessDoc = await db.collection('businesses').doc(bookingData.business_id).get();
+        if (businessDoc.exists) {
+            const businessData = businessDoc.data();
+            if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
+                try {
+                    const firstItem = bookingData.items?.[0];
+                    const serviceName = typeof firstItem?.service_name === 'object'
+                        ? firstItem.service_name.uz || firstItem.service_name.ru
+                        : firstItem?.service_name || 'Service';
+
+                    await sendBookingCancellationNotification(businessData.telegram_bot.chat_id, {
+                        serviceName,
+                        customerName: bookingData.customer_name,
+                        date: bookingData.booking_date,
+                        time: firstItem?.start_time?.split('T')[1] || ''
+                    });
+                } catch (telegramError) {
+                    console.error('Failed to send cancellation notification:', telegramError);
+                }
+            }
+        }
+
+        res.json({
+            id: bookingId,
+            ...bookingData,
+            status: 'cancelled',
+            updated_at: now.toISOString(),
+            created_at: bookingData.created_at?.toDate?.().toISOString() || bookingData.created_at
+        });
+    } catch (error) {
+        console.error('Error in PATCH /telegram/bookings/:bookingId/cancel:', error);
         res.status(500).json({
             error: 'Internal server error',
             error_code: 'INTERNAL_ERROR'
