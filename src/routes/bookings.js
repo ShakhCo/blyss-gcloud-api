@@ -1113,7 +1113,7 @@ router.patch(
             const { businessId, bookingId } = req.params;
             const { status } = req.validated;
 
-            // Verify business ownership
+            // Verify business access (owner or accepted employee)
             const businessDoc = await db.collection('businesses').doc(businessId).get();
             if (!businessDoc.exists) {
                 return res.status(404).json({
@@ -1123,11 +1123,23 @@ router.patch(
             }
 
             const businessData = businessDoc.data();
-            if (businessData.business_owner_id !== req.user.id) {
-                return res.status(403).json({
-                    error: 'Access denied',
-                    error_code: 'FORBIDDEN'
-                });
+            const isOwner = businessData.business_owner_id === req.user.id;
+
+            if (!isOwner) {
+                const employeeSnapshot = await db.collection('businesses').doc(businessId)
+                    .collection('employees')
+                    .where('phone_number', '==', req.user.phone_number)
+                    .where('is_accepted', '==', true)
+                    .where('is_rejected', '==', false)
+                    .limit(1)
+                    .get();
+
+                if (employeeSnapshot.empty) {
+                    return res.status(403).json({
+                        error: 'Access denied',
+                        error_code: 'FORBIDDEN'
+                    });
+                }
             }
 
             // Fetch booking

@@ -10,6 +10,7 @@ import { distanceBodySchema } from '../schemas/distance.js';
 import { sendOtpSms } from '../utils/eskiz.js';
 import { generateTokenPair, verifyRefreshToken } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
+import { sendBookingCancellationNotification } from '../utils/telegram.js';
 const router = Router();
 
 /**
@@ -1166,6 +1167,90 @@ router.get('/my-bookings', verifySignature, authenticate, async (req, res) => {
         res.json({ bookings });
     } catch (error) {
         console.error('Error in GET /public/my-bookings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * PATCH /public/my-bookings/:bookingId/cancel
+ * Cancel a booking (authenticated user, must own the booking)
+ */
+router.patch('/my-bookings/:bookingId/cancel', verifySignature, authenticate, async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+
+        // Fetch booking
+        const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+
+        if (!bookingDoc.exists) {
+            return res.status(404).json({
+                error: 'Booking not found',
+                error_code: 'BOOKING_NOT_FOUND'
+            });
+        }
+
+        const bookingData = bookingDoc.data();
+
+        // Verify ownership
+        if (bookingData.user_id !== req.user.id) {
+            return res.status(403).json({
+                error: 'Access denied',
+                error_code: 'FORBIDDEN'
+            });
+        }
+
+        // Check if booking can be cancelled
+        if (bookingData.status === 'cancelled') {
+            return res.status(400).json({
+                error: 'Booking is already cancelled',
+                error_code: 'ALREADY_CANCELLED'
+            });
+        }
+
+        if (bookingData.status === 'completed') {
+            return res.status(400).json({
+                error: 'Cannot cancel a completed booking',
+                error_code: 'CANNOT_CANCEL_COMPLETED'
+            });
+        }
+
+        // Update booking status
+        const now = new Date();
+        await bookingDoc.ref.update({
+            status: 'cancelled',
+            updated_at: now
+        });
+
+        // Send Telegram notification to business
+        const businessDoc = await db.collection('businesses').doc(bookingData.business_id).get();
+        if (businessDoc.exists) {
+            const businessData = businessDoc.data();
+            if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
+                try {
+                    const firstItem = bookingData.items?.[0];
+                    const serviceName = typeof firstItem?.service_name === 'object'
+                        ? firstItem.service_name.uz || firstItem.service_name.ru
+                        : firstItem?.service_name || 'Service';
+
+                    await sendBookingCancellationNotification(businessData.telegram_bot.chat_id, {
+                        serviceName,
+                        customerName: bookingData.customer_name,
+                        date: bookingData.booking_date,
+                        time: firstItem?.start_time?.split('T')[1] || ''
+                    });
+                } catch (telegramError) {
+                    console.error('Failed to send cancellation notification:', telegramError);
+                }
+            }
+        }
+
+        res.json({
+            id: bookingId,
+            status: 'cancelled',
+            updated_at: now.toISOString()
+        });
+    } catch (error) {
+        console.error('Error in PATCH /public/my-bookings/:bookingId/cancel:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
