@@ -768,11 +768,7 @@ router.get(
             }
 
             // Order by booking_date when date filters are used, otherwise by created_at
-            if (date_from || date_to) {
-                query = query.orderBy('booking_date', 'desc');
-            } else {
-                query = query.orderBy('created_at', 'desc');
-            }
+            query = query.orderBy('booking_date', 'desc');
 
             const bookingsSnapshot = await query.get();
 
@@ -968,11 +964,7 @@ router.get(
                 query = query.where('booking_date', '<=', date_to);
             }
 
-            if (date_from || date_to) {
-                query = query.orderBy('booking_date', 'desc');
-            } else {
-                query = query.orderBy('created_at', 'desc');
-            }
+            query = query.orderBy('booking_date', 'desc');
 
             const bookingsSnapshot = await query.get();
 
