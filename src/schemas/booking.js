@@ -59,6 +59,7 @@ export const businessBookingsQuerySchema = z.object({
     page_size: z.coerce.number().int().min(1).max(50).default(10),
     status: bookingStatusEnum.optional(),
     employee_id: z.string().optional(),
+    customer_phone: z.string().optional(),
     date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date_from must be in YYYY-MM-DD format').optional(),
     date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date_to must be in YYYY-MM-DD format').optional()
 });

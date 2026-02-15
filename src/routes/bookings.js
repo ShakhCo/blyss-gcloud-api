@@ -910,7 +910,7 @@ router.get(
     async (req, res) => {
         try {
             const { businessId } = req.params;
-            const { page, page_size, status, employee_id, date_from, date_to } = req.validated;
+            const { page, page_size, status, employee_id, customer_phone, date_from, date_to } = req.validated;
 
             // Verify business access (owner or employee)
             const businessDoc = await db.collection('businesses').doc(businessId).get();
@@ -998,6 +998,11 @@ router.get(
                     service_color: serviceColorMap[item.service_id] || '#088395'
                 }))
             }));
+
+            // Customer phone filter (in-memory)
+            if (customer_phone) {
+                bookings = bookings.filter(b => b.customer_phone === customer_phone);
+            }
 
             // Employee filter must remain in-memory (employee_id is nested inside items array)
             const effectiveEmployeeId = isEmployee ? employeeDocId : employee_id;
