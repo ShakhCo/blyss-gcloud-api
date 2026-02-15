@@ -5,7 +5,7 @@ import { db } from '../db/db.js';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 // Init data expiry time (5 minutes in seconds)
-const INIT_DATA_EXPIRES_IN = 300;
+const INIT_DATA_EXPIRES_IN = 3600;
 
 // In-memory cache for business bot tokens (5-minute TTL)
 const CACHE_TTL_MS = 5 * 60 * 1000;
