@@ -2757,7 +2757,9 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
             if (!phone) continue;
 
             const bookingDate = data.booking_date || '';
-            const isCompleted = data.status === 'completed';
+            const status = data.status;
+            const isCompleted = status === 'completed';
+            const isCancelled = status === 'cancelled';
             const totalPrice = data.total_price || 0;
 
             if (!customersMap.has(phone)) {
@@ -2767,8 +2769,8 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
                     total_bookings: 0,
                     completed_bookings: 0,
                     total_spent: 0,
-                    last_booking_date: bookingDate,
-                    first_booking_date: bookingDate,
+                    last_booking_date: '',
+                    first_booking_date: '',
                 });
             }
 
@@ -2782,11 +2784,14 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
             if (data.customer_name) {
                 customer.customer_name = data.customer_name;
             }
-            if (bookingDate > customer.last_booking_date) {
-                customer.last_booking_date = bookingDate;
-            }
-            if (bookingDate && (!customer.first_booking_date || bookingDate < customer.first_booking_date)) {
-                customer.first_booking_date = bookingDate;
+            // Only track dates for non-cancelled bookings
+            if (!isCancelled && bookingDate) {
+                if (!customer.last_booking_date || bookingDate > customer.last_booking_date) {
+                    customer.last_booking_date = bookingDate;
+                }
+                if (!customer.first_booking_date || bookingDate < customer.first_booking_date) {
+                    customer.first_booking_date = bookingDate;
+                }
             }
         }
 
