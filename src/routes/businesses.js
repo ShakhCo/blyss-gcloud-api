@@ -4,7 +4,7 @@ import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { uploadSingle } from '../config/multer.js';
-import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema } from '../schemas/business.js';
+import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema, businessCustomersQuerySchema } from '../schemas/business.js';
 import { serviceSchema, updateServiceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema, updateEmployeeSlotCapacitySchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
@@ -2698,6 +2698,129 @@ router.delete('/:id/employees/:employeeId/services/:serviceId', authenticate, as
         checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(204).send();
+    } catch (error) {
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ==================== CUSTOMERS ====================
+
+/**
+ * GET /:id/customers
+ * Get aggregated unique customers from bookings for a business
+ */
+router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema, 'query'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { page, page_size, search } = req.validated;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify access (owner or accepted employee)
+        const businessData = businessDoc.data();
+        const isOwner = businessData.business_owner_id === req.user.id;
+        let isEmployee = false;
+
+        if (!isOwner) {
+            const employeeSnapshot = await db.collection('businesses').doc(id)
+                .collection('employees')
+                .where('phone_number', '==', req.user.phone_number)
+                .where('is_accepted', '==', true)
+                .where('is_rejected', '==', false)
+                .limit(1)
+                .get();
+
+            if (!employeeSnapshot.empty) {
+                isEmployee = true;
+            }
+        }
+
+        if (!isOwner && !isEmployee) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Fetch all bookings for this business
+        const bookingsSnapshot = await db.collection('bookings')
+            .where('business_id', '==', id)
+            .get();
+
+        // Aggregate unique customers by phone
+        const customersMap = new Map();
+
+        for (const doc of bookingsSnapshot.docs) {
+            const data = doc.data();
+            const phone = data.customer_phone;
+            if (!phone) continue;
+
+            const bookingDate = data.booking_date || '';
+            const isCompleted = data.status === 'completed';
+            const totalPrice = data.total_price || 0;
+
+            if (!customersMap.has(phone)) {
+                customersMap.set(phone, {
+                    customer_name: data.customer_name || '',
+                    customer_phone: phone,
+                    total_bookings: 0,
+                    completed_bookings: 0,
+                    total_spent: 0,
+                    last_booking_date: bookingDate,
+                    first_booking_date: bookingDate,
+                });
+            }
+
+            const customer = customersMap.get(phone);
+            customer.total_bookings += 1;
+            if (isCompleted) {
+                customer.completed_bookings += 1;
+                customer.total_spent += totalPrice;
+            }
+            // Update name to most recent non-empty
+            if (data.customer_name) {
+                customer.customer_name = data.customer_name;
+            }
+            if (bookingDate > customer.last_booking_date) {
+                customer.last_booking_date = bookingDate;
+            }
+            if (bookingDate && (!customer.first_booking_date || bookingDate < customer.first_booking_date)) {
+                customer.first_booking_date = bookingDate;
+            }
+        }
+
+        let customers = Array.from(customersMap.values());
+
+        // Search filter
+        if (search) {
+            const searchLower = search.toLowerCase();
+            customers = customers.filter(c =>
+                c.customer_name.toLowerCase().includes(searchLower) ||
+                c.customer_phone.includes(search)
+            );
+        }
+
+        // Sort by last_booking_date desc
+        customers.sort((a, b) => b.last_booking_date.localeCompare(a.last_booking_date));
+
+        // Pagination
+        const total = customers.length;
+        const total_pages = Math.ceil(total / page_size) || 1;
+        const start = (page - 1) * page_size;
+        const paginatedCustomers = customers.slice(start, start + page_size);
+
+        res.json({
+            data: paginatedCustomers,
+            pagination: {
+                page,
+                page_size,
+                total,
+                total_pages,
+                has_prev: page > 1,
+                has_next: page < total_pages,
+            }
+        });
     } catch (error) {
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
