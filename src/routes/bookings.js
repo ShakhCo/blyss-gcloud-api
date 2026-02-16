@@ -412,18 +412,26 @@ router.get(
                 const availableEmployees = [];
 
                 for (const employee of employeesToCheck) {
-                    // Check employee working hours
-                    const empHours = employee.working_hours?.[dayName];
-                    if (empHours && !empHours.is_open) {
-                        continue;
-                    }
-
-                    if (empHours) {
-                        const empStartMinutes = Math.floor(empHours.start / 60);
-                        const empEndMinutes = Math.floor(empHours.end / 60);
-
-                        if (slotMinutes < empStartMinutes || slotMinutes + serviceDuration > empEndMinutes) {
+                    // Flexible employees: only available today when is_open_now is true
+                    if (employee.availability_type === 'flexible') {
+                        if (date !== todayUzb || !employee.is_open_now) {
                             continue;
+                        }
+                        // Flexible + is_open_now + today: slots bounded by business hours already
+                    } else {
+                        // Check fixed employee working hours
+                        const empHours = employee.working_hours?.[dayName];
+                        if (empHours && !empHours.is_open) {
+                            continue;
+                        }
+
+                        if (empHours) {
+                            const empStartMinutes = Math.floor(empHours.start / 60);
+                            const empEndMinutes = Math.floor(empHours.end / 60);
+
+                            if (slotMinutes < empStartMinutes || slotMinutes + serviceDuration > empEndMinutes) {
+                                continue;
+                            }
                         }
                     }
 

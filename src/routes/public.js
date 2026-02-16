@@ -1566,6 +1566,11 @@ router.get('/businesses/:businessId/slot-employees', verifySignature, validate(p
             });
         }
 
+        // Compute today in Uzbekistan timezone (GMT+5)
+        const nowUtc = new Date();
+        const uzbekNow = new Date(nowUtc.getTime() + 5 * 60 * 60 * 1000);
+        const todayUzb = uzbekNow.toISOString().split('T')[0];
+
         // 2. Get all employees
         const employeesSnapshot = await db.collection('businesses')
             .doc(businessId)
@@ -1623,6 +1628,8 @@ router.get('/businesses/:businessId/slot-employees', verifySignature, validate(p
                 first_name,
                 last_name,
                 working_hours: empData.working_hours || null,
+                availability_type: empData.availability_type || 'flexible',
+                is_open_now: empData.is_open_now || false,
                 allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
                 services
             });
@@ -1701,10 +1708,17 @@ router.get('/businesses/:businessId/slot-employees', verifySignature, validate(p
                 const empService = employee.services.get(serviceId);
                 const slotEnd = currentStartTime + empService.duration_minutes * 60;
 
-                const empHours = employee.working_hours?.[dayName];
-                if (empHours && !empHours.is_open) continue;
-                if (empHours && (currentStartTime < empHours.start || slotEnd > empHours.end)) continue;
-                if (slotEnd > businessHours.end) continue;
+                // Flexible employees: only available today when is_open_now is true
+                if (employee.availability_type === 'flexible') {
+                    if (date !== todayUzb || !employee.is_open_now) continue;
+                    // Business is already validated as open; only check business hour bounds
+                    if (slotEnd > businessHours.end) continue;
+                } else {
+                    const empHours = employee.working_hours?.[dayName];
+                    if (empHours && !empHours.is_open) continue;
+                    if (empHours && (currentStartTime < empHours.start || slotEnd > empHours.end)) continue;
+                    if (slotEnd > businessHours.end) continue;
+                }
 
                 const empBookings = employeeBookings.get(empId) || [];
                 let bookingCount = 0;
