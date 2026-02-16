@@ -233,4 +233,78 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
     }
 });
 
+/**
+ * POST /cron/complete-past-bookings
+ * Auto-complete confirmed bookings whose end time has passed.
+ * Uses Asia/Tashkent (UTC+5) timezone for comparison.
+ * Intended to be called by Google Cloud Scheduler every 10-15 minutes.
+ */
+router.post('/complete-past-bookings', async (req, res) => {
+    try {
+        // Get current time in Uzbekistan (UTC+5)
+        const now = new Date();
+        const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const uzbekNow = new Date(utcNow + (5 * 3600000));
+
+        const todayStr = uzbekNow.toISOString().split('T')[0];
+        const uzbekNowMinutes = uzbekNow.getHours() * 60 + uzbekNow.getMinutes();
+
+        // Query confirmed bookings for today and past dates
+        // Past dates: all confirmed bookings are definitely past their end time
+        const pastBookings = await db.collection('bookings')
+            .where('status', '==', 'confirmed')
+            .where('booking_date', '<', todayStr)
+            .get();
+
+        // Today's bookings: need to check end_time
+        const todayBookings = await db.collection('bookings')
+            .where('status', '==', 'confirmed')
+            .where('booking_date', '==', todayStr)
+            .get();
+
+        let completedCount = 0;
+        const updateTime = new Date();
+
+        // Complete all past-date bookings
+        for (const bookingDoc of pastBookings.docs) {
+            await bookingDoc.ref.update({
+                status: 'completed',
+                updated_at: updateTime
+            });
+            completedCount++;
+        }
+
+        // Complete today's bookings where end_time has passed
+        for (const bookingDoc of todayBookings.docs) {
+            const bookingData = bookingDoc.data();
+            const items = bookingData.items || [];
+            if (items.length === 0) continue;
+
+            // Get the last item's end_time (latest end time in the booking)
+            const lastItem = items[items.length - 1];
+            if (!lastItem?.end_time) continue;
+
+            const timePart = lastItem.end_time.split('T')[1];
+            if (!timePart) continue;
+
+            const [hours, minutes] = timePart.split(':').map(Number);
+            const endMinutes = hours * 60 + minutes;
+
+            if (endMinutes <= uzbekNowMinutes) {
+                await bookingDoc.ref.update({
+                    status: 'completed',
+                    updated_at: updateTime
+                });
+                completedCount++;
+            }
+        }
+
+        console.log(`Completed ${completedCount} past bookings`);
+        res.json({ completed: completedCount });
+    } catch (error) {
+        console.error('Error completing past bookings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
