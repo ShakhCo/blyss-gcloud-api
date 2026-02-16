@@ -139,22 +139,39 @@ export async function sendBookingCancellationNotification(telegramId, booking) {
  * @returns {Promise<void>}
  */
 export async function sendBookingStatusUpdateNotification(telegramId, details) {
-    const { businessName, serviceName, date, time, status } = details;
+    const { businessName, serviceName, date, time, endTime, status, cancelledReason, employeeName } = details;
 
-    const statusMessages = {
-        confirmed: '✅ <b>Buyurtmangiz tasdiqlandi!</b>',
-        completed: '🎉 <b>Buyurtmangiz yakunlandi!</b>',
-        cancelled: '❌ <b>Buyurtmangiz bekor qilindi!</b>',
-        no_show: '⚠️ <b>Buyurtmangiz "Kelmadi" deb belgilandi</b>'
-    };
+    let message;
 
-    const statusMessage = statusMessages[status] || `📋 <b>Buyurtma holati: ${status}</b>`;
+    if (status === 'cancelled') {
+        const startHHMM = time ? time.substring(0, 5) : '';
+        const endHHMM = endTime ? endTime.substring(0, 5) : '';
 
-    const message = `${statusMessage}\n\n` +
-        `🏢 <b>Biznes:</b> ${businessName}\n` +
-        `📋 <b>Xizmat:</b> ${serviceName}\n` +
-        `📅 <b>Sana:</b> ${date}\n` +
-        `🕐 <b>Vaqt:</b> ${time}`;
+        message = `❌ <b>Buyurtmangiz bekor qilindi!</b>\n\n`;
+        if (employeeName && startHHMM && endHHMM) {
+            message += `${employeeName} bilan ${date} soat ${startHHMM} dan ${endHHMM} gacha qilingan buyurtmangiz bekor qilindi. Noqulaylik uchun uzr so'raymiz.`;
+        } else {
+            message += `${businessName} da ${date} kuni qilingan buyurtmangiz bekor qilindi. Noqulaylik uchun uzr so'raymiz.`;
+        }
+
+        if (cancelledReason) {
+            message += `\n\n📝 <b>Sabab:</b> ${cancelledReason}`;
+        }
+    } else {
+        const statusMessages = {
+            confirmed: '✅ <b>Buyurtmangiz tasdiqlandi!</b>',
+            completed: '🎉 <b>Buyurtmangiz yakunlandi!</b>',
+            no_show: '⚠️ <b>Buyurtmangiz "Kelmadi" deb belgilandi</b>'
+        };
+
+        const statusMessage = statusMessages[status] || `📋 <b>Buyurtma holati: ${status}</b>`;
+
+        message = `${statusMessage}\n\n` +
+            `🏢 <b>Biznes:</b> ${businessName}\n` +
+            `📋 <b>Xizmat:</b> ${serviceName}\n` +
+            `📅 <b>Sana:</b> ${date}\n` +
+            `🕐 <b>Vaqt:</b> ${time}`;
+    }
 
     await sendTelegramMessage(telegramId, message);
 }

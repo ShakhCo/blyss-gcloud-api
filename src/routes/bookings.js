@@ -1130,7 +1130,7 @@ router.patch(
     async (req, res) => {
         try {
             const { businessId, bookingId } = req.params;
-            const { status } = req.validated;
+            const { status, cancelled_reason } = req.validated;
 
             // Verify business access (owner or accepted employee)
             const businessDoc = await db.collection('businesses').doc(businessId).get();
@@ -1182,10 +1182,11 @@ router.patch(
 
             // Update status
             const now = new Date();
-            await bookingDoc.ref.update({
-                status,
-                updated_at: now
-            });
+            const updateData = { status, updated_at: now };
+            if (status === 'cancelled' && cancelled_reason) {
+                updateData.cancelled_reason = cancelled_reason;
+            }
+            await bookingDoc.ref.update(updateData);
 
             // Send notification to customer via Telegram
             let customerTelegramId = bookingData.customer_telegram_id;
@@ -1205,16 +1206,26 @@ router.patch(
             if (customerTelegramId) {
                 try {
                     const firstItem = bookingData.items?.[0];
+                    const lastItem = bookingData.items?.[bookingData.items.length - 1];
                     const serviceName = typeof firstItem?.service_name === 'object'
                         ? firstItem.service_name.uz || firstItem.service_name.ru
                         : firstItem?.service_name || 'Service';
+
+                    // Get employee name for cancel notification
+                    let employeeName = '';
+                    if (status === 'cancelled' && firstItem?.employee_name) {
+                        employeeName = firstItem.employee_name;
+                    }
 
                     await sendBookingStatusUpdateNotification(customerTelegramId, {
                         businessName: businessData.business_name,
                         serviceName,
                         date: bookingData.booking_date,
                         time: firstItem?.start_time?.split('T')[1] || '',
-                        status
+                        endTime: lastItem?.end_time?.split('T')[1] || '',
+                        status,
+                        cancelledReason: cancelled_reason || null,
+                        employeeName
                     });
                 } catch (telegramError) {
                     console.error('Failed to send status update notification:', telegramError);

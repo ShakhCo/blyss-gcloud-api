@@ -66,7 +66,8 @@ export const businessBookingsQuerySchema = z.object({
 
 // Update booking status schema
 export const updateBookingStatusSchema = z.object({
-    status: bookingStatusEnum
+    status: bookingStatusEnum,
+    cancelled_reason: z.string().max(200).optional()
 });
 
 // Service employees query schema
