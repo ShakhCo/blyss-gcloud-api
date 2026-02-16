@@ -1419,6 +1419,8 @@ router.get('/businesses/:businessId/available-slots-v2', verifySignature, valida
                 employeesWithFirstService.push({
                     id: empDoc.id,
                     working_hours: empData.working_hours || null,
+                    availability_type: empData.availability_type || 'flexible',
+                    is_open_now: empData.is_open_now || false,
                     allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
                     duration_minutes: empServiceData.duration_minutes
                 });
@@ -1492,13 +1494,18 @@ router.get('/businesses/:businessId/available-slots-v2', verifySignature, valida
             let hasAvailableEmployee = false;
 
             for (const employee of filteredEmployees) {
-                const empHours = employee.working_hours?.[dayName];
-                if (empHours && !empHours.is_open) continue;
-
                 const slotEnd = slotStart + employee.duration_minutes * 60;
 
-                if (empHours && (slotStart < empHours.start || slotEnd > empHours.end)) continue;
-                if (slotEnd > businessHours.end) continue;
+                // Flexible employees: only available today when is_open_now is true
+                if (employee.availability_type === 'flexible') {
+                    if (date !== todayUzb || !employee.is_open_now) continue;
+                    if (slotEnd > businessHours.end) continue;
+                } else {
+                    const empHours = employee.working_hours?.[dayName];
+                    if (empHours && !empHours.is_open) continue;
+                    if (empHours && (slotStart < empHours.start || slotEnd > empHours.end)) continue;
+                    if (slotEnd > businessHours.end) continue;
+                }
 
                 const empBookings = employeeBookings.get(employee.id) || [];
                 let bookingCount = 0;
