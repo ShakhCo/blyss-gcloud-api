@@ -10,6 +10,7 @@ import {
     userBookingsQuerySchema,
     businessBookingsQuerySchema,
     updateBookingStatusSchema,
+    cancelBookingItemSchema,
     serviceEmployeesQuerySchema
 } from '../schemas/booking.js';
 import {
@@ -1269,6 +1270,196 @@ router.patch(
         } catch (error) {
             console.error('Error updating booking status:', error);
             console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+        }
+    }
+);
+
+/**
+ * PATCH /businesses/:businessId/bookings/:bookingId/items/:itemId/cancel
+ * Cancel a single item (service) within a booking.
+ * If all items become cancelled, the whole booking is cancelled too.
+ */
+router.patch(
+    '/businesses/:businessId/bookings/:bookingId/items/:itemId/cancel',
+    authenticate,
+    validate(cancelBookingItemSchema),
+    async (req, res) => {
+        try {
+            const { businessId, bookingId, itemId } = req.params;
+            const { cancelled_reason } = req.validated;
+
+            // Verify business access (owner or accepted employee)
+            const businessDoc = await db.collection('businesses').doc(businessId).get();
+            if (!businessDoc.exists) {
+                return res.status(404).json({
+                    error: 'Business not found',
+                    error_code: 'BUSINESS_NOT_FOUND'
+                });
+            }
+
+            const businessData = businessDoc.data();
+            const isOwner = businessData.business_owner_id === req.user.id;
+
+            if (!isOwner) {
+                const employeeSnapshot = await db.collection('businesses').doc(businessId)
+                    .collection('employees')
+                    .where('phone_number', '==', req.user.phone_number)
+                    .where('is_accepted', '==', true)
+                    .where('is_rejected', '==', false)
+                    .limit(1)
+                    .get();
+
+                if (employeeSnapshot.empty) {
+                    return res.status(403).json({
+                        error: 'Access denied',
+                        error_code: 'FORBIDDEN'
+                    });
+                }
+            }
+
+            // Fetch booking
+            const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+            if (!bookingDoc.exists) {
+                return res.status(404).json({
+                    error: 'Booking not found',
+                    error_code: 'BOOKING_NOT_FOUND'
+                });
+            }
+
+            const bookingData = bookingDoc.data();
+
+            if (bookingData.business_id !== businessId) {
+                return res.status(403).json({
+                    error: 'Booking does not belong to this business',
+                    error_code: 'FORBIDDEN'
+                });
+            }
+
+            // Find the target item
+            const items = bookingData.items || [];
+            const itemIndex = items.findIndex(i => i.id === itemId);
+            if (itemIndex === -1) {
+                return res.status(404).json({
+                    error: 'Booking item not found',
+                    error_code: 'ITEM_NOT_FOUND'
+                });
+            }
+
+            const targetItem = items[itemIndex];
+            if (targetItem.status === 'cancelled') {
+                return res.status(400).json({
+                    error: 'Item is already cancelled',
+                    error_code: 'ITEM_ALREADY_CANCELLED'
+                });
+            }
+
+            // Update the specific item's status
+            const now = new Date();
+            const updatedItems = items.map(item => {
+                if (item.id === itemId) {
+                    return { ...item, status: 'cancelled', cancelled_reason: cancelled_reason || '' };
+                }
+                return item;
+            });
+
+            // Check if ALL items are now cancelled -> cancel the whole booking
+            const allCancelled = updatedItems.every(item => item.status === 'cancelled');
+
+            const updateData = {
+                items: updatedItems,
+                updated_at: now,
+            };
+
+            // Recalculate totals from active items
+            const activeItems = updatedItems.filter(i => i.status !== 'cancelled');
+            updateData.total_price = activeItems.reduce((sum, i) => sum + (i.price || 0), 0);
+            updateData.total_duration_minutes = activeItems.reduce((sum, i) => sum + (i.duration_minutes || 0), 0);
+
+            if (allCancelled) {
+                updateData.status = 'cancelled';
+                if (cancelled_reason) {
+                    updateData.cancelled_reason = cancelled_reason;
+                }
+            }
+
+            await bookingDoc.ref.update(updateData);
+
+            // Send Telegram notification about the cancelled item
+            let customerTelegramId = bookingData.customer_telegram_id;
+            if (!customerTelegramId && bookingData.user_id) {
+                try {
+                    const userDoc = await db.collection('users').doc(bookingData.user_id).get();
+                    if (userDoc.exists) {
+                        customerTelegramId = userDoc.data().telegram_id || null;
+                    }
+                } catch (lookupError) {
+                    console.error('Failed to look up customer telegram_id:', lookupError);
+                }
+            }
+
+            if (customerTelegramId) {
+                try {
+                    const serviceName = typeof targetItem.service_name === 'object'
+                        ? targetItem.service_name.uz || targetItem.service_name.ru
+                        : targetItem.service_name || 'Service';
+
+                    // Other active bookings for same user/business/date (including remaining items in this booking)
+                    let otherBookings = [];
+                    if (bookingData.user_id) {
+                        try {
+                            const otherSnapshot = await db.collection('bookings')
+                                .where('business_id', '==', businessId)
+                                .where('user_id', '==', bookingData.user_id)
+                                .where('booking_date', '==', bookingData.booking_date)
+                                .where('status', 'in', ['pending', 'confirmed'])
+                                .get();
+
+                            for (const doc of otherSnapshot.docs) {
+                                const data = doc.data();
+                                const docItems = doc.id === bookingId ? updatedItems : (data.items || []);
+                                for (const item of docItems) {
+                                    if (item.status === 'cancelled') continue;
+                                    if (doc.id === bookingId && item.id === itemId) continue;
+                                    otherBookings.push({
+                                        employeeName: item.employee_name || '',
+                                        startTime: item.start_time?.split('T')[1]?.substring(0, 5) || '',
+                                    });
+                                }
+                            }
+                            otherBookings.sort((a, b) => a.startTime.localeCompare(b.startTime));
+                        } catch (lookupErr) {
+                            console.error('Failed to look up other bookings:', lookupErr);
+                        }
+                    }
+
+                    await sendBookingStatusUpdateNotification(customerTelegramId, {
+                        businessName: businessData.business_name,
+                        serviceName,
+                        date: bookingData.booking_date,
+                        time: targetItem.start_time?.split('T')[1] || '',
+                        endTime: targetItem.end_time?.split('T')[1] || '',
+                        status: 'cancelled',
+                        cancelledReason: cancelled_reason || null,
+                        employeeName: targetItem.employee_name || '',
+                        otherBookings
+                    });
+                } catch (telegramError) {
+                    console.error('Failed to send item cancel notification:', telegramError);
+                }
+            }
+
+            res.json({
+                id: bookingId,
+                ...bookingData,
+                items: updatedItems,
+                status: allCancelled ? 'cancelled' : bookingData.status,
+                total_price: updateData.total_price,
+                total_duration_minutes: updateData.total_duration_minutes,
+                updated_at: now.toISOString()
+            });
+        } catch (error) {
+            console.error('Error cancelling booking item:', error);
+            res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
         }
     }
 );

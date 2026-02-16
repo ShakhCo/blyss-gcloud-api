@@ -70,6 +70,11 @@ export const updateBookingStatusSchema = z.object({
     cancelled_reason: z.string().max(200).optional()
 });
 
+// Cancel booking item schema
+export const cancelBookingItemSchema = z.object({
+    cancelled_reason: z.string().max(200).optional()
+});
+
 // Service employees query schema
 export const serviceEmployeesQuerySchema = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be in YYYY-MM-DD format').optional()
