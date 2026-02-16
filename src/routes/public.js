@@ -1910,6 +1910,8 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                 first_name,
                 last_name,
                 working_hours: empData.working_hours || null,
+                availability_type: empData.availability_type || 'flexible',
+                is_open_now: empData.is_open_now || false,
                 allowed_booking_count_per_slot: empData.allowed_booking_count_per_slot || 1,
                 services: empServices
             });
@@ -2019,10 +2021,15 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                             const empService = emp.services.get(service_id);
                             const slotEnd = currentTime + empService.duration_minutes * 60;
 
-                            const empHours = emp.working_hours?.[dayName];
-                            if (empHours && !empHours.is_open) continue;
-                            if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) continue;
-                            if (slotEnd > businessHours.end) continue;
+                            if (emp.availability_type === 'flexible') {
+                                if (date !== uzbekToday || !emp.is_open_now) continue;
+                                if (slotEnd > businessHours.end) continue;
+                            } else {
+                                const empHours = emp.working_hours?.[dayName];
+                                if (empHours && !empHours.is_open) continue;
+                                if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) continue;
+                                if (slotEnd > businessHours.end) continue;
+                            }
 
                             const empBookings = employeeBookings.get(empId) || [];
                             let bookingCount = 0;
@@ -2049,19 +2056,31 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                     // Validate selected employee availability
                     const slotEnd = currentTime + selectedEmpService.duration_minutes * 60;
 
-                    const empHours = selectedEmployee.working_hours?.[dayName];
-                    if (empHours && !empHours.is_open) {
-                        const err = new Error('EMPLOYEE_NOT_WORKING');
-                        err.details = { employee_id: selectedEmployee.id };
-                        throw err;
-                    }
-                    if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) {
-                        const err = new Error('EMPLOYEE_NOT_AVAILABLE');
-                        err.details = { employee_id: selectedEmployee.id, time: secondsToTime(currentTime) };
-                        throw err;
-                    }
-                    if (slotEnd > businessHours.end) {
-                        throw new Error('EXCEEDS_BUSINESS_HOURS');
+                    if (selectedEmployee.availability_type === 'flexible') {
+                        // Flexible employees: must be open now and booking must be for today
+                        if (date !== uzbekToday || !selectedEmployee.is_open_now) {
+                            const err = new Error('EMPLOYEE_NOT_WORKING');
+                            err.details = { employee_id: selectedEmployee.id };
+                            throw err;
+                        }
+                        if (slotEnd > businessHours.end) {
+                            throw new Error('EXCEEDS_BUSINESS_HOURS');
+                        }
+                    } else {
+                        const empHours = selectedEmployee.working_hours?.[dayName];
+                        if (empHours && !empHours.is_open) {
+                            const err = new Error('EMPLOYEE_NOT_WORKING');
+                            err.details = { employee_id: selectedEmployee.id };
+                            throw err;
+                        }
+                        if (empHours && (currentTime < empHours.start || slotEnd > empHours.end)) {
+                            const err = new Error('EMPLOYEE_NOT_AVAILABLE');
+                            err.details = { employee_id: selectedEmployee.id, time: secondsToTime(currentTime) };
+                            throw err;
+                        }
+                        if (slotEnd > businessHours.end) {
+                            throw new Error('EXCEEDS_BUSINESS_HOURS');
+                        }
                     }
 
                     const empBookings = employeeBookings.get(selectedEmployee.id) || [];
