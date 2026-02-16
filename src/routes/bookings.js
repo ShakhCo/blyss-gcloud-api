@@ -1237,7 +1237,8 @@ router.patch(
                                         employeeName: item?.employee_name || '',
                                         startTime: item?.start_time?.split('T')[1]?.substring(0, 5) || '',
                                     };
-                                });
+                                })
+                                .sort((a, b) => a.startTime.localeCompare(b.startTime));
                         } catch (lookupErr) {
                             console.error('Failed to look up other bookings:', lookupErr);
                         }
