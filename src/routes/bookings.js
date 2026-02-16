@@ -1008,9 +1008,12 @@ router.get(
             const effectiveEmployeeId = isEmployee ? employeeDocId : employee_id;
 
             if (effectiveEmployeeId) {
-                bookings = bookings.filter(b =>
-                    b.items?.some(item => item.employee_id === effectiveEmployeeId)
-                );
+                bookings = bookings
+                    .map(b => ({
+                        ...b,
+                        items: (b.items || []).filter(item => item.employee_id === effectiveEmployeeId),
+                    }))
+                    .filter(b => b.items.length > 0);
             }
 
             // Calculate pagination
