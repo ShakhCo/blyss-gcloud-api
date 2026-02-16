@@ -61,8 +61,13 @@ router.post('/expire-pending-bookings', async (req, res) => {
         for (const bookingDoc of staleBookings.docs) {
             const bookingData = bookingDoc.data();
 
+            const updatedItems = (bookingData.items || []).map(item => ({
+                ...item,
+                status: 'cancelled'
+            }));
             await bookingDoc.ref.update({
                 status: 'cancelled',
+                items: updatedItems,
                 cancelled_reason: 'auto_expired',
                 updated_at: now
             });
@@ -265,34 +270,46 @@ router.post('/complete-past-bookings', async (req, res) => {
         let completedCount = 0;
         const updateTime = new Date();
 
-        // Complete all past-date bookings
+        // Complete all past-date bookings (with items)
         for (const bookingDoc of pastBookings.docs) {
+            const bookingData = bookingDoc.data();
+            const updatedItems = (bookingData.items || []).map(item =>
+                item.status === 'cancelled' ? item : { ...item, status: 'completed' }
+            );
             await bookingDoc.ref.update({
                 status: 'completed',
+                items: updatedItems,
                 updated_at: updateTime
             });
             completedCount++;
         }
 
-        // Complete today's bookings where end_time has passed
+        // Complete today's bookings where last active item's end_time has passed
         for (const bookingDoc of todayBookings.docs) {
             const bookingData = bookingDoc.data();
             const items = bookingData.items || [];
             if (items.length === 0) continue;
 
-            // Get the last item's end_time (latest end time in the booking)
-            const lastItem = items[items.length - 1];
-            if (!lastItem?.end_time) continue;
+            // Find the latest end_time among non-cancelled items
+            const activeItems = items.filter(i => i.status !== 'cancelled');
+            if (activeItems.length === 0) continue;
 
-            const timePart = lastItem.end_time.split('T')[1];
+            const lastActiveItem = activeItems[activeItems.length - 1];
+            if (!lastActiveItem?.end_time) continue;
+
+            const timePart = lastActiveItem.end_time.split('T')[1];
             if (!timePart) continue;
 
             const [hours, minutes] = timePart.split(':').map(Number);
             const endMinutes = hours * 60 + minutes;
 
             if (endMinutes <= uzbekNowMinutes) {
+                const updatedItems = items.map(item =>
+                    item.status === 'cancelled' ? item : { ...item, status: 'completed' }
+                );
                 await bookingDoc.ref.update({
                     status: 'completed',
+                    items: updatedItems,
                     updated_at: updateTime
                 });
                 completedCount++;
