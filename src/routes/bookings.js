@@ -1217,6 +1217,32 @@ router.patch(
                         employeeName = firstItem.employee_name;
                     }
 
+                    // Find other active bookings for same user/business/date
+                    let otherBookings = [];
+                    if (status === 'cancelled' && bookingData.user_id) {
+                        try {
+                            const otherSnapshot = await db.collection('bookings')
+                                .where('business_id', '==', businessId)
+                                .where('user_id', '==', bookingData.user_id)
+                                .where('booking_date', '==', bookingData.booking_date)
+                                .where('status', 'in', ['pending', 'confirmed'])
+                                .get();
+
+                            otherBookings = otherSnapshot.docs
+                                .filter(doc => doc.id !== bookingId)
+                                .map(doc => {
+                                    const data = doc.data();
+                                    const item = data.items?.[0];
+                                    return {
+                                        employeeName: item?.employee_name || '',
+                                        startTime: item?.start_time?.split('T')[1]?.substring(0, 5) || '',
+                                    };
+                                });
+                        } catch (lookupErr) {
+                            console.error('Failed to look up other bookings:', lookupErr);
+                        }
+                    }
+
                     await sendBookingStatusUpdateNotification(customerTelegramId, {
                         businessName: businessData.business_name,
                         serviceName,
@@ -1225,7 +1251,8 @@ router.patch(
                         endTime: lastItem?.end_time?.split('T')[1] || '',
                         status,
                         cancelledReason: cancelled_reason || null,
-                        employeeName
+                        employeeName,
+                        otherBookings
                     });
                 } catch (telegramError) {
                     console.error('Failed to send status update notification:', telegramError);

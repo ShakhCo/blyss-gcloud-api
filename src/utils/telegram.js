@@ -139,7 +139,7 @@ export async function sendBookingCancellationNotification(telegramId, booking) {
  * @returns {Promise<void>}
  */
 export async function sendBookingStatusUpdateNotification(telegramId, details) {
-    const { businessName, serviceName, date, time, endTime, status, cancelledReason, employeeName } = details;
+    const { businessName, serviceName, date, time, endTime, status, cancelledReason, employeeName, otherBookings } = details;
 
     let message;
 
@@ -156,6 +156,14 @@ export async function sendBookingStatusUpdateNotification(telegramId, details) {
 
         if (cancelledReason) {
             message += `\n\n📝 <b>Sabab:</b> ${cancelledReason}`;
+        }
+
+        if (otherBookings && otherBookings.length > 0) {
+            message += `\n\n⏰ Biroq, sizning boshqa buyurtmalaringiz faol:`;
+            for (const booking of otherBookings) {
+                message += `\n• <b>${booking.employeeName}</b> bilan soat <b>${booking.startTime}</b> da`;
+            }
+            message += `\nKechikmaslikni iltimos qilamiz!`;
         }
     } else {
         const statusMessages = {
