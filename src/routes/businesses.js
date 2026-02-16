@@ -2712,7 +2712,7 @@ router.delete('/:id/employees/:employeeId/services/:serviceId', authenticate, as
 router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema, 'query'), async (req, res) => {
     try {
         const { id } = req.params;
-        const { page, page_size, search } = req.validated;
+        const { page, page_size, search, employee_id } = req.validated;
 
         // Verify business exists
         const businessDoc = await db.collection('businesses').doc(id).get();
@@ -2748,10 +2748,19 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
             .where('business_id', '==', id)
             .get();
 
+        // Filter bookings by employee_id if provided (employee_id is nested in items array)
+        let bookingDocs = bookingsSnapshot.docs;
+        if (employee_id) {
+            bookingDocs = bookingDocs.filter(doc => {
+                const data = doc.data();
+                return data.items?.some(item => item.employee_id === employee_id);
+            });
+        }
+
         // Aggregate unique customers by phone
         const customersMap = new Map();
 
-        for (const doc of bookingsSnapshot.docs) {
+        for (const doc of bookingDocs) {
             const data = doc.data();
             const phone = data.customer_phone;
             if (!phone) continue;

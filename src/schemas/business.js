@@ -292,7 +292,8 @@ export const distanceQuerySchema = z.object({
 export const businessCustomersQuerySchema = z.object({
     page: z.coerce.number().int().min(1).default(1),
     page_size: z.coerce.number().int().min(1).max(50).default(20),
-    search: z.string().optional()
+    search: z.string().optional(),
+    employee_id: z.string().optional()
 });
 
 // Telegram OTP schemas
