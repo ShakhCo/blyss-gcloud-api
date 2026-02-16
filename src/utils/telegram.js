@@ -149,9 +149,9 @@ export async function sendBookingStatusUpdateNotification(telegramId, details) {
 
         message = `❌ <b>Buyurtmangiz bekor qilindi!</b>\n\n`;
         if (employeeName && startHHMM && endHHMM) {
-            message += `${employeeName} bilan ${date} soat ${startHHMM} dan ${endHHMM} gacha qilingan buyurtmangiz bekor qilindi. Noqulaylik uchun uzr so'raymiz.`;
+            message += `<b>${businessName}</b> da <b>${employeeName}</b> bilan ${date} soat <b>${startHHMM}</b> dan <b>${endHHMM}</b> gacha qilingan buyurtmangiz bekor qilindi. Noqulaylik uchun uzr so'raymiz.`;
         } else {
-            message += `${businessName} da ${date} kuni qilingan buyurtmangiz bekor qilindi. Noqulaylik uchun uzr so'raymiz.`;
+            message += `<b>${businessName}</b> da ${date} kuni qilingan buyurtmangiz bekor qilindi. Noqulaylik uchun uzr so'raymiz.`;
         }
 
         if (cancelledReason) {
