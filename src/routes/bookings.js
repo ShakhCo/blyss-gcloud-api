@@ -872,10 +872,15 @@ router.patch(
                 });
             }
 
-            // Update booking status
+            // Update booking status and cancel all items
             const now = new Date();
+            const updatedItems = (bookingData.items || []).map(item => ({
+                ...item,
+                status: 'cancelled'
+            }));
             await bookingDoc.ref.update({
                 status: 'cancelled',
+                items: updatedItems,
                 updated_at: now
             });
 
@@ -1184,8 +1189,15 @@ router.patch(
             // Update status
             const now = new Date();
             const updateData = { status, updated_at: now };
-            if (status === 'cancelled' && cancelled_reason) {
-                updateData.cancelled_reason = cancelled_reason;
+            if (status === 'cancelled') {
+                // Cancel all items when whole booking is cancelled
+                updateData.items = (bookingData.items || []).map(item => ({
+                    ...item,
+                    status: 'cancelled'
+                }));
+                if (cancelled_reason) {
+                    updateData.cancelled_reason = cancelled_reason;
+                }
             }
             await bookingDoc.ref.update(updateData);
 

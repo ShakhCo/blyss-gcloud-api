@@ -1217,10 +1217,15 @@ router.patch('/my-bookings/:bookingId/cancel', verifySignature, authenticate, as
             });
         }
 
-        // Update booking status
+        // Update booking status and cancel all items
         const now = new Date();
+        const updatedItems = (bookingData.items || []).map(item => ({
+            ...item,
+            status: 'cancelled'
+        }));
         await bookingDoc.ref.update({
             status: 'cancelled',
+            items: updatedItems,
             updated_at: now
         });
 
