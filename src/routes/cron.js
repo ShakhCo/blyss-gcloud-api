@@ -225,16 +225,10 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
 
             // Send reminder notification
             try {
-                const serviceName = typeof firstItem.service_name === 'object'
-                    ? firstItem.service_name.uz || firstItem.service_name.ru
-                    : firstItem.service_name || 'Xizmat';
+                const timeHHMM = timePart.substring(0, 5);
 
-                const message = `🔔 <b>Eslatma: Sizda yaqinlashayotgan buyurtma bor!</b>\n\n` +
-                    `🏢 <b>Biznes:</b> ${bookingData.business_name}\n` +
-                    `📋 <b>Xizmat:</b> ${serviceName}\n` +
-                    `📅 <b>Sana:</b> ${bookingData.booking_date}\n` +
-                    `🕐 <b>Vaqt:</b> ${timePart}\n\n` +
-                    `Iltimos, o'z vaqtida tashrif buyuring!`;
+                const message = `🔔 <b>Eslatma</b>\n\n` +
+                    `Bugun soat <b>${timeHHMM}</b> ga <b>${bookingData.business_name}</b>ga yozilgansiz. Iltimos, o'z vaqtida tashrif buyuring!`;
 
                 await sendTelegramMessage(customerTelegramId, message);
                 notifiedCount++;
