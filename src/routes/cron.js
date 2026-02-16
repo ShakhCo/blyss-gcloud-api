@@ -130,7 +130,8 @@ router.post('/expire-pending-bookings', async (req, res) => {
 
 /**
  * POST /cron/notify-upcoming-bookings
- * Send Telegram reminder to customers with confirmed bookings starting within 1 hour.
+ * Send Telegram reminder to customers with confirmed bookings starting within 2 hours.
+ * Looks up customer's phone number in users collection to find telegram_id.
  * Only notifies once per booking (sets is_notified = true).
  * Intended to be called by Google Cloud Scheduler every 10-15 minutes.
  */
@@ -140,34 +141,38 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
         const now = new Date();
         const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
         const uzbekNow = new Date(utcNow + (5 * 3600000));
-        const oneHourLater = new Date(uzbekNow.getTime() + 60 * 60 * 1000);
+        const twoHoursLater = new Date(uzbekNow.getTime() + 2 * 60 * 60 * 1000);
 
         const todayStr = uzbekNow.toISOString().split('T')[0];
-        const tomorrowStr = oneHourLater.toISOString().split('T')[0];
+        const laterDateStr = twoHoursLater.toISOString().split('T')[0];
 
         // Query confirmed bookings for today (and possibly tomorrow if near midnight)
         const datesToQuery = [todayStr];
-        if (tomorrowStr !== todayStr) {
-            datesToQuery.push(tomorrowStr);
+        if (laterDateStr !== todayStr) {
+            datesToQuery.push(laterDateStr);
         }
 
+        // Fetch bookings that haven't been notified yet
+        // Note: bookings without is_notified field won't match is_notified == false in Firestore,
+        // so we query all confirmed bookings and filter in code
         let allBookingDocs = [];
         for (const dateStr of datesToQuery) {
             const snapshot = await db.collection('bookings')
                 .where('status', '==', 'confirmed')
-                .where('is_notified', '==', false)
                 .where('booking_date', '==', dateStr)
                 .get();
             allBookingDocs.push(...snapshot.docs);
         }
 
+        // Filter out already-notified bookings
+        allBookingDocs = allBookingDocs.filter(doc => !doc.data().is_notified);
+
         if (allBookingDocs.length === 0) {
             return res.json({ notified: 0 });
         }
 
-        // Format current Uzbekistan time as comparable string
         const uzbekNowMinutes = uzbekNow.getHours() * 60 + uzbekNow.getMinutes();
-        const oneHourLaterMinutes = uzbekNowMinutes + 60;
+        const twoHoursLaterMinutes = uzbekNowMinutes + 120;
 
         let notifiedCount = 0;
 
@@ -182,27 +187,38 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
 
             const [hours, minutes] = timePart.split(':').map(Number);
             const bookingDateStr = bookingData.booking_date;
-
-            // Calculate booking time in minutes from midnight
             const bookingMinutes = hours * 60 + minutes;
 
-            // For same-day bookings: check if within window
-            // For cross-midnight: handle the date boundary
+            // Check if booking starts within the 2-hour window
             let isWithinWindow = false;
             if (bookingDateStr === todayStr) {
-                isWithinWindow = bookingMinutes >= uzbekNowMinutes && bookingMinutes <= oneHourLaterMinutes;
-            } else if (bookingDateStr === tomorrowStr && oneHourLaterMinutes > 1440) {
-                // Cross-midnight case: oneHourLaterMinutes wrapped into next day
-                const wrappedMinutes = oneHourLaterMinutes - 1440;
+                isWithinWindow = bookingMinutes >= uzbekNowMinutes && bookingMinutes <= twoHoursLaterMinutes;
+            } else if (bookingDateStr === laterDateStr && twoHoursLaterMinutes > 1440) {
+                const wrappedMinutes = twoHoursLaterMinutes - 1440;
                 isWithinWindow = bookingMinutes <= wrappedMinutes;
             }
 
             if (!isWithinWindow) continue;
 
-            // Check if customer has telegram_id
-            const customerTelegramId = bookingData.customer_telegram_id;
+            // Look up customer's telegram_id via customer_phone in users collection
+            let customerTelegramId = bookingData.customer_telegram_id || null;
+
+            if (!customerTelegramId && bookingData.customer_phone) {
+                try {
+                    const usersSnapshot = await db.collection('users')
+                        .where('phone_number', '==', bookingData.customer_phone)
+                        .limit(1)
+                        .get();
+                    if (!usersSnapshot.empty) {
+                        customerTelegramId = usersSnapshot.docs[0].data().telegram_id || null;
+                    }
+                } catch (lookupError) {
+                    console.error(`Failed to look up user by phone ${bookingData.customer_phone}:`, lookupError);
+                }
+            }
+
             if (!customerTelegramId) {
-                // No telegram ID on booking, mark as notified to skip next time
+                // No telegram ID found, mark as notified to skip next time
                 await bookingDoc.ref.update({ is_notified: true });
                 continue;
             }
