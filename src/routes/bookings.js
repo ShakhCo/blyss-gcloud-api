@@ -546,7 +546,18 @@ router.post(
                         error_code: 'EMPLOYEE_NOT_FOUND'
                     });
                 }
-                employeeDataMap.set(item.employee_id, employeeDoc.data());
+                const empData = employeeDoc.data();
+                employeeDataMap.set(item.employee_id, empData);
+
+                // Flexible employees: must be open now and booking must be for today
+                if (empData.availability_type === 'flexible') {
+                    if (booking_date !== uzbekToday || !empData.is_open_now) {
+                        return res.status(400).json({
+                            error: 'This employee is not currently available',
+                            error_code: 'SLOT_NOT_AVAILABLE'
+                        });
+                    }
+                }
             }
 
             // Pre-transaction: fetch server-side prices (never trust client-submitted prices)
