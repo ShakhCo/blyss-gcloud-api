@@ -269,7 +269,7 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                 : nearestItem.service_name || 'Xizmat';
 
             // Bilingual customer message (used for both SMS and telegram)
-            const bilingualMessage = `Salom, bu ${bookingData.business_name}. Siz bugun soat ${timeHHMM}ga yozilgansiz. Iltimos, vaqtida kelishingizni so'raymiz. Здравствуйте, это ${bookingData.business_name}. У вас запись сегодня на ${timeHHMM}. Пожалуйста, приходите вовремя.`;
+            const bilingualMessage = `Salom, bu ${bookingData.business_name}. Siz bugun soat ${timeHHMM}ga yozilgansiz. Iltimos, vaqtida kelishingizni so'raymiz.\n\nЗдравствуйте, это ${bookingData.business_name}. У вас запись сегодня на ${timeHHMM}. Пожалуйста, приходите вовремя.`;
 
             // 1. SMS via Eskiz to customer phone
             if (bookingData.customer_phone) {
