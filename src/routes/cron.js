@@ -294,6 +294,7 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                         `Iltimos, vaqtida kelishingizni so'raymiz.`;
 
                     const adminOptions = {};
+                    console.log(`TELEGRAM_BOT_USERNAME: "${TELEGRAM_BOT_USERNAME}", bookingId: "${bookingDoc.id}"`);
                     if (TELEGRAM_BOT_USERNAME) {
                         adminOptions.reply_markup = {
                             inline_keyboard: [[{
@@ -301,8 +302,12 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                                 url: `https://t.me/${TELEGRAM_BOT_USERNAME}?start=audio_${bookingDoc.id}`
                             }]]
                         };
+                        console.log(`Inline button URL: https://t.me/${TELEGRAM_BOT_USERNAME}?start=audio_${bookingDoc.id}`);
+                    } else {
+                        console.log('TELEGRAM_BOT_USERNAME is not set, skipping inline button');
                     }
 
+                    console.log('Admin message options:', JSON.stringify(adminOptions));
                     await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions).catch(err =>
                         console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, err)
                     );
