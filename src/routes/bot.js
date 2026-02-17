@@ -809,4 +809,45 @@ router.patch('/bookings/:bookingId/cancel', async (req, res) => {
     }
 });
 
+/**
+ * GET /bot/bookings/:bookingId/notification-text
+ * Get the saved notification text for a booking (used by business bot for audio feature).
+ */
+router.get('/bookings/:bookingId/notification-text', async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+        const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+
+        if (!bookingDoc.exists) {
+            return res.status(404).json({
+                error: 'Booking not found',
+                error_code: 'NOT_FOUND'
+            });
+        }
+
+        const data = bookingDoc.data();
+        if (!data.notification_text) {
+            return res.status(404).json({
+                error: 'No notification text found for this booking',
+                error_code: 'NO_NOTIFICATION_TEXT'
+            });
+        }
+
+        res.json({
+            booking_id: bookingId,
+            notification_text: data.notification_text,
+            business_name: data.business_name || '',
+            customer_phone: data.customer_phone || '',
+            customer_name: data.customer_name || '',
+            booking_date: data.booking_date || ''
+        });
+    } catch (error) {
+        console.error('Error in GET /bot/bookings/:bookingId/notification-text:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
+
 export default router;

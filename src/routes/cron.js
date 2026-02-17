@@ -7,6 +7,7 @@ const router = Router();
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
+const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME;
 
 /**
  * Convert 24h hours:minutes to Uzbek spoken time format.
@@ -267,20 +268,21 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                 continue;
             }
 
+            // Build customer reminder message
+            const timeHHMM = timePart.substring(0, 5);
+            const serviceName = typeof nearestItem.service_name === 'object'
+                ? nearestItem.service_name.uz || nearestItem.service_name.ru
+                : nearestItem.service_name || 'Xizmat';
+
+            const customerMessage = `🔔 <b>Eslatma: Sizda yaqinlashayotgan buyurtma bor!</b>\n\n` +
+                `🏢 <b>Biznes:</b> ${bookingData.business_name}\n` +
+                `📋 <b>Xizmat:</b> ${serviceName}\n` +
+                `📅 <b>Sana:</b> ${bookingData.booking_date}\n` +
+                `🕐 <b>Vaqt:</b> ${timeHHMM}\n\n` +
+                `Iltimos, o'z vaqtida tashrif buyuring!`;
+
             // Send reminder notification
             try {
-                const timeHHMM = timePart.substring(0, 5);
-                const serviceName = typeof nearestItem.service_name === 'object'
-                    ? nearestItem.service_name.uz || nearestItem.service_name.ru
-                    : nearestItem.service_name || 'Xizmat';
-
-                const customerMessage = `🔔 <b>Eslatma: Sizda yaqinlashayotgan buyurtma bor!</b>\n\n` +
-                    `🏢 <b>Biznes:</b> ${bookingData.business_name}\n` +
-                    `📋 <b>Xizmat:</b> ${serviceName}\n` +
-                    `📅 <b>Sana:</b> ${bookingData.booking_date}\n` +
-                    `🕐 <b>Vaqt:</b> ${timeHHMM}\n\n` +
-                    `Iltimos, o'z vaqtida tashrif buyuring!`;
-
                 await sendTelegramMessage(customerTelegramId, customerMessage);
                 notifiedCount++;
 
@@ -290,7 +292,18 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                     const adminMessage = `Salom, bu ${bookingData.business_name}.\n` +
                         `Sizda bugun soat ${uzbekTime} broningiz bor.\n` +
                         `Iltimos, vaqtida kelishingizni so'raymiz.`;
-                    await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage).catch(err =>
+
+                    const adminOptions = {};
+                    if (TELEGRAM_BOT_USERNAME) {
+                        adminOptions.reply_markup = {
+                            inline_keyboard: [[{
+                                text: '🎙 Audio Olish',
+                                url: `https://t.me/${TELEGRAM_BOT_USERNAME}?start=audio_${bookingDoc.id}`
+                            }]]
+                        };
+                    }
+
+                    await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions).catch(err =>
                         console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, err)
                     );
                 }
@@ -299,7 +312,10 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
             }
 
             // Mark booking as notified regardless of telegram success to avoid retries
-            await bookingDoc.ref.update({ is_notified: true });
+            await bookingDoc.ref.update({
+                is_notified: true,
+                notification_text: customerMessage
+            });
         }
 
         console.log(`Notified ${notifiedCount} upcoming bookings`);
