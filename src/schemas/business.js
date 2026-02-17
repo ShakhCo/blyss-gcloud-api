@@ -297,6 +297,21 @@ export const businessCustomersQuerySchema = z.object({
 });
 
 // Telegram OTP schemas
+// Transfer business schemas
+export const transferSendCodeSchema = z.object({
+    phone_number: z.string({ required_error: 'phone_number is required' })
+        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX')
+});
+
+export const transferConfirmSchema = z.object({
+    phone_number: z.string({ required_error: 'phone_number is required' })
+        .regex(/^998\d{9}$/, 'phone_number must be in format 998XXXXXXXXX'),
+    otp_code: z.coerce.number({ required_error: 'otp_code is required' })
+        .int('otp_code must be an integer')
+        .min(100000, 'otp_code must be 6 digits')
+        .max(999999, 'otp_code must be 6 digits')
+});
+
 export const telegramSendOtpSchema = z.object({
     user_id: z.string({ required_error: 'user_id is required' }),
     phone_number: z.string({ required_error: 'phone_number is required' })

@@ -4,12 +4,13 @@ import { db } from '../db/db.js';
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { uploadSingle } from '../config/multer.js';
-import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema, businessCustomersQuerySchema } from '../schemas/business.js';
+import bcrypt from 'bcryptjs';
+import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema, businessCustomersQuerySchema, transferSendCodeSchema, transferConfirmSchema } from '../schemas/business.js';
 import { serviceSchema, updateServiceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema, updateEmployeeSlotCapacitySchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
-import { sendBusinessInvitationSms } from '../utils/eskiz.js';
-import { sendBusinessInvitationNotification, sendBusinessRemovalNotification } from '../utils/telegram.js';
+import { sendBusinessInvitationSms, sendSms } from '../utils/eskiz.js';
+import { sendBusinessInvitationNotification, sendBusinessRemovalNotification, sendTelegramMessage } from '../utils/telegram.js';
 import { uploadFile, deleteFile, getFilenameFromUrl } from '../utils/storage.js';
 import { checkAndUpdateBusinessStatus } from '../utils/businessStatus.js';
 
@@ -2837,6 +2838,172 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
         });
     } catch (error) {
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ==================== TRANSFER BUSINESS ====================
+
+// Send transfer verification code
+router.post('/:id/transfer/send-code', authenticate, validate(transferSendCodeSchema), async (req, res) => {
+    try {
+        const { phone_number } = req.validated;
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        const businessData = doc.data();
+
+        // Verify ownership
+        if (businessData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Prevent self-transfer
+        if (phone_number === req.user.phone_number) {
+            return res.status(400).json({ error: 'Cannot transfer to yourself', error_code: 'SELF_TRANSFER' });
+        }
+
+        // Check receiver exists in business_owners
+        const receiverSnapshot = await db.collection('business_owners')
+            .where('phone_number', '==', phone_number)
+            .limit(1)
+            .get();
+
+        if (receiverSnapshot.empty) {
+            return res.status(404).json({ error: 'Receiver not found', error_code: 'RECEIVER_NOT_FOUND' });
+        }
+
+        const receiverDoc = receiverSnapshot.docs[0];
+        const receiverData = receiverDoc.data();
+
+        // Generate 6-digit OTP
+        const otpCode = crypto.randomInt(100000, 1000000);
+        const hashedOtp = await bcrypt.hash(otpCode.toString(), 10);
+
+        // Store OTP
+        await db.collection('otps').add({
+            user_id: receiverDoc.id,
+            type: 'transfer',
+            business_id: req.params.id,
+            sender_id: req.user.id,
+            otp_code: hashedOtp,
+            date_created: new Date(),
+            used: false,
+            attempts: 0
+        });
+
+        // Build bilingual message
+        const businessName = businessData.business_name;
+        const message = `${businessName} biznesi sizga topshirilmoqda. Tasdiqlash uchun kod: ${otpCode}.\nБизнес «${businessName}» передаётся вам. Код подтверждения: ${otpCode}.`;
+
+        // Send via Telegram if receiver has telegram_id
+        let deliveryMethod = 'sms';
+        if (receiverData.telegram_id) {
+            deliveryMethod = 'telegram';
+            try {
+                await sendTelegramMessage(receiverData.telegram_id, message);
+            } catch (telegramError) {
+                console.error('Failed to send transfer Telegram message:', telegramError);
+            }
+        }
+
+        // Also send SMS (fail silently)
+        sendSms(phone_number, message).catch(err => console.error('Failed to send transfer SMS:', err));
+
+        res.json({
+            receiver_id: receiverDoc.id,
+            delivery_method: deliveryMethod
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// Confirm transfer with OTP
+router.post('/:id/transfer/confirm', authenticate, validate(transferConfirmSchema), async (req, res) => {
+    try {
+        const { phone_number, otp_code } = req.validated;
+
+        const docRef = db.collection('businesses').doc(req.params.id);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        const businessData = doc.data();
+
+        // Verify ownership
+        if (businessData.business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Look up receiver
+        const receiverSnapshot = await db.collection('business_owners')
+            .where('phone_number', '==', phone_number)
+            .limit(1)
+            .get();
+
+        if (receiverSnapshot.empty) {
+            return res.status(404).json({ error: 'Receiver not found', error_code: 'RECEIVER_NOT_FOUND' });
+        }
+
+        const receiverDoc = receiverSnapshot.docs[0];
+
+        // Get latest unused transfer OTP for this receiver + business
+        const otpSnapshot = await db.collection('otps')
+            .where('user_id', '==', receiverDoc.id)
+            .where('type', '==', 'transfer')
+            .where('business_id', '==', req.params.id)
+            .where('used', '==', false)
+            .orderBy('date_created', 'desc')
+            .limit(1)
+            .get();
+
+        if (otpSnapshot.empty) {
+            return res.status(400).json({ error: 'No OTP found', error_code: 'OTP_NOT_FOUND' });
+        }
+
+        const otpDoc = otpSnapshot.docs[0];
+        const otpData = otpDoc.data();
+
+        // Check max attempts
+        if ((otpData.attempts || 0) >= 5) {
+            return res.status(400).json({ error: 'Max attempts reached', error_code: 'OTP_MAX_ATTEMPTS' });
+        }
+
+        // Check 5-minute expiry
+        const otpCreated = otpData.date_created.toDate ? otpData.date_created.toDate() : new Date(otpData.date_created);
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        if (otpCreated < fiveMinutesAgo) {
+            return res.status(400).json({ error: 'OTP expired', error_code: 'OTP_EXPIRED' });
+        }
+
+        // Increment attempts
+        await otpDoc.ref.update({ attempts: (otpData.attempts || 0) + 1 });
+
+        // Verify OTP
+        const isMatch = await bcrypt.compare(otp_code.toString(), otpData.otp_code);
+
+        if (!isMatch) {
+            return res.status(400).json({ error: 'Invalid OTP', error_code: 'INVALID_OTP' });
+        }
+
+        // Mark OTP as used and transfer ownership
+        await Promise.all([
+            otpDoc.ref.update({ used: true }),
+            docRef.update({ business_owner_id: receiverDoc.id })
+        ]);
+
+        res.json({ new_owner_id: receiverDoc.id });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
