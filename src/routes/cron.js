@@ -305,16 +305,16 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                     await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions).catch(err =>
                         console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, err)
                     );
+
+                    // Save the Uzbek admin message for the audio feature
+                    await bookingDoc.ref.update({ notification_text: adminMessage });
                 }
             } catch (telegramError) {
                 console.error(`Failed to notify customer ${customerTelegramId} for booking ${bookingDoc.id}:`, telegramError);
             }
 
             // Mark booking as notified regardless of telegram success to avoid retries
-            await bookingDoc.ref.update({
-                is_notified: true,
-                notification_text: customerMessage
-            });
+            await bookingDoc.ref.update({ is_notified: true });
         }
 
         console.log(`Notified ${notifiedCount} upcoming bookings`);
