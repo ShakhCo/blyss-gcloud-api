@@ -860,7 +860,11 @@ router.get('/bookings/:bookingId/notification-text', async (req, res) => {
             `Sizda bugun soat ${uzbekTime} broningiz bor.\n` +
             `Iltimos, vaqtida kelishingizni so'raymiz.`;
 
-        res.json({ booking_id: bookingId, notification_text: notificationText });
+        res.json({
+            booking_id: bookingId,
+            notification_text: notificationText,
+            admin_message_id: data.admin_message_id || null,
+        });
     } catch (error) {
         console.error('Error in GET /bot/bookings/:bookingId/notification-text:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });

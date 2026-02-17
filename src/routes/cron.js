@@ -302,11 +302,16 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                             }]]
                         };
                     }
-                    await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions).catch(err =>
-                        console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, err)
-                    );
+                    const adminResult = await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions).catch(err => {
+                        console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, err);
+                        return null;
+                    });
 
-}
+                    // Save message ID so the bot can remove the inline button after click
+                    if (adminResult && adminResult.message_id) {
+                        await bookingDoc.ref.update({ admin_message_id: adminResult.message_id });
+                    }
+                }
             } catch (telegramError) {
                 console.error(`Failed to notify customer ${customerTelegramId} for booking ${bookingDoc.id}:`, telegramError);
             }
