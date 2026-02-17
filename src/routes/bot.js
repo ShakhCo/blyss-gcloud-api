@@ -810,8 +810,30 @@ router.patch('/bookings/:bookingId/cancel', async (req, res) => {
 });
 
 /**
+ * Convert 24h hours:minutes to Uzbek spoken time format.
+ */
+function formatTimeInUzbek(hours, minutes) {
+    const hourNames = ["o'n ikki", 'bir', 'ikki', 'uch', "to'rt", 'besh', 'olti', 'yetti', 'sakkiz', "to'qqiz", "o'n", "o'n bir"];
+    const hour12 = hours % 12;
+    const hourName = hourNames[hour12];
+
+    if (minutes === 0) return `${hourName}da`;
+    if (minutes === 30) return `${hourName} yarimda`;
+
+    const ones = ['', 'bir', 'ikki', 'uch', "to'rt", 'besh', 'olti', 'yetti', 'sakkiz', "to'qqiz"];
+    const tens = ['', "o'n", 'yigirma', "o'ttiz", 'qirq', 'ellik'];
+    const ten = Math.floor(minutes / 10);
+    const one = minutes % 10;
+    const minuteName = one === 0 ? tens[ten] : `${tens[ten]} ${ones[one]}`;
+
+    const vowels = 'aeiou';
+    const connector = vowels.includes(hourName[hourName.length - 1]) ? 'yu' : 'u';
+    return `${hourName}${connector} ${minuteName}da`;
+}
+
+/**
  * GET /bot/bookings/:bookingId/notification-text
- * Get the saved notification text for a booking (used by business bot for audio feature).
+ * Build and return the Uzbek notification text for a booking (used by business bot for audio feature).
  */
 router.get('/bookings/:bookingId/notification-text', async (req, res) => {
     try {
@@ -819,34 +841,29 @@ router.get('/bookings/:bookingId/notification-text', async (req, res) => {
         const bookingDoc = await db.collection('bookings').doc(bookingId).get();
 
         if (!bookingDoc.exists) {
-            return res.status(404).json({
-                error: 'Booking not found',
-                error_code: 'NOT_FOUND'
-            });
+            return res.status(404).json({ error: 'Booking not found', error_code: 'NOT_FOUND' });
         }
 
         const data = bookingDoc.data();
-        if (!data.notification_text) {
-            return res.status(404).json({
-                error: 'No notification text found for this booking',
-                error_code: 'NO_NOTIFICATION_TEXT'
-            });
+        const items = (data.items || []).filter(i => i.status !== 'cancelled' && i.start_time);
+        if (items.length === 0) {
+            return res.status(404).json({ error: 'No active items in booking', error_code: 'NO_ITEMS' });
         }
 
-        res.json({
-            booking_id: bookingId,
-            notification_text: data.notification_text,
-            business_name: data.business_name || '',
-            customer_phone: data.customer_phone || '',
-            customer_name: data.customer_name || '',
-            booking_date: data.booking_date || ''
-        });
+        // Get earliest start time
+        const startTime = items[0].start_time;
+        const timePart = startTime.split('T')[1];
+        const [h, m] = timePart.split(':').map(Number);
+        const uzbekTime = formatTimeInUzbek(h, m);
+
+        const notificationText = `Salom, bu ${data.business_name}.\n` +
+            `Sizda bugun soat ${uzbekTime} broningiz bor.\n` +
+            `Iltimos, vaqtida kelishingizni so'raymiz.`;
+
+        res.json({ booking_id: bookingId, notification_text: notificationText });
     } catch (error) {
         console.error('Error in GET /bot/bookings/:bookingId/notification-text:', error);
-        res.status(500).json({
-            error: 'Internal server error',
-            error_code: 'INTERNAL_ERROR'
-        });
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
