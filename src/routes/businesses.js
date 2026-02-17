@@ -3000,6 +3000,14 @@ router.post('/:id/transfer/confirm', authenticate, validate(transferConfirmSchem
             docRef.update({ business_owner_id: receiverDoc.id })
         ]);
 
+        // Notify new owner via Telegram (fire and forget)
+        const receiverData = receiverDoc.data();
+        if (receiverData.telegram_id) {
+            const businessName = businessData.business_name;
+            const message = `✅ ${businessName} biznesi sizga muvaffaqiyatli topshirildi. Endi siz ushbu biznesning egasisiz.\n✅ Бизнес «${businessName}» успешно передан вам. Теперь вы являетесь владельцем этого бизнеса.`;
+            sendTelegramMessage(receiverData.telegram_id, message).catch(err => console.error('Failed to send transfer success notification:', err));
+        }
+
         res.json({ new_owner_id: receiverDoc.id });
     } catch (error) {
         console.error(error);
