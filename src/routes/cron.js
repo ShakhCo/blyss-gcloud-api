@@ -6,6 +6,35 @@ import { sendBookingStatusUpdateNotification, sendTelegramMessage } from '../uti
 const router = Router();
 
 const CRON_SECRET = process.env.CRON_SECRET;
+const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
+
+/**
+ * Convert 24h hours:minutes to Uzbek spoken time format.
+ * Examples: 15:00 → "uchda", 22:30 → "o'n yarimda", 14:45 → "ikkiyu qirq beshda"
+ */
+function formatTimeInUzbek(hours, minutes) {
+    const hourNames = ["o'n ikki", 'bir', 'ikki', 'uch', "to'rt", 'besh', 'olti', 'yetti', 'sakkiz', "to'qqiz", "o'n", "o'n bir"];
+    const hour12 = hours % 12;
+    const hourName = hourNames[hour12];
+
+    if (minutes === 0) {
+        return `${hourName}da`;
+    }
+    if (minutes === 30) {
+        return `${hourName} yarimda`;
+    }
+
+    const ones = ['', 'bir', 'ikki', 'uch', "to'rt", 'besh', 'olti', 'yetti', 'sakkiz', "to'qqiz"];
+    const tens = ['', "o'n", 'yigirma', "o'ttiz", 'qirq', 'ellik'];
+    const ten = Math.floor(minutes / 10);
+    const one = minutes % 10;
+    const minuteName = one === 0 ? tens[ten] : `${tens[ten]} ${ones[one]}`;
+
+    const vowels = 'aeiou';
+    const connector = vowels.includes(hourName[hourName.length - 1]) ? 'yu' : 'u';
+
+    return `${hourName}${connector} ${minuteName}da`;
+}
 
 /**
  * Middleware to verify cron requests via Bearer token.
@@ -178,11 +207,26 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
 
         for (const bookingDoc of allBookingDocs) {
             const bookingData = bookingDoc.data();
-            const firstItem = bookingData.items?.[0];
-            if (!firstItem?.start_time) continue;
+            const items = bookingData.items || [];
 
-            // Parse start_time (format: YYYY-MM-DDTHH:mm)
-            const timePart = firstItem.start_time.split('T')[1];
+            // Filter to only confirmed (non-cancelled) items with a start_time
+            const activeItems = items.filter(i => i.status !== 'cancelled' && i.start_time);
+            if (activeItems.length === 0) continue;
+
+            // Find the nearest item by start_time
+            const nearestItem = activeItems.reduce((closest, item) => {
+                const closestTime = closest.start_time.split('T')[1] || '';
+                const itemTime = item.start_time.split('T')[1] || '';
+                const [ch, cm] = closestTime.split(':').map(Number);
+                const [ih, im] = itemTime.split(':').map(Number);
+                const closestMin = ch * 60 + cm;
+                const itemMin = ih * 60 + im;
+                const closestDiff = Math.abs(closestMin - uzbekNowMinutes);
+                const itemDiff = Math.abs(itemMin - uzbekNowMinutes);
+                return itemDiff < closestDiff ? item : closest;
+            });
+
+            const timePart = nearestItem.start_time.split('T')[1];
             if (!timePart) continue;
 
             const [hours, minutes] = timePart.split(':').map(Number);
@@ -226,12 +270,30 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
             // Send reminder notification
             try {
                 const timeHHMM = timePart.substring(0, 5);
+                const serviceName = typeof nearestItem.service_name === 'object'
+                    ? nearestItem.service_name.uz || nearestItem.service_name.ru
+                    : nearestItem.service_name || 'Xizmat';
 
-                const message = `🔔 <b>Eslatma</b>\n\n` +
-                    `Bugun soat <b>${timeHHMM}</b> ga <b>${bookingData.business_name}</b>ga yozilgansiz. Iltimos, o'z vaqtida tashrif buyuring!`;
+                const customerMessage = `🔔 <b>Eslatma: Sizda yaqinlashayotgan buyurtma bor!</b>\n\n` +
+                    `🏢 <b>Biznes:</b> ${bookingData.business_name}\n` +
+                    `📋 <b>Xizmat:</b> ${serviceName}\n` +
+                    `📅 <b>Sana:</b> ${bookingData.booking_date}\n` +
+                    `🕐 <b>Vaqt:</b> ${timeHHMM}\n\n` +
+                    `Iltimos, o'z vaqtida tashrif buyuring!`;
 
-                await sendTelegramMessage(customerTelegramId, message);
+                await sendTelegramMessage(customerTelegramId, customerMessage);
                 notifiedCount++;
+
+                // Also notify admin group with Uzbek text time
+                if (ADMIN_GROUP_ID) {
+                    const uzbekTime = formatTimeInUzbek(hours, minutes);
+                    const adminMessage = `Salom, bu ${bookingData.business_name}.\n` +
+                        `Sizda bugun soat ${uzbekTime} broningiz bor.\n` +
+                        `Iltimos, vaqtida kelishingizni so'raymiz.`;
+                    await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage).catch(err =>
+                        console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, err)
+                    );
+                }
             } catch (telegramError) {
                 console.error(`Failed to notify customer ${customerTelegramId} for booking ${bookingDoc.id}:`, telegramError);
             }
