@@ -316,35 +316,6 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                 }
             }
 
-            // 4. Business bot → employee
-            try {
-                const employeeId = nearestItem.employee_id;
-                if (employeeId && bookingData.business_id) {
-                    const employeeDoc = await db.doc(`businesses/${bookingData.business_id}/employees/${employeeId}`).get();
-                    if (employeeDoc.exists) {
-                        const employeeData = employeeDoc.data();
-                        const businessOwnerId = employeeData.business_owner_id;
-                        if (businessOwnerId) {
-                            const ownerDoc = await db.collection('business_owners').doc(businessOwnerId).get();
-                            if (ownerDoc.exists) {
-                                const ownerTelegramId = ownerDoc.data().telegram_id;
-                                if (ownerTelegramId) {
-                                    const employeeMessage = `🔔 Eslatma: Yaqinlashayotgan buyurtma!\n\n` +
-                                        `👤 Mijoz: ${bookingData.customer_name}\n` +
-                                        `📋 Xizmat: ${serviceName}\n` +
-                                        `📅 Sana: ${bookingData.booking_date}\n` +
-                                        `🕐 Vaqt: ${timeHHMM}`;
-
-                                    await sendTelegramMessage(ownerTelegramId, employeeMessage);
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (employeeError) {
-                console.error(`Failed to notify employee for booking ${bookingDoc.id}:`, employeeError);
-            }
-
             notifiedCount++;
 
             // Mark booking as notified regardless of individual notification success
