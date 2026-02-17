@@ -28,11 +28,11 @@ async function sendTelegramMessage(botToken, chatId, text) {
     return data;
 }
 
-function formatBookingNotification(booking) {
-    const firstItem = booking.items[0];
-    const lastItem = booking.items[booking.items.length - 1];
+function formatEmployeeNotification(booking, employeeItems) {
+    const firstItem = employeeItems[0];
+    const lastItem = employeeItems[employeeItems.length - 1];
 
-    const serviceNames = booking.items.map(item => {
+    const serviceNames = employeeItems.map(item => {
         return typeof item.service_name === 'object'
             ? item.service_name.uz || item.service_name.ru
             : item.service_name;
@@ -46,13 +46,15 @@ function formatBookingNotification(booking) {
         ? lastItem.end_time.split('T')[1]
         : lastItem.end_time;
 
+    const subtotal = employeeItems.reduce((sum, item) => sum + (item.price || 0), 0);
+
     return `🆕 <b>Yangi buyurtma!</b>\n\n` +
         `📋 <b>Xizmat:</b> ${serviceNames.join(', ')}\n` +
         `👤 <b>Mijoz:</b> ${booking.customer_name}\n` +
         `📞 <b>Telefon:</b> ${booking.customer_phone || 'N/A'}\n` +
         `📅 <b>Sana:</b> ${booking.booking_date}\n` +
         `🕐 <b>Vaqt:</b> ${startTime} - ${endTime}\n` +
-        `💰 <b>Jami:</b> ${booking.total_price.toLocaleString()} so'm`;
+        `💰 <b>Narx:</b> ${subtotal.toLocaleString()} so'm`;
 }
 
 export const onBookingCreated = onDocumentCreated(
@@ -71,53 +73,41 @@ export const onBookingCreated = onDocumentCreated(
             return;
         }
 
-        const message = formatBookingNotification(booking);
-
-        // 1. Notify business owner via their telegram bot chat_id
+        // Notify each employee with only their items
         try {
-            const businessDoc = await db.collection('businesses').doc(booking.business_id).get();
-            if (businessDoc.exists) {
-                const businessData = businessDoc.data();
-                if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
-                    await sendTelegramMessage(botToken, businessData.telegram_bot.chat_id, message);
+            // Group items by employee_id
+            const itemsByEmployee = new Map();
+            for (const item of booking.items) {
+                if (!item.employee_id) continue;
+                if (!itemsByEmployee.has(item.employee_id)) {
+                    itemsByEmployee.set(item.employee_id, []);
                 }
-            }
-        } catch (error) {
-            console.error('Failed to send business owner notification:', error);
-        }
-
-        // 2. Notify employees via their business_owner telegram_id
-        try {
-            const employeeIds = [...new Set(booking.items.map(item => item.employee_id))];
-
-            const businessOwnerIds = new Set();
-            for (const employeeId of employeeIds) {
-                const employeeDoc = await db
-                    .collection('businesses')
-                    .doc(booking.business_id)
-                    .collection('employees')
-                    .doc(employeeId)
-                    .get();
-
-                if (employeeDoc.exists) {
-                    const empData = employeeDoc.data();
-                    if (empData.business_owner_id) {
-                        businessOwnerIds.add(empData.business_owner_id);
-                    }
-                }
+                itemsByEmployee.get(item.employee_id).push(item);
             }
 
-            for (const ownerId of businessOwnerIds) {
+            for (const [employeeId, empItems] of itemsByEmployee) {
                 try {
-                    const ownerDoc = await db.collection('business_owners').doc(ownerId).get();
-                    if (ownerDoc.exists) {
-                        const ownerData = ownerDoc.data();
-                        if (ownerData.telegram_id) {
-                            await sendTelegramMessage(botToken, ownerData.telegram_id, message);
-                        }
+                    const employeeDoc = await db
+                        .collection('businesses')
+                        .doc(booking.business_id)
+                        .collection('employees')
+                        .doc(employeeId)
+                        .get();
+
+                    if (!employeeDoc.exists) continue;
+                    const empData = employeeDoc.data();
+                    if (!empData.business_owner_id) continue;
+
+                    const ownerDoc = await db.collection('business_owners').doc(empData.business_owner_id).get();
+                    if (!ownerDoc.exists) continue;
+
+                    const ownerData = ownerDoc.data();
+                    if (ownerData.telegram_id) {
+                        const empMessage = formatEmployeeNotification(booking, empItems);
+                        await sendTelegramMessage(botToken, ownerData.telegram_id, empMessage);
                     }
                 } catch (error) {
-                    console.error(`Failed to send employee notification to owner ${ownerId}:`, error);
+                    console.error(`Failed to send employee notification to ${employeeId}:`, error);
                 }
             }
         } catch (error) {

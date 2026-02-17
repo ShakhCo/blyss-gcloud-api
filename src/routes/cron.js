@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { db } from '../db/db.js';
-import { sendBookingStatusUpdateNotification, sendTelegramMessage } from '../utils/telegram.js';
+import { sendBookingStatusUpdateNotification, sendTelegramMessage, sendCustomerBotMessage } from '../utils/telegram.js';
+import { sendSms } from '../utils/eskiz.js';
 
 const router = Router();
 
@@ -262,32 +263,35 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                 }
             }
 
-            if (!customerTelegramId) {
-                // No telegram ID found, mark as notified to skip next time
-                await bookingDoc.ref.update({ is_notified: true });
-                continue;
-            }
-
-            // Build customer reminder message
             const timeHHMM = timePart.substring(0, 5);
             const serviceName = typeof nearestItem.service_name === 'object'
                 ? nearestItem.service_name.uz || nearestItem.service_name.ru
                 : nearestItem.service_name || 'Xizmat';
 
-            const customerMessage = `🔔 <b>Eslatma: Sizda yaqinlashayotgan buyurtma bor!</b>\n\n` +
-                `🏢 <b>Biznes:</b> ${bookingData.business_name}\n` +
-                `📋 <b>Xizmat:</b> ${serviceName}\n` +
-                `📅 <b>Sana:</b> ${bookingData.booking_date}\n` +
-                `🕐 <b>Vaqt:</b> ${timeHHMM}\n\n` +
-                `Iltimos, o'z vaqtida tashrif buyuring!`;
+            // Bilingual customer message (used for both SMS and telegram)
+            const bilingualMessage = `Salom, bu ${bookingData.business_name}. Siz bugun soat ${timeHHMM}ga yozilgansiz. Iltimos, vaqtida kelishingizni so'raymiz. Здравствуйте, это ${bookingData.business_name}. У вас запись сегодня на ${timeHHMM}. Пожалуйста, приходите вовремя.`;
 
-            // Send reminder notification
-            try {
-                await sendTelegramMessage(customerTelegramId, customerMessage);
-                notifiedCount++;
+            // 1. SMS via Eskiz to customer phone
+            if (bookingData.customer_phone) {
+                try {
+                    await sendSms(bookingData.customer_phone, bilingualMessage);
+                } catch (smsError) {
+                    console.error(`Failed to send SMS to ${bookingData.customer_phone} for booking ${bookingDoc.id}:`, smsError);
+                }
+            }
 
-                // Also notify admin group with Uzbek text time
-                if (ADMIN_GROUP_ID) {
+            // 2. Customer bot telegram message
+            if (customerTelegramId) {
+                try {
+                    await sendCustomerBotMessage(customerTelegramId, bilingualMessage);
+                } catch (customerTgError) {
+                    console.error(`Failed to notify customer ${customerTelegramId} for booking ${bookingDoc.id}:`, customerTgError);
+                }
+            }
+
+            // 3. Business bot → admin group (Uzbek time message + Audio button)
+            if (ADMIN_GROUP_ID) {
+                try {
                     const uzbekTime = formatTimeInUzbek(hours, minutes);
                     const adminMessage = `Salom, bu ${bookingData.business_name}.\n` +
                         `Sizda bugun soat ${uzbekTime} broningiz bor.\n` +
@@ -302,21 +306,48 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                             }]]
                         };
                     }
-                    const adminResult = await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions).catch(err => {
-                        console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, err);
-                        return null;
-                    });
+                    const adminResult = await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions);
 
-                    // Save message ID so the bot can remove the inline button after click
                     if (adminResult && adminResult.message_id) {
                         await bookingDoc.ref.update({ admin_message_id: adminResult.message_id });
                     }
+                } catch (adminError) {
+                    console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, adminError);
                 }
-            } catch (telegramError) {
-                console.error(`Failed to notify customer ${customerTelegramId} for booking ${bookingDoc.id}:`, telegramError);
             }
 
-            // Mark booking as notified regardless of telegram success to avoid retries
+            // 4. Business bot → employee
+            try {
+                const employeeId = nearestItem.employee_id;
+                if (employeeId && bookingData.business_id) {
+                    const employeeDoc = await db.doc(`businesses/${bookingData.business_id}/employees/${employeeId}`).get();
+                    if (employeeDoc.exists) {
+                        const employeeData = employeeDoc.data();
+                        const businessOwnerId = employeeData.business_owner_id;
+                        if (businessOwnerId) {
+                            const ownerDoc = await db.collection('business_owners').doc(businessOwnerId).get();
+                            if (ownerDoc.exists) {
+                                const ownerTelegramId = ownerDoc.data().telegram_id;
+                                if (ownerTelegramId) {
+                                    const employeeMessage = `🔔 Eslatma: Yaqinlashayotgan buyurtma!\n\n` +
+                                        `👤 Mijoz: ${bookingData.customer_name}\n` +
+                                        `📋 Xizmat: ${serviceName}\n` +
+                                        `📅 Sana: ${bookingData.booking_date}\n` +
+                                        `🕐 Vaqt: ${timeHHMM}`;
+
+                                    await sendTelegramMessage(ownerTelegramId, employeeMessage);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (employeeError) {
+                console.error(`Failed to notify employee for booking ${bookingDoc.id}:`, employeeError);
+            }
+
+            notifiedCount++;
+
+            // Mark booking as notified regardless of individual notification success
             await bookingDoc.ref.update({ is_notified: true });
         }
 

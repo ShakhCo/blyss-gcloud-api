@@ -3,7 +3,9 @@
  */
 
 const TELEGRAM_BUSINESS_BOT_TOKEN = process.env.TELEGRAM_BUSINESS_BOT_TOKEN;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API_BASE = `https://api.telegram.org/bot${TELEGRAM_BUSINESS_BOT_TOKEN}`;
+const TELEGRAM_CUSTOMER_API_BASE = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
 /**
  * Send a message to a Telegram user via bot
@@ -47,6 +49,52 @@ export async function sendTelegramMessage(telegramId, text, options = {}) {
         return data.result;
     } catch (error) {
         console.error('Error sending Telegram message:', error);
+        throw error;
+    }
+}
+
+/**
+ * Send a message to a Telegram user via the customer bot (TELEGRAM_BOT_TOKEN)
+ * @param {number} telegramId - The user's Telegram ID
+ * @param {string} text - The message text to send
+ * @param {object} options - Additional options for the message
+ * @returns {Promise<object>} - The response from Telegram API
+ */
+export async function sendCustomerBotMessage(telegramId, text, options = {}) {
+    if (!TELEGRAM_BOT_TOKEN) {
+        console.error('TELEGRAM_BOT_TOKEN is not configured');
+        throw new Error('Customer Telegram bot is not configured');
+    }
+
+    if (!telegramId) {
+        console.error('telegram_id is required');
+        throw new Error('telegram_id is required');
+    }
+
+    try {
+        const response = await fetch(`${TELEGRAM_CUSTOMER_API_BASE}/sendMessage`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                chat_id: telegramId,
+                text,
+                parse_mode: 'HTML',
+                ...options
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.ok) {
+            console.error('Customer Telegram API error:', data.description);
+            throw new Error(`Customer Telegram API error: ${data.description}`);
+        }
+
+        return data.result;
+    } catch (error) {
+        console.error('Error sending customer Telegram message:', error);
         throw error;
     }
 }
