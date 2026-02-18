@@ -207,11 +207,13 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
 
         let notifiedCount = 0;
 
+        // Phase 1: Filter bookings within the 2-hour window and collect their info
+        const eligibleBookings = [];
+
         for (const bookingDoc of allBookingDocs) {
             const bookingData = bookingDoc.data();
             const items = bookingData.items || [];
 
-            // Filter to only confirmed (non-cancelled) items with a start_time
             const activeItems = items.filter(i => i.status !== 'cancelled' && i.start_time);
             if (activeItems.length === 0) continue;
 
@@ -235,7 +237,6 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
             const bookingDateStr = bookingData.booking_date;
             const bookingMinutes = hours * 60 + minutes;
 
-            // Check if booking starts within the 2-hour window
             let isWithinWindow = false;
             if (bookingDateStr === todayStr) {
                 isWithinWindow = bookingMinutes >= uzbekNowMinutes && bookingMinutes <= twoHoursLaterMinutes;
@@ -246,84 +247,106 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
 
             if (!isWithinWindow) continue;
 
-            // Look up customer's telegram_id via customer_phone in users collection
-            let customerTelegramId = bookingData.customer_telegram_id || null;
+            eligibleBookings.push({ bookingDoc, bookingData, nearestItem, hours, minutes, bookingMinutes });
+        }
 
-            if (!customerTelegramId && bookingData.customer_phone) {
+        // Phase 2: Group by customer_phone to avoid duplicate customer notifications
+        const customerGroups = new Map();
+
+        for (const entry of eligibleBookings) {
+            const phone = entry.bookingData.customer_phone || `no_phone_${entry.bookingDoc.id}`;
+            if (!customerGroups.has(phone)) {
+                customerGroups.set(phone, []);
+            }
+            customerGroups.get(phone).push(entry);
+        }
+
+        for (const [phone, bookings] of customerGroups) {
+            // Sort by start time to find the earliest booking
+            bookings.sort((a, b) => a.bookingMinutes - b.bookingMinutes);
+            const earliest = bookings[0];
+
+            const timePart = earliest.nearestItem.start_time.split('T')[1];
+            const timeHHMM = timePart.substring(0, 5);
+
+            // Resolve customer telegram_id once per group
+            let customerTelegramId = null;
+            for (const b of bookings) {
+                if (b.bookingData.customer_telegram_id) {
+                    customerTelegramId = b.bookingData.customer_telegram_id;
+                    break;
+                }
+            }
+            if (!customerTelegramId && !phone.startsWith('no_phone_')) {
                 try {
                     const usersSnapshot = await db.collection('users')
-                        .where('phone_number', '==', bookingData.customer_phone)
+                        .where('phone_number', '==', phone)
                         .limit(1)
                         .get();
                     if (!usersSnapshot.empty) {
                         customerTelegramId = usersSnapshot.docs[0].data().telegram_id || null;
                     }
                 } catch (lookupError) {
-                    console.error(`Failed to look up user by phone ${bookingData.customer_phone}:`, lookupError);
+                    console.error(`Failed to look up user by phone ${phone}:`, lookupError);
                 }
             }
 
-            const timeHHMM = timePart.substring(0, 5);
-            const serviceName = typeof nearestItem.service_name === 'object'
-                ? nearestItem.service_name.uz || nearestItem.service_name.ru
-                : nearestItem.service_name || 'Xizmat';
+            // Send ONE customer notification per phone number using the earliest booking time
+            const businessName = earliest.bookingData.business_name;
+            const bilingualMessage = `Salom, bu ${businessName}. Siz bugun soat ${timeHHMM}ga yozilgansiz. Iltimos, vaqtida kelishingizni so'raymiz.\n\nЗдравствуйте, это ${businessName}. У вас запись сегодня на ${timeHHMM}. Пожалуйста, приходите вовремя.`;
 
-            // Bilingual customer message (used for both SMS and telegram)
-            const bilingualMessage = `Salom, bu ${bookingData.business_name}. Siz bugun soat ${timeHHMM}ga yozilgansiz. Iltimos, vaqtida kelishingizni so'raymiz.\n\nЗдравствуйте, это ${bookingData.business_name}. У вас запись сегодня на ${timeHHMM}. Пожалуйста, приходите вовремя.`;
-
-            // 1. SMS via Eskiz to customer phone
-            if (bookingData.customer_phone) {
+            if (!phone.startsWith('no_phone_')) {
                 try {
-                    await sendSms(bookingData.customer_phone, bilingualMessage);
+                    await sendSms(phone, bilingualMessage);
                 } catch (smsError) {
-                    console.error(`Failed to send SMS to ${bookingData.customer_phone} for booking ${bookingDoc.id}:`, smsError);
+                    console.error(`Failed to send SMS to ${phone}:`, smsError);
                 }
             }
 
-            // 2. Customer bot telegram message
             if (customerTelegramId) {
                 try {
                     await sendCustomerBotMessage(customerTelegramId, bilingualMessage);
                 } catch (customerTgError) {
-                    console.error(`Failed to notify customer ${customerTelegramId} for booking ${bookingDoc.id}:`, customerTgError);
+                    console.error(`Failed to notify customer ${customerTelegramId}:`, customerTgError);
                 }
             }
 
-            // 3. Business bot → admin group (Uzbek time message + Audio button)
-            if (ADMIN_GROUP_ID) {
-                try {
-                    const uzbekTime = formatTimeInUzbek(hours, minutes);
-                    const adminMessage = `Salom, bu ${bookingData.business_name}.\n` +
-                        `Sizda bugun soat ${uzbekTime} broningiz bor.\n` +
-                        `Iltimos, vaqtida kelishingizni so'raymiz.`;
+            // Send individual admin group messages per booking (each needs its own audio button)
+            for (const entry of bookings) {
+                if (ADMIN_GROUP_ID) {
+                    try {
+                        const uzbekTime = formatTimeInUzbek(entry.hours, entry.minutes);
+                        const adminMessage = `Salom, bu ${entry.bookingData.business_name}.\n` +
+                            `Sizda bugun soat ${uzbekTime} broningiz bor.\n` +
+                            `Iltimos, vaqtida kelishingizni so'raymiz.`;
 
-                    const adminOptions = {};
-                    if (TELEGRAM_BOT_USERNAME) {
-                        adminOptions.reply_markup = {
-                            inline_keyboard: [[{
-                                text: '🎙 Audio Olish',
-                                url: `https://t.me/${TELEGRAM_BOT_USERNAME}?start=audio_${bookingDoc.id}`
-                            }]]
-                        };
-                    }
-                    const adminResult = await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions);
+                        const adminOptions = {};
+                        if (TELEGRAM_BOT_USERNAME) {
+                            adminOptions.reply_markup = {
+                                inline_keyboard: [[{
+                                    text: '🎙 Audio Olish',
+                                    url: `https://t.me/${TELEGRAM_BOT_USERNAME}?start=audio_${entry.bookingDoc.id}`
+                                }]]
+                            };
+                        }
+                        const adminResult = await sendTelegramMessage(ADMIN_GROUP_ID, adminMessage, adminOptions);
 
-                    if (adminResult && adminResult.message_id) {
-                        await bookingDoc.ref.update({ admin_message_id: adminResult.message_id });
+                        if (adminResult && adminResult.message_id) {
+                            await entry.bookingDoc.ref.update({ admin_message_id: adminResult.message_id });
+                        }
+                    } catch (adminError) {
+                        console.error(`Failed to notify admin group for booking ${entry.bookingDoc.id}:`, adminError);
                     }
-                } catch (adminError) {
-                    console.error(`Failed to notify admin group for booking ${bookingDoc.id}:`, adminError);
                 }
+
+                // Mark each booking as notified
+                await entry.bookingDoc.ref.update({ is_notified: true });
+                notifiedCount++;
             }
-
-            notifiedCount++;
-
-            // Mark booking as notified regardless of individual notification success
-            await bookingDoc.ref.update({ is_notified: true });
         }
 
-        console.log(`Notified ${notifiedCount} upcoming bookings`);
-        res.json({ notified: notifiedCount });
+        console.log(`Notified ${notifiedCount} bookings (${customerGroups.size} unique customers)`);
+        res.json({ notified: notifiedCount, customers: customerGroups.size });
     } catch (error) {
         console.error('Error notifying upcoming bookings:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
