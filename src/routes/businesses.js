@@ -238,6 +238,7 @@ router.get('/:id', authenticate, async (req, res) => {
             primary_color: data.primary_color || null,
             primary_color_enabled: data.primary_color_enabled ?? null,
             telegram_bot: data.telegram_bot || null,
+            is_solo: data.is_solo || false,
             date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
             services_count: {
                 active: activeServices,
