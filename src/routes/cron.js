@@ -574,9 +574,20 @@ router.post('/send-review-requests', async (req, res) => {
 
             reviewsCreated++;
 
+            // Fetch business tenant_url for the review link
+            let reviewBaseUrl = REVIEW_BASE_URL;
+            try {
+                const businessDoc = await db.collection('businesses').doc(group.business_id).get();
+                if (businessDoc.exists && businessDoc.data().tenant_url) {
+                    reviewBaseUrl = `https://${businessDoc.data().tenant_url}`;
+                }
+            } catch (bizError) {
+                console.error(`Failed to fetch business ${group.business_id} for tenant_url:`, bizError);
+            }
+
             // Send bilingual SMS
-            const link = `${REVIEW_BASE_URL}/ru/rate?token=${token}`;
-            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat!\nXizmatimizni baholashingizni so'raymiz:\n${link}\n\nСпасибо за визит в ${group.business_name}!\nПожалуйста, оцените наш сервис:\n${link}\n\nBLYSS - Xizmatlarga online yoziling`;
+            const link = `${reviewBaseUrl}/rate?token=${token}`;
+            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing:\n${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке:\n${link}\n\nblyss.uz`;
 
             try {
                 await sendSms(group.customer_phone, smsMessage);
