@@ -925,6 +925,244 @@ router.patch(
 // ============================================
 
 /**
+ * POST /businesses/:businessId/bookings
+ * Create a booking as a business owner or employee (JWT auth only, no HMAC)
+ */
+router.post(
+    '/businesses/:businessId/bookings',
+    authenticate,
+    validate(createBookingSchema),
+    async (req, res) => {
+        try {
+            const { businessId } = req.params;
+            const {
+                customer_name,
+                customer_phone,
+                customer_telegram_id,
+                booking_date,
+                notes,
+                items
+            } = req.validated;
+
+            // Validate booking date is not in the past (Uzbekistan GMT+5)
+            const nowUtc = new Date();
+            const uzbekToday = new Date(nowUtc.getTime() + 5 * 60 * 60 * 1000).toISOString().split('T')[0];
+            if (booking_date < uzbekToday) {
+                return res.status(400).json({
+                    error: 'Cannot book for a past date',
+                    error_code: 'PAST_DATE'
+                });
+            }
+
+            // Verify business exists
+            const businessDoc = await db.collection('businesses').doc(businessId).get();
+            if (!businessDoc.exists) {
+                return res.status(404).json({
+                    error: 'Business not found',
+                    error_code: 'BUSINESS_NOT_FOUND'
+                });
+            }
+
+            const businessData = businessDoc.data();
+
+            // Verify access: must be business owner or accepted employee
+            const isOwner = businessData.business_owner_id === req.user.id;
+            let isEmployee = false;
+
+            if (!isOwner) {
+                const employeeSnapshot = await db.collection('businesses').doc(businessId)
+                    .collection('employees')
+                    .where('phone_number', '==', req.user.phone_number)
+                    .where('is_accepted', '==', true)
+                    .where('is_rejected', '==', false)
+                    .limit(1)
+                    .get();
+
+                if (!employeeSnapshot.empty) {
+                    isEmployee = true;
+                }
+            }
+
+            if (!isOwner && !isEmployee) {
+                return res.status(403).json({
+                    error: 'Access denied',
+                    error_code: 'FORBIDDEN'
+                });
+            }
+
+            // Pre-transaction: validate employees and fetch data
+            const employeeDataMap = new Map();
+            for (const item of items) {
+                if (employeeDataMap.has(item.employee_id)) continue;
+                const employeeDoc = await db.collection('businesses')
+                    .doc(businessId)
+                    .collection('employees')
+                    .doc(item.employee_id)
+                    .get();
+
+                if (!employeeDoc.exists) {
+                    return res.status(400).json({
+                        error: `Employee ${item.employee_id} not found`,
+                        error_code: 'EMPLOYEE_NOT_FOUND'
+                    });
+                }
+                const empData = employeeDoc.data();
+                employeeDataMap.set(item.employee_id, empData);
+                // Note: no flexible employee is_open_now check — employee manages their own schedule
+            }
+
+            // Pre-transaction: fetch server-side prices (never trust client-submitted prices)
+            const bookingItems = [];
+            let totalPrice = 0;
+            let totalDuration = 0;
+
+            for (let index = 0; index < items.length; index++) {
+                const item = items[index];
+
+                const empServiceSnapshot = await db.collection('businesses')
+                    .doc(businessId)
+                    .collection('employees')
+                    .doc(item.employee_id)
+                    .collection('employeeServices')
+                    .where('service_id', '==', item.service_id)
+                    .where('is_active', '==', true)
+                    .limit(1)
+                    .get();
+
+                let serverPrice = 0;
+                let serverDuration = item.duration_minutes || 30;
+
+                if (!empServiceSnapshot.empty) {
+                    const empServiceData = empServiceSnapshot.docs[0].data();
+                    serverPrice = empServiceData.price;
+                    serverDuration = empServiceData.duration_minutes || serverDuration;
+                } else {
+                    const serviceDoc = await db.collection('businesses')
+                        .doc(businessId)
+                        .collection('services')
+                        .doc(item.service_id)
+                        .get();
+                    if (serviceDoc.exists) {
+                        const serviceData = serviceDoc.data();
+                        serverPrice = serviceData.price || 0;
+                        serverDuration = serviceData.duration_minutes || serverDuration;
+                    }
+                }
+
+                totalPrice += serverPrice;
+                totalDuration += serverDuration;
+
+                bookingItems.push({
+                    id: crypto.randomBytes(8).toString('hex'),
+                    service_id: item.service_id,
+                    service_name: item.service_name,
+                    employee_id: item.employee_id,
+                    employee_name: item.employee_name,
+                    start_time: item.start_time,
+                    end_time: calculateEndTime(item.start_time, serverDuration),
+                    price: serverPrice,
+                    duration_minutes: serverDuration,
+                    status: 'confirmed',
+                    order_index: index
+                });
+            }
+
+            // Pre-compute time bounds for conflict check
+            const firstItemTime = items[0].start_time.split('T')[1];
+            const [firstH, firstM] = firstItemTime.split(':').map(Number);
+            const newBookingStart = firstH * 3600 + firstM * 60;
+
+            const lastItem = items[items.length - 1];
+            const lastItemTime = lastItem.start_time.split('T')[1];
+            const [lastH, lastM] = lastItemTime.split(':').map(Number);
+            const newBookingEnd = lastH * 3600 + lastM * 60 + lastItem.duration_minutes * 60;
+
+            const bookingId = crypto.randomBytes(16).toString('hex');
+            const now = new Date();
+            const bookingData = {
+                business_id: businessId,
+                business_name: businessData.business_name,
+                user_id: req.user.id,
+                customer_name,
+                customer_phone,
+                customer_telegram_id: customer_telegram_id || null,
+                booking_date,
+                status: 'confirmed',
+                total_price: totalPrice,
+                total_duration_minutes: totalDuration,
+                notes: notes || '',
+                items: bookingItems,
+                created_at: now,
+                updated_at: now
+            };
+
+            // Transaction: atomic availability check + booking write
+            try {
+                await db.runTransaction(async (transaction) => {
+                    // Read existing bookings for this business+date
+                    const existingBookings = await transaction.get(
+                        db.collection('bookings')
+                            .where('business_id', '==', businessId)
+                            .where('booking_date', '==', booking_date)
+                            .where('status', 'in', ['pending', 'confirmed'])
+                    );
+
+                    // Check slot availability for each item
+                    for (const item of bookingItems) {
+                        const allowedCount = employeeDataMap.get(item.employee_id)?.allowed_booking_count_per_slot || 1;
+                        const slotTime = item.start_time.split('T')[1];
+                        let slotCount = 0;
+
+                        for (const doc of existingBookings.docs) {
+                            for (const bookingItem of doc.data().items || []) {
+                                if (bookingItem.employee_id === item.employee_id) {
+                                    const bookingSlotTime = bookingItem.start_time.split('T')[1];
+                                    const itemStart = timeToMinutes(slotTime);
+                                    const itemEnd = itemStart + item.duration_minutes;
+                                    const bookingStart = timeToMinutes(bookingSlotTime);
+                                    const bookingEnd = bookingStart + (bookingItem.duration_minutes || 30);
+
+                                    if (!(itemEnd <= bookingStart || itemStart >= bookingEnd)) {
+                                        slotCount++;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (slotCount >= allowedCount) {
+                            const err = new Error('SLOT_NOT_AVAILABLE');
+                            err.details = { start_time: item.start_time };
+                            throw err;
+                        }
+                    }
+
+                    // Write booking atomically
+                    transaction.set(db.collection('bookings').doc(bookingId), bookingData);
+                });
+            } catch (txError) {
+                if (txError.message === 'SLOT_NOT_AVAILABLE') {
+                    return res.status(409).json({
+                        error: `Slot ${txError.details.start_time} is no longer available for this employee`,
+                        error_code: 'SLOT_NOT_AVAILABLE'
+                    });
+                }
+                throw txError;
+            }
+
+            res.status(201).json({
+                id: bookingId,
+                ...bookingData,
+                created_at: now.toISOString(),
+                updated_at: now.toISOString()
+            });
+        } catch (error) {
+            console.error('Error creating booking:', error);
+            res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+        }
+    }
+);
+
+/**
  * GET /businesses/:businessId/bookings
  * Get all bookings for a business
  */
