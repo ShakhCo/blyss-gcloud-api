@@ -7,6 +7,7 @@ import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import { nearestBusinessesQuerySchema, publicSendOtpSchema, publicVerifyOtpSchema, publicAvailableSlotsQuerySchema, publicSlotEmployeesQuerySchema, publicCreateBookingSchema, publicRegisterSchema } from '../schemas/business.js';
 import { distanceBodySchema } from '../schemas/distance.js';
+import { submitReviewSchema } from '../schemas/review.js';
 import { sendOtpSms } from '../utils/eskiz.js';
 import { generateTokenPair, verifyRefreshToken } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
@@ -2241,6 +2242,164 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
         });
     } catch (error) {
         console.error('Error in POST /public/businesses/:businessId/bookings-v2:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// ─── Review Endpoints (token-based, no auth) ───
+
+/**
+ * GET /public/reviews/:token
+ * Fetch review data by token. No authentication required.
+ * Returns 404 if not found, 410 if expired (14 days).
+ */
+router.get('/reviews/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+
+        const reviewDoc = await db.collection('reviews').doc(token).get();
+        if (!reviewDoc.exists) {
+            return res.status(404).json({ error: 'Review not found', error_code: 'NOT_FOUND' });
+        }
+
+        const review = reviewDoc.data();
+
+        // Check 14-day expiry
+        const createdAt = review.created_at instanceof Date ? review.created_at : review.created_at.toDate();
+        const daysSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSinceCreation > 14) {
+            return res.status(410).json({ error: 'Review link has expired', error_code: 'EXPIRED' });
+        }
+
+        res.json({
+            token,
+            business_name: review.business_name,
+            customer_name: review.customer_name,
+            booking_date: review.booking_date,
+            items: review.items.map(item => ({
+                booking_item_id: item.booking_item_id,
+                service_name: item.service_name,
+                employee_name: item.employee_name,
+                start_time: item.start_time,
+                price: item.price,
+                rating: item.rating
+            })),
+            status: review.status,
+            comment: review.comment
+        });
+    } catch (error) {
+        console.error('Error in GET /public/reviews/:token:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * POST /public/reviews/:token
+ * Submit ratings for each service item + optional comment.
+ * All item IDs must match the review document.
+ * Updates business review_stats atomically.
+ */
+router.post('/reviews/:token', validate(submitReviewSchema), async (req, res) => {
+    try {
+        const { token } = req.params;
+        const { ratings, comment } = req.validated;
+
+        const reviewRef = db.collection('reviews').doc(token);
+        const reviewDoc = await reviewRef.get();
+
+        if (!reviewDoc.exists) {
+            return res.status(404).json({ error: 'Review not found', error_code: 'NOT_FOUND' });
+        }
+
+        const review = reviewDoc.data();
+
+        // Check if already submitted
+        if (review.status === 'submitted') {
+            return res.status(409).json({ error: 'Review already submitted', error_code: 'ALREADY_SUBMITTED' });
+        }
+
+        // Check 14-day expiry
+        const createdAt = review.created_at instanceof Date ? review.created_at : review.created_at.toDate();
+        const daysSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSinceCreation > 14) {
+            return res.status(410).json({ error: 'Review link has expired', error_code: 'EXPIRED' });
+        }
+
+        // Validate all item IDs match
+        const reviewItemIds = new Set(review.items.map(i => i.booking_item_id));
+        const submittedItemIds = new Set(ratings.map(r => r.booking_item_id));
+
+        if (reviewItemIds.size !== submittedItemIds.size) {
+            return res.status(400).json({
+                error: 'Must rate all services',
+                error_code: 'INCOMPLETE_RATINGS'
+            });
+        }
+        for (const id of submittedItemIds) {
+            if (!reviewItemIds.has(id)) {
+                return res.status(400).json({
+                    error: `Unknown booking_item_id: ${id}`,
+                    error_code: 'INVALID_ITEM_ID'
+                });
+            }
+        }
+
+        // Build rating lookup
+        const ratingMap = new Map(ratings.map(r => [r.booking_item_id, r.rating]));
+
+        // Update items with ratings
+        const updatedItems = review.items.map(item => ({
+            ...item,
+            rating: ratingMap.get(item.booking_item_id)
+        }));
+
+        // Calculate stats for business update
+        const allRatings = ratings.map(r => r.rating);
+        const ratingSum = allRatings.reduce((sum, r) => sum + r, 0);
+        const ratingCount = allRatings.length;
+
+        // Atomic transaction: update review + business stats
+        await db.runTransaction(async (transaction) => {
+            // Update review doc
+            transaction.update(reviewRef, {
+                items: updatedItems,
+                status: 'submitted',
+                comment: comment || '',
+                submitted_at: new Date()
+            });
+
+            // Update business review_stats
+            const businessRef = db.collection('businesses').doc(review.business_id);
+            const businessDoc = await transaction.get(businessRef);
+
+            if (businessDoc.exists) {
+                const business = businessDoc.data();
+                const stats = business.review_stats || {
+                    average_rating: 0,
+                    total_reviews: 0,
+                    rating_distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+                };
+
+                const newTotal = stats.total_reviews + ratingCount;
+                const newAvg = ((stats.average_rating * stats.total_reviews) + ratingSum) / newTotal;
+                const newDistribution = { ...stats.rating_distribution };
+                for (const r of allRatings) {
+                    newDistribution[r] = (newDistribution[r] || 0) + 1;
+                }
+
+                transaction.update(businessRef, {
+                    review_stats: {
+                        average_rating: Math.round(newAvg * 100) / 100,
+                        total_reviews: newTotal,
+                        rating_distribution: newDistribution
+                    }
+                });
+            }
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error in POST /public/reviews/:token:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });

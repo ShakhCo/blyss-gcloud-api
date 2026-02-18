@@ -134,7 +134,8 @@ router.get('/', authenticate, async (req, res) => {
                 tenant_url: data.tenant_url || null,
                 avatar_url: data.avatar_url || null,
                 avatar_updated_at: data.avatar_updated_at || null,
-                date_created: data.date_created?.toDate?.().toISOString() || data.date_created
+                date_created: data.date_created?.toDate?.().toISOString() || data.date_created,
+                is_solo: data.is_solo || false
             };
         });
         res.json(businesses);
