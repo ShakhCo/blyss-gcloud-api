@@ -343,6 +343,24 @@ router.post('/notify-upcoming-bookings', async (req, res) => {
                 await entry.bookingDoc.ref.update({ is_notified: true });
                 notifiedCount++;
             }
+
+            // Mark any other same-day bookings for this customer as notified
+            // to prevent duplicate notifications when consecutive bookings
+            // enter the 2-hour window on different cron runs
+            if (!phone.startsWith('no_phone_')) {
+                const notifiedIds = new Set(bookings.map(b => b.bookingDoc.id));
+                const sameDaySnapshot = await db.collection('bookings')
+                    .where('status', '==', 'confirmed')
+                    .where('booking_date', '==', todayStr)
+                    .where('customer_phone', '==', phone)
+                    .where('business_id', '==', earliest.bookingData.business_id)
+                    .get();
+                for (const doc of sameDaySnapshot.docs) {
+                    if (!notifiedIds.has(doc.id) && !doc.data().is_notified) {
+                        await doc.ref.update({ is_notified: true });
+                    }
+                }
+            }
         }
 
         console.log(`Notified ${notifiedCount} bookings (${customerGroups.size} unique customers)`);
