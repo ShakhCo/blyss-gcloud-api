@@ -1078,12 +1078,22 @@ router.post(
             const [lastH, lastM] = lastItemTime.split(':').map(Number);
             const newBookingEnd = lastH * 3600 + lastM * 60 + lastItem.duration_minutes * 60;
 
+            // Look up customer's user_id by phone number (so booking appears in their "my bookings")
+            let customerUserId = null;
+            const customerUserSnapshot = await db.collection('users')
+                .where('phone_number', '==', customer_phone)
+                .limit(1)
+                .get();
+            if (!customerUserSnapshot.empty) {
+                customerUserId = customerUserSnapshot.docs[0].id;
+            }
+
             const bookingId = crypto.randomBytes(16).toString('hex');
             const now = new Date();
             const bookingData = {
                 business_id: businessId,
                 business_name: businessData.business_name,
-                user_id: req.user.id,
+                user_id: customerUserId,
                 customer_name,
                 customer_phone,
                 customer_telegram_id: customer_telegram_id || null,
@@ -1093,6 +1103,7 @@ router.post(
                 total_duration_minutes: totalDuration,
                 notes: notes || '',
                 items: bookingItems,
+                created_by: req.user.id,
                 created_at: now,
                 updated_at: now
             };
