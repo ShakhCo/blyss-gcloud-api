@@ -92,7 +92,8 @@ export const createBusinessSchema = z.object({
         .regex(/^#[0-9A-Fa-f]{6}$/, 'primary_color must be a valid hex color (e.g. #088395)')
         .optional()
         .default('#088395'),
-    primary_color_enabled: z.boolean().optional().default(true)
+    primary_color_enabled: z.boolean().optional().default(true),
+    is_solo: z.boolean().optional().default(false)
 });
 
 // Input schema for updating business (without business_owner_id - cannot be changed)

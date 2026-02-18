@@ -314,7 +314,8 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             business_phone_number,
             place_id,
             primary_color,
-            primary_color_enabled
+            primary_color_enabled,
+            is_solo
         } = req.validated;
 
         const business_owner_id = req.user.id;
@@ -351,10 +352,59 @@ router.post('/', authenticate, validate(createBusinessSchema), async (req, res) 
             place_id,
             primary_color,
             primary_color_enabled,
+            is_solo,
             date_created: dateCreated
         };
 
         await db.collection('businesses').doc(businessId).set(businessData);
+
+        // Auto-create owner as employee if solo mode
+        if (is_solo) {
+            try {
+                const positionMap = {
+                    barbershop: 'Sartarosh',
+                    beauty_salon: 'Stilist',
+                    spa: 'Massajist',
+                    massage: 'Massajist'
+                };
+                const position = positionMap[business_type] || 'Master';
+
+                let employeeId;
+                let employeeExists = true;
+                while (employeeExists) {
+                    employeeId = crypto.randomBytes(8).toString('hex');
+                    const existingDoc = await db.collection('businesses')
+                        .doc(businessId)
+                        .collection('employees')
+                        .doc(employeeId)
+                        .get();
+                    employeeExists = existingDoc.exists;
+                }
+
+                const employeeData = {
+                    phone_number: req.user.phone_number,
+                    position,
+                    availability_type: 'fixed',
+                    working_hours,
+                    date_created: dateCreated,
+                    is_accepted: true,
+                    date_accepted: dateCreated,
+                    is_rejected: false,
+                    is_open_now: false,
+                    business_owner_id: req.user.id
+                };
+
+                await db.collection('businesses')
+                    .doc(businessId)
+                    .collection('employees')
+                    .doc(employeeId)
+                    .set(employeeData);
+
+                checkAndUpdateBusinessStatus(db, businessId).catch(err => console.error('Status check failed:', err));
+            } catch (err) {
+                console.error('Failed to auto-create solo employee:', err);
+            }
+        }
 
         res.status(201).json({
             id: businessId,
@@ -723,7 +773,7 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             .collection('employees')
             .get();
 
-        // Update employees whose working hours need to be clipped to business hours range
+        // Update employees whose working hours need to be adjusted
         const updatePromises = [];
 
         for (const employeeDoc of employeesSnapshot.docs) {
@@ -731,6 +781,14 @@ router.patch('/:id/working-hours', authenticate, validate(updateWorkingHoursSche
             const employeeWorkingHours = employeeData.working_hours;
 
             if (!employeeWorkingHours) continue;
+
+            // Solo business: mirror business hours exactly to the employee
+            if (currentData.is_solo) {
+                updatePromises.push(
+                    employeeDoc.ref.update({ working_hours })
+                );
+                continue;
+            }
 
             let needsUpdate = false;
             const updatedWorkingHours = { ...employeeWorkingHours };
@@ -1396,6 +1454,39 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             .doc(serviceId)
             .set(serviceData);
 
+        // Auto-assign service to solo employee
+        if (businessDoc.data().is_solo) {
+            try {
+                const soloEmployeeSnapshot = await db.collection('businesses')
+                    .doc(req.params.id)
+                    .collection('employees')
+                    .where('business_owner_id', '==', req.user.id)
+                    .limit(1)
+                    .get();
+
+                if (!soloEmployeeSnapshot.empty) {
+                    const soloEmployee = soloEmployeeSnapshot.docs[0];
+                    const employeeServiceId = crypto.randomBytes(8).toString('hex');
+
+                    await db.collection('businesses')
+                        .doc(req.params.id)
+                        .collection('employees')
+                        .doc(soloEmployee.id)
+                        .collection('services')
+                        .doc(employeeServiceId)
+                        .set({
+                            service_id: serviceId,
+                            price,
+                            duration_minutes,
+                            is_active: true,
+                            date_created: dateCreated
+                        });
+                }
+            } catch (err) {
+                console.error('Failed to auto-assign service to solo employee:', err);
+            }
+        }
+
         checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.status(201).json({
@@ -1451,9 +1542,13 @@ router.put('/:id/services/:serviceId', authenticate, validate(updateServiceSchem
             .doc(req.params.serviceId)
             .update(updateData);
 
-        // If overwrite_employees_price or overwrite_employees_duration is true,
-        // update employee services accordingly
-        if (overwrite_employees_price || overwrite_employees_duration) {
+        // For solo businesses, always sync price/duration to employee services
+        const isSoloBusiness = businessDoc.data().is_solo;
+        const shouldOverwritePrice = overwrite_employees_price || isSoloBusiness;
+        const shouldOverwriteDuration = overwrite_employees_duration || isSoloBusiness;
+
+        // If overwrite flags are set (or solo), update employee services accordingly
+        if (shouldOverwritePrice || shouldOverwriteDuration) {
             const employeeServicesSnapshot = await db.collectionGroup('employeeServices')
                 .where('service_id', '==', req.params.serviceId)
                 .get();
@@ -1466,10 +1561,10 @@ router.put('/:id/services/:serviceId', authenticate, validate(updateServiceSchem
                 const pathParts = doc.ref.path.split('/');
                 if (pathParts[1] === req.params.id) {
                     const employeeUpdateData = {};
-                    if (overwrite_employees_price) {
+                    if (shouldOverwritePrice) {
                         employeeUpdateData.price = price;
                     }
-                    if (overwrite_employees_duration) {
+                    if (shouldOverwriteDuration) {
                         employeeUpdateData.duration_minutes = duration_minutes;
                     }
                     batch.update(doc.ref, employeeUpdateData);
@@ -1584,6 +1679,26 @@ router.post('/:id/services/:serviceId/activate', authenticate, async (req, res) 
             .doc(req.params.serviceId)
             .update({ is_active: true });
 
+        // For solo businesses, also activate the employee service
+        if (businessDoc.data().is_solo) {
+            try {
+                const empServicesSnap = await db.collectionGroup('employeeServices')
+                    .where('service_id', '==', req.params.serviceId)
+                    .get();
+                const batch = db.batch();
+                let hasBatch = false;
+                for (const doc of empServicesSnap.docs) {
+                    if (doc.ref.path.split('/')[1] === req.params.id) {
+                        batch.update(doc.ref, { is_active: true });
+                        hasBatch = true;
+                    }
+                }
+                if (hasBatch) await batch.commit();
+            } catch (err) {
+                console.error('Failed to sync solo employee service activation:', err);
+            }
+        }
+
         const currentData = serviceDoc.data();
 
         checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
@@ -1632,6 +1747,26 @@ router.post('/:id/services/:serviceId/deactivate', authenticate, async (req, res
             .collection('services')
             .doc(req.params.serviceId)
             .update({ is_active: false });
+
+        // For solo businesses, also deactivate the employee service
+        if (businessDoc.data().is_solo) {
+            try {
+                const empServicesSnap = await db.collectionGroup('employeeServices')
+                    .where('service_id', '==', req.params.serviceId)
+                    .get();
+                const batch = db.batch();
+                let hasBatch = false;
+                for (const doc of empServicesSnap.docs) {
+                    if (doc.ref.path.split('/')[1] === req.params.id) {
+                        batch.update(doc.ref, { is_active: false });
+                        hasBatch = true;
+                    }
+                }
+                if (hasBatch) await batch.commit();
+            } catch (err) {
+                console.error('Failed to sync solo employee service deactivation:', err);
+            }
+        }
 
         const currentData = serviceDoc.data();
 
