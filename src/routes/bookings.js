@@ -1294,6 +1294,16 @@ router.get(
                     .filter(b => b.items.length > 0);
             }
 
+            // Filter out cancelled items and bookings with no active items
+            if (!status || status !== 'cancelled') {
+                bookings = bookings
+                    .map(b => ({
+                        ...b,
+                        items: (b.items || []).filter(item => item.status !== 'cancelled'),
+                    }))
+                    .filter(b => b.items.length > 0);
+            }
+
             // Calculate pagination
             const total = bookings.length;
             const totalPages = Math.ceil(total / page_size);
