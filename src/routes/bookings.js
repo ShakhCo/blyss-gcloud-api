@@ -931,6 +931,7 @@ router.patch(
 router.post(
     '/businesses/:businessId/bookings',
     authenticate,
+    (req, res, next) => { req.body.business_id = req.params.businessId; next(); },
     validate(createBookingSchema),
     async (req, res) => {
         try {
