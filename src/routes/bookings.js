@@ -1080,12 +1080,15 @@ router.post(
 
             // Look up customer's user_id by phone number (so booking appears in their "my bookings")
             let customerUserId = null;
+            let resolvedCustomerName = customer_name;
             const customerUserSnapshot = await db.collection('users')
                 .where('phone_number', '==', customer_phone)
                 .limit(1)
                 .get();
             if (!customerUserSnapshot.empty) {
+                const existingUser = customerUserSnapshot.docs[0].data();
                 customerUserId = customerUserSnapshot.docs[0].id;
+                resolvedCustomerName = `${existingUser.first_name || ''} ${existingUser.last_name || ''}`.trim() || customer_name;
             }
 
             const bookingId = crypto.randomBytes(16).toString('hex');
@@ -1094,7 +1097,7 @@ router.post(
                 business_id: businessId,
                 business_name: businessData.business_name,
                 user_id: customerUserId,
-                customer_name,
+                customer_name: resolvedCustomerName,
                 customer_phone,
                 customer_telegram_id: customer_telegram_id || null,
                 booking_date,
