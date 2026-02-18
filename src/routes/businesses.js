@@ -1461,7 +1461,6 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
                 const soloEmployeeSnapshot = await db.collection('businesses')
                     .doc(req.params.id)
                     .collection('employees')
-                    .where('business_owner_id', '==', req.user.id)
                     .limit(1)
                     .get();
 
@@ -1494,8 +1493,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
             id: serviceId,
             business_id: req.params.id,
             ...serviceData,
-            date_created: dateCreated.toISOString(),
-            is_active: false
+            date_created: dateCreated.toISOString()
         });
     } catch (error) {
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
