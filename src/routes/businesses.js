@@ -2317,6 +2317,17 @@ router.put('/:id/employees/:employeeId/working-hours', authenticate, validate(up
 
         await employeeDoc.ref.update(updateData);
 
+        // If solo business, also update business working hours to match employee
+        if (businessData.is_solo) {
+            try {
+                await db.collection('businesses').doc(req.params.id).update({
+                    working_hours: finalWorkingHours
+                });
+            } catch (err) {
+                console.error('Failed to sync solo business working hours:', err);
+            }
+        }
+
         checkAndUpdateBusinessStatus(db, req.params.id).catch(err => console.error('Status check failed:', err));
 
         res.json({

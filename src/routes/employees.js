@@ -249,6 +249,7 @@ router.get('/workplaces', authenticate, async (req, res) => {
                 business_owner_id: businessData.business_owner_id,
                 business_status: businessData.business_status,
                 tenant_url: businessData.tenant_url || null,
+                is_solo: businessData.is_solo || false,
                 avatar_url: businessData.avatar_url || null,
                 avatar_updated_at: businessData.avatar_updated_at?.toDate?.().toISOString() || businessData.avatar_updated_at || null,
                 services: servicesSnapshot.docs.map(doc => {
