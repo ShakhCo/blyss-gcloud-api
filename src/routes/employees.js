@@ -386,4 +386,105 @@ router.post('/workplaces/:employeeId/respond', authenticate, validate(workplaceA
     }
 });
 
+/**
+ * GET /employees/statistics
+ * Returns booking revenue summary for yesterday, today, and tomorrow
+ */
+router.get('/statistics', authenticate, async (req, res) => {
+    try {
+        // Find employee's workplace
+        const employeesSnapshot = await db.collectionGroup('employees')
+            .where('phone_number', '==', req.user.phone_number)
+            .where('is_accepted', '==', true)
+            .where('is_rejected', '==', false)
+            .limit(1)
+            .get();
+
+        if (employeesSnapshot.empty) {
+            return res.status(404).json({ error: 'Workplace not found', error_code: 'WORKPLACE_NOT_FOUND' });
+        }
+
+        const employeeDoc = employeesSnapshot.docs[0];
+        const employeeId = employeeDoc.id;
+        const businessId = employeeDoc.ref.parent.parent.id;
+
+        // Calculate dates in Uzbekistan timezone (GMT+5)
+        const now = new Date();
+        const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const uzbekNow = new Date(utcNow + (5 * 3600000));
+
+        const formatDate = (d) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        };
+
+        const yesterday = new Date(uzbekNow);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const today = new Date(uzbekNow);
+        const tomorrow = new Date(uzbekNow);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        const yesterdayStr = formatDate(yesterday);
+        const todayStr = formatDate(today);
+        const tomorrowStr = formatDate(tomorrow);
+
+        // Fetch bookings for all 3 days in one query
+        const bookingsSnapshot = await db.collection('bookings')
+            .where('business_id', '==', businessId)
+            .where('booking_date', '>=', yesterdayStr)
+            .where('booking_date', '<=', tomorrowStr)
+            .get();
+
+        let yesterdayTotal = 0;
+        let todayTotal = 0;
+        let tomorrowTotal = 0;
+        let yesterdayCount = 0;
+        let todayCount = 0;
+        let tomorrowCount = 0;
+
+        for (const doc of bookingsSnapshot.docs) {
+            const booking = doc.data();
+
+            // Filter to this employee's non-cancelled items
+            const employeeItems = (booking.items || []).filter(
+                item => item.employee_id === employeeId && item.status !== 'cancelled'
+            );
+            if (employeeItems.length === 0) continue;
+
+            const itemTotal = employeeItems.reduce((sum, item) => sum + (item.price || 0), 0);
+
+            if (booking.booking_date === yesterdayStr) {
+                // Yesterday: only completed
+                if (booking.status === 'completed') {
+                    yesterdayTotal += itemTotal;
+                    yesterdayCount++;
+                }
+            } else if (booking.booking_date === todayStr) {
+                // Today: only confirmed + completed
+                if (booking.status === 'confirmed' || booking.status === 'completed') {
+                    todayTotal += itemTotal;
+                    todayCount++;
+                }
+            } else if (booking.booking_date === tomorrowStr) {
+                // Tomorrow: pending + confirmed
+                if (booking.status === 'pending' || booking.status === 'confirmed') {
+                    tomorrowTotal += itemTotal;
+                    tomorrowCount++;
+                }
+            }
+        }
+
+        res.json({
+            yesterday: { date: yesterdayStr, total: yesterdayTotal, count: yesterdayCount },
+            today: { date: todayStr, total: todayTotal, count: todayCount },
+            tomorrow: { date: tomorrowStr, total: tomorrowTotal, count: tomorrowCount },
+        });
+    } catch (error) {
+        console.error('Error fetching employee statistics:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
