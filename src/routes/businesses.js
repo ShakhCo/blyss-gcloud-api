@@ -3163,4 +3163,80 @@ router.post('/:id/transfer/confirm', authenticate, validate(transferConfirmSchem
     }
 });
 
+/**
+ * GET /:id/reviews
+ * List submitted reviews for a business.
+ * Optional query: employee_id, page, page_size
+ */
+router.get('/:id/reviews', authenticate, async (req, res) => {
+    try {
+        const businessDoc = await db.collection('businesses').doc(req.params.id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        const { employee_id, page = '1', page_size = '20' } = req.query;
+        const pageNum = Math.max(1, parseInt(page));
+        const pageSizeNum = Math.min(50, Math.max(1, parseInt(page_size)));
+
+        let query = db.collection('reviews')
+            .where('business_id', '==', req.params.id)
+            .where('status', '==', 'submitted')
+            .orderBy('submitted_at', 'desc');
+
+        const allDocs = await query.get();
+
+        // Filter by employee_id in code (Firestore can't query nested array fields)
+        let filtered = allDocs.docs;
+        if (employee_id) {
+            filtered = filtered.filter(doc => {
+                const data = doc.data();
+                return (data.items || []).some(item => item.employee_id === employee_id);
+            });
+        }
+
+        const total = filtered.length;
+        const totalPages = Math.ceil(total / pageSizeNum);
+        const start = (pageNum - 1) * pageSizeNum;
+        const paginated = filtered.slice(start, start + pageSizeNum);
+
+        const reviews = paginated.map(doc => {
+            const data = doc.data();
+            let items = data.items || [];
+            if (employee_id) {
+                items = items.filter(item => item.employee_id === employee_id);
+            }
+            return {
+                id: doc.id,
+                customer_name: data.customer_name,
+                customer_phone: data.customer_phone,
+                booking_date: data.booking_date,
+                comment: data.comment || '',
+                submitted_at: data.submitted_at?.toDate?.().toISOString() || data.submitted_at,
+                items: items.map(item => ({
+                    service_name: item.service_name,
+                    employee_name: item.employee_name,
+                    rating: item.rating,
+                    price: item.price
+                }))
+            };
+        });
+
+        res.json({
+            data: reviews,
+            pagination: {
+                page: pageNum,
+                page_size: pageSizeNum,
+                total,
+                total_pages: totalPages,
+                has_next: pageNum < totalPages,
+                has_prev: pageNum > 1
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
