@@ -2360,17 +2360,17 @@ router.post('/reviews/:token', validate(submitReviewSchema), async (req, res) =>
 
         // Atomic transaction: update review + business stats
         await db.runTransaction(async (transaction) => {
-            // Update review doc
+            // All reads first (Firestore requirement)
+            const businessRef = db.collection('businesses').doc(review.business_id);
+            const businessDoc = await transaction.get(businessRef);
+
+            // Then all writes
             transaction.update(reviewRef, {
                 items: updatedItems,
                 status: 'submitted',
                 comment: comment || '',
                 submitted_at: new Date()
             });
-
-            // Update business review_stats
-            const businessRef = db.collection('businesses').doc(review.business_id);
-            const businessDoc = await transaction.get(businessRef);
 
             if (businessDoc.exists) {
                 const business = businessDoc.data();
