@@ -485,6 +485,7 @@ router.post('/send-review-requests', async (req, res) => {
 
         // Filter: not already sent, and completed 2+ hours ago
         const eligible = [];
+        
         for (const doc of completedBookings.docs) {
             const data = doc.data();
             if (data.review_request_sent) continue;
@@ -606,6 +607,134 @@ router.post('/send-review-requests', async (req, res) => {
         res.json({ reviews_created: reviewsCreated, sms_sent: smsSent });
     } catch (error) {
         console.error('Error sending review requests:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * POST /cron/test-review-requests
+ * Test route: sends review request SMS only to customers of business 2e4aec013254a05e.
+ * Same logic as send-review-requests but filtered to one business and no 2-hour delay.
+ */
+router.post('/test-review-requests', async (req, res) => {
+    const TEST_BUSINESS_ID = '2e4aec013254a05e';
+    try {
+        const completedBookings = await db.collection('bookings')
+            .where('status', '==', 'completed')
+            .where('business_id', '==', TEST_BUSINESS_ID)
+            .get();
+
+        if (completedBookings.empty) {
+            return res.json({ reviews_created: 0, sms_sent: 0, message: 'No completed bookings found' });
+        }
+
+        const eligible = [];
+        for (const doc of completedBookings.docs) {
+            const data = doc.data();
+            if (data.review_request_sent) continue;
+            eligible.push({ doc, data });
+        }
+
+        if (eligible.length === 0) {
+            return res.json({ reviews_created: 0, sms_sent: 0, message: 'All bookings already have review_request_sent' });
+        }
+
+        // Group by (customer_phone, business_id, booking_date)
+        const groups = new Map();
+        for (const { doc, data } of eligible) {
+            const key = `${data.customer_phone}|${data.business_id}|${data.booking_date}`;
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    customer_phone: data.customer_phone,
+                    customer_name: data.customer_name,
+                    business_id: data.business_id,
+                    business_name: data.business_name,
+                    booking_date: data.booking_date,
+                    bookings: []
+                });
+            }
+            groups.get(key).bookings.push({ doc, data });
+        }
+
+        let reviewsCreated = 0;
+        let smsSent = 0;
+        const REVIEW_BASE_URL = process.env.REVIEW_BASE_URL || 'https://blyss.uz';
+
+        for (const [, group] of groups) {
+            const token = crypto.randomBytes(16).toString('hex');
+
+            const items = [];
+            const bookingIds = [];
+
+            for (const { doc, data } of group.bookings) {
+                bookingIds.push(doc.id);
+                for (const item of (data.items || [])) {
+                    if (item.status === 'cancelled') continue;
+                    items.push({
+                        booking_item_id: item.id,
+                        service_id: item.service_id,
+                        service_name: item.service_name,
+                        employee_id: item.employee_id,
+                        employee_name: item.employee_name,
+                        start_time: item.start_time?.split('T')[1] || '',
+                        price: item.price || 0,
+                        rating: null
+                    });
+                }
+            }
+
+            if (items.length === 0) {
+                for (const { doc } of group.bookings) {
+                    await doc.ref.update({ review_request_sent: true });
+                }
+                continue;
+            }
+
+            await db.collection('reviews').doc(token).set({
+                business_id: group.business_id,
+                business_name: group.business_name,
+                customer_phone: group.customer_phone,
+                customer_name: group.customer_name,
+                booking_date: group.booking_date,
+                booking_ids: bookingIds,
+                items,
+                status: 'pending',
+                comment: null,
+                created_at: new Date(),
+                submitted_at: null
+            });
+
+            reviewsCreated++;
+
+            let reviewBaseUrl = REVIEW_BASE_URL;
+            try {
+                const businessDoc = await db.collection('businesses').doc(group.business_id).get();
+                if (businessDoc.exists && businessDoc.data().tenant_url) {
+                    reviewBaseUrl = `https://${businessDoc.data().tenant_url}`;
+                }
+            } catch (bizError) {
+                console.error(`Failed to fetch business ${group.business_id} for tenant_url:`, bizError);
+            }
+
+            const link = `${reviewBaseUrl}/rate?token=${token}`;
+            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing:\n${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке:\n${link}\n\nblyss.uz`;
+
+            try {
+                await sendSms(group.customer_phone, smsMessage);
+                smsSent++;
+            } catch (smsError) {
+                console.error(`Failed to send review SMS to ${group.customer_phone}:`, smsError);
+            }
+
+            for (const { doc } of group.bookings) {
+                await doc.ref.update({ review_request_sent: true });
+            }
+        }
+
+        console.log(`[TEST] Review requests for ${TEST_BUSINESS_ID}: ${reviewsCreated} created, ${smsSent} SMS sent`);
+        res.json({ reviews_created: reviewsCreated, sms_sent: smsSent, eligible_bookings: eligible.length, groups: groups.size });
+    } catch (error) {
+        console.error('Error in test-review-requests:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
