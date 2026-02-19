@@ -439,9 +439,11 @@ router.get('/statistics', authenticate, async (req, res) => {
 
         let yesterdayTotal = 0;
         let todayTotal = 0;
+        let todayExpected = 0;
         let tomorrowTotal = 0;
         let yesterdayCount = 0;
         let todayCount = 0;
+        let todayExpectedCount = 0;
         let tomorrowCount = 0;
 
         for (const doc of bookingsSnapshot.docs) {
@@ -462,10 +464,15 @@ router.get('/statistics', authenticate, async (req, res) => {
                     yesterdayCount++;
                 }
             } else if (booking.booking_date === todayStr) {
-                // Today: only completed
+                // Today completed
                 if (booking.status === 'completed') {
                     todayTotal += itemTotal;
                     todayCount++;
+                }
+                // Today expected: completed + confirmed
+                if (booking.status === 'completed' || booking.status === 'confirmed') {
+                    todayExpected += itemTotal;
+                    todayExpectedCount++;
                 }
             } else if (booking.booking_date === tomorrowStr) {
                 // Tomorrow: pending + confirmed
@@ -478,7 +485,7 @@ router.get('/statistics', authenticate, async (req, res) => {
 
         res.json({
             yesterday: { date: yesterdayStr, total: yesterdayTotal, count: yesterdayCount },
-            today: { date: todayStr, total: todayTotal, count: todayCount },
+            today: { date: todayStr, total: todayTotal, count: todayCount, expected: todayExpected, expected_count: todayExpectedCount },
             tomorrow: { date: tomorrowStr, total: tomorrowTotal, count: tomorrowCount },
         });
     } catch (error) {
