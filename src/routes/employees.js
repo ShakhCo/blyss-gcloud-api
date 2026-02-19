@@ -462,8 +462,8 @@ router.get('/statistics', authenticate, async (req, res) => {
                     yesterdayCount++;
                 }
             } else if (booking.booking_date === todayStr) {
-                // Today: only confirmed + completed
-                if (booking.status === 'confirmed' || booking.status === 'completed') {
+                // Today: only completed
+                if (booking.status === 'completed') {
                     todayTotal += itemTotal;
                     todayCount++;
                 }
