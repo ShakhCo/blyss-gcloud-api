@@ -13,6 +13,7 @@ import { generateTokenPair, verifyRefreshToken } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 import { sendBookingCancellationNotification, sendTelegramMessage } from '../utils/telegram.js';
 const router = Router();
+const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
 
 /**
  * Apply rate limiting to all public routes
@@ -2478,6 +2479,33 @@ router.post('/reviews/:token', validate(submitReviewSchema), async (req, res) =>
             }
         } catch (notifyErr) {
             console.error('Failed to notify employees about review:', notifyErr);
+        }
+
+        // Notify admin group (fire-and-forget)
+        if (ADMIN_GROUP_ID) {
+            try {
+                const serviceLines = updatedItems.map(i => {
+                    const name = typeof i.service_name === 'object'
+                        ? (i.service_name.uz || i.service_name.ru)
+                        : i.service_name;
+                    return `  ${name}: ${'⭐'.repeat(i.rating)}`;
+                }).join('\n');
+
+                let adminMsg = `⭐ <b>Yangi baho qoldirildi!</b>\n\n` +
+                    `🏢 <b>Business:</b> ${review.business_name}\n` +
+                    `👤 <b>Mijoz:</b> ${review.customer_name}\n` +
+                    `📱 <b>Telefon:</b> ${review.customer_phone}\n` +
+                    `📅 <b>Sana:</b> ${review.booking_date}\n\n` +
+                    `💈 <b>Baholar:</b>\n${serviceLines}`;
+
+                if (comment) {
+                    adminMsg += `\n\n💬 <b>Izoh:</b> "${comment}"`;
+                }
+
+                await sendTelegramMessage(ADMIN_GROUP_ID, adminMsg);
+            } catch (adminErr) {
+                console.error('Failed to notify admin group about review:', adminErr);
+            }
         }
     } catch (error) {
         console.error('Error in POST /public/reviews/:token:', error);
