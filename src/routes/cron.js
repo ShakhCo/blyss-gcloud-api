@@ -588,7 +588,7 @@ router.post('/send-review-requests', async (req, res) => {
 
             // Send bilingual SMS
             const link = `${reviewBaseUrl}/rate?token=${token}`;
-            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing:\n${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке:\n${link}\n\nblyss.uz`;
+            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing: ${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке: ${link}\n\n${reviewBaseUrl}`;
 
             try {
                 await sendSms(group.customer_phone, smsMessage);
@@ -741,7 +741,7 @@ router.post('/test-review-requests', async (req, res) => {
             }
 
             const link = `${reviewBaseUrl}/rate?token=${token}`;
-            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing:\n${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке:\n${link}\n\nblyss.uz`;
+            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing: ${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке: ${link}\n\n${reviewBaseUrl}`;
 
             try {
                 await sendSms(group.customer_phone, smsMessage);
