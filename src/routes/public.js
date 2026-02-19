@@ -2271,11 +2271,21 @@ router.get('/reviews/:token', async (req, res) => {
             return res.status(410).json({ error: 'Review link has expired', error_code: 'EXPIRED' });
         }
 
+        // Fetch business primary color
+        let primary_color = null;
+        if (review.business_id) {
+            const businessDoc = await db.collection('businesses').doc(review.business_id).get();
+            if (businessDoc.exists) {
+                primary_color = businessDoc.data().primary_color || null;
+            }
+        }
+
         res.json({
             token,
             business_name: review.business_name,
             customer_name: review.customer_name,
             booking_date: review.booking_date,
+            primary_color,
             items: review.items.map(item => ({
                 booking_item_id: item.booking_item_id,
                 service_name: item.service_name,
