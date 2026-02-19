@@ -2397,6 +2397,28 @@ router.post('/reviews/:token', validate(submitReviewSchema), async (req, res) =>
             }
         });
 
+        // Save ratings back to booking items so bookings API returns them
+        try {
+            for (const bookingId of review.booking_ids) {
+                const bookingRef = db.collection('bookings').doc(bookingId);
+                const bookingDoc = await bookingRef.get();
+                if (!bookingDoc.exists) continue;
+
+                const bookingData = bookingDoc.data();
+                const updatedBookingItems = (bookingData.items || []).map(item => {
+                    const rating = ratingMap.get(item.id);
+                    return rating ? { ...item, rating } : item;
+                });
+
+                await bookingRef.update({
+                    items: updatedBookingItems,
+                    ...(comment && { review_comment: comment })
+                });
+            }
+        } catch (err) {
+            console.error('Failed to save ratings to bookings:', err);
+        }
+
         res.json({ success: true });
     } catch (error) {
         console.error('Error in POST /public/reviews/:token:', error);
