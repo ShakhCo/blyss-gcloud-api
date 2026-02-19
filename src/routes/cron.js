@@ -597,6 +597,30 @@ router.post('/send-review-requests', async (req, res) => {
                 console.error(`Failed to send review SMS to ${group.customer_phone}:`, smsError);
             }
 
+            // Notify admin group via Telegram
+            if (ADMIN_GROUP_ID) {
+                try {
+                    const serviceList = items.map(i => {
+                        const name = typeof i.service_name === 'object'
+                            ? i.service_name.uz || i.service_name.ru
+                            : i.service_name || 'Service';
+                        return `  - ${name} (${i.price?.toLocaleString() || 0} so'm)`;
+                    }).join('\n');
+
+                    const adminMsg = `⭐ <b>Review so'rovi yuborildi</b>\n\n` +
+                        `🏢 <b>Business:</b> ${group.business_name}\n` +
+                        `👤 <b>Mijoz:</b> ${group.customer_name || 'N/A'}\n` +
+                        `📱 <b>Telefon:</b> ${group.customer_phone}\n` +
+                        `📅 <b>Sana:</b> ${group.booking_date}\n` +
+                        `💈 <b>Xizmatlar:</b>\n${serviceList}\n\n` +
+                        `🔗 <b>Link:</b> ${link}`;
+
+                    await sendTelegramMessage(ADMIN_GROUP_ID, adminMsg);
+                } catch (adminError) {
+                    console.error(`Failed to notify admin group for review:`, adminError);
+                }
+            }
+
             // Mark all bookings in this group
             for (const { doc } of group.bookings) {
                 await doc.ref.update({ review_request_sent: true });
@@ -724,6 +748,30 @@ router.post('/test-review-requests', async (req, res) => {
                 smsSent++;
             } catch (smsError) {
                 console.error(`Failed to send review SMS to ${group.customer_phone}:`, smsError);
+            }
+
+            // Notify admin group via Telegram
+            if (ADMIN_GROUP_ID) {
+                try {
+                    const serviceList = items.map(i => {
+                        const name = typeof i.service_name === 'object'
+                            ? i.service_name.uz || i.service_name.ru
+                            : i.service_name || 'Service';
+                        return `  - ${name} (${i.price?.toLocaleString() || 0} so'm)`;
+                    }).join('\n');
+
+                    const adminMsg = `⭐ <b>[TEST] Review so'rovi yuborildi</b>\n\n` +
+                        `🏢 <b>Business:</b> ${group.business_name}\n` +
+                        `👤 <b>Mijoz:</b> ${group.customer_name || 'N/A'}\n` +
+                        `📱 <b>Telefon:</b> ${group.customer_phone}\n` +
+                        `📅 <b>Sana:</b> ${group.booking_date}\n` +
+                        `💈 <b>Xizmatlar:</b>\n${serviceList}\n\n` +
+                        `🔗 <b>Link:</b> ${link}`;
+
+                    await sendTelegramMessage(ADMIN_GROUP_ID, adminMsg);
+                } catch (adminError) {
+                    console.error(`Failed to notify admin group for test review:`, adminError);
+                }
             }
 
             for (const { doc } of group.bookings) {
