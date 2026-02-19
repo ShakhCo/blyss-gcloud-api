@@ -11,7 +11,7 @@ import { submitReviewSchema } from '../schemas/review.js';
 import { sendOtpSms } from '../utils/eskiz.js';
 import { generateTokenPair, verifyRefreshToken } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
-import { sendBookingCancellationNotification } from '../utils/telegram.js';
+import { sendBookingCancellationNotification, sendTelegramMessage } from '../utils/telegram.js';
 const router = Router();
 
 /**
@@ -2434,6 +2434,51 @@ router.post('/reviews/:token', validate(submitReviewSchema), async (req, res) =>
         }
 
         res.json({ success: true });
+
+        // Notify employees via Telegram (fire-and-forget)
+        try {
+            const uniqueEmployeeIds = [...new Set(review.items.map(i => i.employee_id).filter(Boolean))];
+
+            for (const employeeId of uniqueEmployeeIds) {
+                // Get employee phone_number
+                const empDoc = await db.collection('businesses').doc(review.business_id)
+                    .collection('employees').doc(employeeId).get();
+                if (!empDoc.exists) continue;
+
+                const empPhone = empDoc.data().phone_number;
+                if (!empPhone) continue;
+
+                // Find business_owner by phone to get telegram_id
+                const ownerSnap = await db.collection('business_owners')
+                    .where('phone_number', '==', empPhone).limit(1).get();
+                if (ownerSnap.empty) continue;
+
+                const telegramId = ownerSnap.docs[0].data().telegram_id;
+                if (!telegramId) continue;
+
+                // Build per-employee rating summary
+                const empItems = updatedItems.filter(i => i.employee_id === employeeId);
+                const serviceLines = empItems.map(i => {
+                    const name = typeof i.service_name === 'object'
+                        ? (i.service_name.uz || i.service_name.ru)
+                        : i.service_name;
+                    return `  ${name}: ${'⭐'.repeat(i.rating)}`;
+                }).join('\n');
+
+                let message = `📝 <b>Yangi baho qoldirildi!</b>\n\n` +
+                    `👤 <b>Mijoz:</b> ${review.customer_name}\n` +
+                    `📅 <b>Sana:</b> ${review.booking_date}\n\n` +
+                    `${serviceLines}`;
+
+                if (comment) {
+                    message += `\n\n💬 <b>Izoh:</b> "${comment}"`;
+                }
+
+                await sendTelegramMessage(telegramId, message);
+            }
+        } catch (notifyErr) {
+            console.error('Failed to notify employees about review:', notifyErr);
+        }
     } catch (error) {
         console.error('Error in POST /public/reviews/:token:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
