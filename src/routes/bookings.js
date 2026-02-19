@@ -382,7 +382,7 @@ router.get(
                     const startMinutes = timeToMinutes(slotTime);
                     const endMinutes = startMinutes + (item.duration_minutes || 30);
 
-                    for (let min = startMinutes; min < endMinutes; min += 30) {
+                    for (let min = startMinutes; min < endMinutes; min += 15) {
                         const slotKey = `${Math.floor(min / 60).toString().padStart(2, '0')}:${(min % 60).toString().padStart(2, '0')}`;
                         empSlots.set(slotKey, (empSlots.get(slotKey) || 0) + 1);
                     }
@@ -400,13 +400,13 @@ router.get(
 
             if (date === todayUzb) {
                 const currentMinutes = uzbekNow.getUTCHours() * 60 + uzbekNow.getUTCMinutes() + 15;
-                // Round up to next 30-min slot
-                const roundedMinutes = Math.ceil(currentMinutes / 30) * 30;
+                // Round up to next 15-min slot
+                const roundedMinutes = Math.ceil(currentMinutes / 15) * 15;
                 businessStartMinutes = Math.max(businessStartMinutes, roundedMinutes);
             }
 
             const slots = [];
-            const slotInterval = 30;
+            const slotInterval = 15;
 
             for (let slotMinutes = businessStartMinutes; slotMinutes <= businessEndMinutes - serviceDuration; slotMinutes += slotInterval) {
                 const slotTime = `${Math.floor(slotMinutes / 60).toString().padStart(2, '0')}:${(slotMinutes % 60).toString().padStart(2, '0')}`;
@@ -442,7 +442,7 @@ router.get(
 
                     // Check all slots that this booking would occupy
                     let isAvailable = true;
-                    for (let min = slotMinutes; min < slotMinutes + serviceDuration; min += 30) {
+                    for (let min = slotMinutes; min < slotMinutes + serviceDuration; min += 15) {
                         const checkSlot = `${Math.floor(min / 60).toString().padStart(2, '0')}:${(min % 60).toString().padStart(2, '0')}`;
                         const currentCount = empSlots?.get(checkSlot) || 0;
                         if (currentCount >= allowedCount) {
