@@ -2271,12 +2271,15 @@ router.get('/reviews/:token', async (req, res) => {
             return res.status(410).json({ error: 'Review link has expired', error_code: 'EXPIRED' });
         }
 
-        // Fetch business primary color
+        // Fetch business details
         let primary_color = null;
+        let tenant_url = null;
         if (review.business_id) {
             const businessDoc = await db.collection('businesses').doc(review.business_id).get();
             if (businessDoc.exists) {
-                primary_color = businessDoc.data().primary_color || null;
+                const businessData = businessDoc.data();
+                primary_color = businessData.primary_color || null;
+                tenant_url = businessData.tenant_url || null;
             }
         }
 
@@ -2286,6 +2289,7 @@ router.get('/reviews/:token', async (req, res) => {
             customer_name: review.customer_name,
             booking_date: review.booking_date,
             primary_color,
+            tenant_url,
             items: review.items.map(item => ({
                 booking_item_id: item.booking_item_id,
                 service_name: item.service_name,
