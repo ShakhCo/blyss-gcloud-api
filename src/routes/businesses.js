@@ -1473,7 +1473,7 @@ router.post('/:id/services', authenticate, validate(serviceSchema), async (req, 
                         .doc(req.params.id)
                         .collection('employees')
                         .doc(soloEmployee.id)
-                        .collection('services')
+                        .collection('employeeServices')
                         .doc(employeeServiceId)
                         .set({
                             service_id: serviceId,
