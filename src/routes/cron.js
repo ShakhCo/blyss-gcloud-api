@@ -787,4 +787,143 @@ router.post('/test-review-requests', async (req, res) => {
     }
 });
 
+/**
+ * POST /cron/send-winback-notifications
+ * Find customers who haven't visited a business for 20+ days.
+ * Sends one SMS per (customer_phone, business_id) pair.
+ * Uses `winback_notifications` collection to avoid re-sending.
+ */
+router.post('/send-winback-notifications', async (req, res) => {
+    try {
+        const now = new Date();
+        const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const uzbekNow = new Date(utcNow + (5 * 3600000));
+        const todayStr = uzbekNow.toISOString().split('T')[0]; // YYYY-MM-DD
+
+        // 20 days ago
+        const cutoffDate = new Date(uzbekNow);
+        cutoffDate.setDate(cutoffDate.getDate() - 20);
+        const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+        // Get all completed bookings
+        const completedBookings = await db.collection('bookings')
+            .where('status', '==', 'completed')
+            .get();
+
+        if (completedBookings.empty) {
+            return res.json({ notifications_sent: 0 });
+        }
+
+        // Group by (customer_phone, business_id), track latest booking_date
+        const groups = new Map();
+        for (const doc of completedBookings.docs) {
+            const data = doc.data();
+            if (!data.customer_phone || !data.business_id || !data.booking_date) continue;
+
+            const key = `${data.customer_phone}|${data.business_id}`;
+            const existing = groups.get(key);
+
+            if (!existing || data.booking_date > existing.latest_date) {
+                groups.set(key, {
+                    customer_phone: data.customer_phone,
+                    customer_name: data.customer_name,
+                    business_id: data.business_id,
+                    business_name: data.business_name,
+                    latest_date: data.booking_date
+                });
+            }
+        }
+
+        // Filter: latest visit 20+ days ago
+        const eligible = [];
+        for (const [key, group] of groups) {
+            if (group.latest_date <= cutoffStr) {
+                eligible.push({ key, ...group });
+            }
+        }
+
+        if (eligible.length === 0) {
+            return res.json({ notifications_sent: 0, checked: groups.size });
+        }
+
+        // Check which ones already got a winback notification
+        const winbackKeys = eligible.map(e => `${e.customer_phone}_${e.business_id}`);
+
+        // Firestore IN query supports max 30 items, batch if needed
+        const alreadySent = new Set();
+        for (let i = 0; i < winbackKeys.length; i += 30) {
+            const batch = winbackKeys.slice(i, i + 30);
+            const snap = await db.collection('winback_notifications')
+                .where('__name__', 'in', batch)
+                .get();
+            for (const doc of snap.docs) {
+                alreadySent.add(doc.id);
+            }
+        }
+
+        // Cache business tenant URLs
+        const businessCache = new Map();
+
+        let sent = 0;
+        for (const group of eligible) {
+            const docId = `${group.customer_phone}_${group.business_id}`;
+            if (alreadySent.has(docId)) continue;
+
+            // Get business tenant_url
+            if (!businessCache.has(group.business_id)) {
+                try {
+                    const bizDoc = await db.collection('businesses').doc(group.business_id).get();
+                    businessCache.set(group.business_id, bizDoc.exists ? bizDoc.data() : null);
+                } catch {
+                    businessCache.set(group.business_id, null);
+                }
+            }
+
+            const bizData = businessCache.get(group.business_id);
+            const tenantUrl = bizData?.tenant_url
+                ? `https://${bizData.tenant_url}`
+                : 'https://blyss.uz';
+            const businessName = bizData?.business_name || group.business_name;
+
+            const smsMessage = `Salom, bu ${businessName}! So'nggi tashrifingizdan beri ancha vaqt o'tdi 🙂 Sizni yana kutib qolamiz! Здравствуйте, это ${businessName}! С вашего последнего визита прошло уже много времени 🙂 Будем рады видеть вас снова! Yozilish/Запись: ${tenantUrl}`;
+
+            try {
+                await sendSms(group.customer_phone, smsMessage);
+                sent++;
+
+                // Record so we don't re-send
+                await db.collection('winback_notifications').doc(docId).set({
+                    customer_phone: group.customer_phone,
+                    business_id: group.business_id,
+                    business_name: businessName,
+                    last_visit_date: group.latest_date,
+                    sent_at: new Date()
+                });
+            } catch (smsErr) {
+                console.error(`Failed to send winback SMS to ${group.customer_phone}:`, smsErr);
+            }
+
+            // Notify admin group
+            if (ADMIN_GROUP_ID) {
+                try {
+                    const adminMsg = `📩 <b>Winback SMS yuborildi</b>\n\n` +
+                        `🏢 <b>Business:</b> ${businessName}\n` +
+                        `👤 <b>Mijoz:</b> ${group.customer_name || 'N/A'}\n` +
+                        `📱 <b>Telefon:</b> ${group.customer_phone}\n` +
+                        `📅 <b>Oxirgi tashrif:</b> ${group.latest_date}`;
+                    await sendTelegramMessage(ADMIN_GROUP_ID, adminMsg);
+                } catch (adminErr) {
+                    console.error('Failed to notify admin group for winback:', adminErr);
+                }
+            }
+        }
+
+        console.log(`Winback notifications: ${sent} sent out of ${eligible.length} eligible`);
+        res.json({ notifications_sent: sent, eligible: eligible.length, checked: groups.size });
+    } catch (error) {
+        console.error('Error sending winback notifications:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
