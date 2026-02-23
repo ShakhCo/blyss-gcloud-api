@@ -56,7 +56,7 @@ export async function exchangeCodeForToken(code) {
 
     // Step 2: Exchange short-lived token for long-lived token
     const longLivedResponse = await fetch(
-        `${GRAPH_API_BASE}/access_token?` + new URLSearchParams({
+        `${GRAPH_API_BASE}/v21.0/access_token?` + new URLSearchParams({
             grant_type: 'ig_exchange_token',
             client_secret: INSTAGRAM_APP_SECRET,
             access_token: shortLivedData.access_token,
