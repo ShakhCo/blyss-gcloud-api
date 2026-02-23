@@ -3,7 +3,7 @@ import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import { instagramAuthSchema, instagramSettingsSchema } from '../schemas/instagram.js';
-import { getOAuthUrl, exchangeCodeForToken, getInstagramAccount, subscribeToWebhooks } from '../utils/instagram.js';
+import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile } from '../utils/instagram.js';
 
 const router = Router();
 
@@ -58,23 +58,18 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
             return res.status(409).json({ error: 'Instagram already connected', error_code: 'ALREADY_CONNECTED' });
         }
 
-        // Exchange code for long-lived user token
-        const { access_token: userToken } = await exchangeCodeForToken(code);
+        // Exchange code for long-lived token
+        const { access_token, user_id } = await exchangeCodeForToken(code);
 
-        // Get Instagram account details + page access token
-        const { ig_user_id, ig_username, page_id, page_access_token } = await getInstagramAccount(userToken);
-
-        // Subscribe the page to webhook events
-        await subscribeToWebhooks(page_id, page_access_token);
+        // Get Instagram profile info
+        const { ig_user_id, ig_username } = await getInstagramProfile(access_token, user_id);
 
         // Store connection document
         const now = new Date();
-        // Page access tokens derived from long-lived user tokens are permanent (no expiry)
         const connectionData = {
             ig_user_id,
             ig_username,
-            page_id,
-            access_token: page_access_token,
+            access_token,
             connected_at: now,
             is_active: true,
             reply_template: '',
@@ -91,13 +86,6 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
             connected_at: now,
         });
     } catch (error) {
-        if (error.message === 'NO_INSTAGRAM_ACCOUNT') {
-            return res.status(400).json({
-                error: 'No Instagram Business Account found on your Facebook Pages',
-                error_code: 'NO_INSTAGRAM_ACCOUNT',
-            });
-        }
-
         console.error('Error connecting Instagram:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }

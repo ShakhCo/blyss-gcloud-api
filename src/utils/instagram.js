@@ -1,30 +1,30 @@
 /**
- * Meta/Instagram Graph API utilities for Instagram integration
+ * Instagram API utilities for Instagram Business Login integration
  */
 
 import crypto from 'crypto';
 
-const META_APP_ID = process.env.META_APP_ID;
-const META_APP_SECRET = process.env.META_APP_SECRET;
+const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID;
+const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
 const INSTAGRAM_CALLBACK_URL = process.env.INSTAGRAM_CALLBACK_URL;
 
-const GRAPH_API_BASE = 'https://graph.facebook.com/v21.0';
+const GRAPH_API_BASE = 'https://graph.instagram.com';
 
 /**
- * Build the Meta OAuth URL for Instagram authorization
+ * Build the Instagram OAuth URL for Business Login authorization
  * @param {string} businessId - The business ID to pass as state parameter
  * @returns {string} The full OAuth authorization URL
  */
 export function getOAuthUrl(businessId) {
     const params = new URLSearchParams({
-        client_id: META_APP_ID,
+        client_id: INSTAGRAM_APP_ID,
         redirect_uri: INSTAGRAM_CALLBACK_URL,
-        scope: 'instagram_basic,instagram_manage_comments,pages_show_list,pages_read_engagement',
+        scope: 'instagram_business_basic,instagram_manage_comments',
         response_type: 'code',
         state: businessId,
     });
 
-    return `https://www.facebook.com/v21.0/dialog/oauth?${params.toString()}`;
+    return `https://www.instagram.com/oauth/authorize?${params.toString()}`;
 }
 
 /**
@@ -35,125 +35,93 @@ export function getOAuthUrl(businessId) {
  */
 export async function exchangeCodeForToken(code) {
     // Step 1: Exchange code for short-lived token
-    const shortLivedResponse = await fetch(
-        `${GRAPH_API_BASE}/oauth/access_token?` + new URLSearchParams({
-            client_id: META_APP_ID,
-            client_secret: META_APP_SECRET,
+    const shortLivedResponse = await fetch('https://api.instagram.com/oauth/access_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            client_id: INSTAGRAM_APP_ID,
+            client_secret: INSTAGRAM_APP_SECRET,
+            grant_type: 'authorization_code',
             redirect_uri: INSTAGRAM_CALLBACK_URL,
             code,
-        })
-    );
+        }),
+    });
 
     const shortLivedData = await shortLivedResponse.json();
 
-    if (shortLivedData.error) {
-        console.error('Meta OAuth token exchange error:', shortLivedData.error);
-        throw new Error(`Meta OAuth error: ${shortLivedData.error.message}`);
+    if (shortLivedData.error_type || shortLivedData.error) {
+        console.error('Instagram OAuth token exchange error:', shortLivedData);
+        throw new Error(`Instagram OAuth error: ${shortLivedData.error_message || shortLivedData.error?.message || 'Unknown error'}`);
     }
 
     // Step 2: Exchange short-lived token for long-lived token
     const longLivedResponse = await fetch(
-        `${GRAPH_API_BASE}/oauth/access_token?` + new URLSearchParams({
-            grant_type: 'fb_exchange_token',
-            client_id: META_APP_ID,
-            client_secret: META_APP_SECRET,
-            fb_exchange_token: shortLivedData.access_token,
+        `${GRAPH_API_BASE}/access_token?` + new URLSearchParams({
+            grant_type: 'ig_exchange_token',
+            client_secret: INSTAGRAM_APP_SECRET,
+            access_token: shortLivedData.access_token,
         })
     );
 
     const longLivedData = await longLivedResponse.json();
 
     if (longLivedData.error) {
-        console.error('Meta long-lived token exchange error:', longLivedData.error);
-        throw new Error(`Meta long-lived token error: ${longLivedData.error.message}`);
+        console.error('Instagram long-lived token exchange error:', longLivedData.error);
+        throw new Error(`Instagram long-lived token error: ${longLivedData.error.message}`);
     }
 
     return {
         access_token: longLivedData.access_token,
+        user_id: shortLivedData.user_id,
         expires_in: longLivedData.expires_in,
     };
 }
 
 /**
- * Get the user's Instagram Business Account from their Facebook Pages
- * Finds the first page with an instagram_business_account, retrieves
- * a page access token (long-lived, doesn't expire) and the IG username.
- * @param {string} userAccessToken - The user's long-lived access token
- * @returns {Promise<{ig_user_id: string, ig_username: string, page_id: string, page_access_token: string}>}
- * @throws {'NO_INSTAGRAM_ACCOUNT'} If no connected Instagram account is found
+ * Get the Instagram user's profile info using their access token
+ * @param {string} accessToken - The user's long-lived access token
+ * @param {string} userId - The Instagram user ID from token exchange
+ * @returns {Promise<{ig_user_id: string, ig_username: string}>}
  */
-export async function getInstagramAccount(userAccessToken) {
-    // Get user's Facebook Pages with instagram_business_account field
-    const pagesResponse = await fetch(
-        `${GRAPH_API_BASE}/me/accounts?` + new URLSearchParams({
-            fields: 'id,name,instagram_business_account,access_token',
-            access_token: userAccessToken,
-        })
-    );
-
-    const pagesData = await pagesResponse.json();
-
-    if (pagesData.error) {
-        console.error('Meta Pages API error:', pagesData.error);
-        throw new Error(`Meta Pages API error: ${pagesData.error.message}`);
-    }
-
-    // Find the first page with an Instagram Business Account
-    const pageWithIG = pagesData.data?.find(
-        (page) => page.instagram_business_account
-    );
-
-    if (!pageWithIG) {
-        throw new Error('NO_INSTAGRAM_ACCOUNT');
-    }
-
-    const igUserId = pageWithIG.instagram_business_account.id;
-    const pageId = pageWithIG.id;
-    const pageAccessToken = pageWithIG.access_token;
-
-    // Get the IG username
-    const igResponse = await fetch(
-        `${GRAPH_API_BASE}/${igUserId}?` + new URLSearchParams({
-            fields: 'username',
-            access_token: pageAccessToken,
-        })
-    );
-
-    const igData = await igResponse.json();
-
-    if (igData.error) {
-        console.error('Instagram account API error:', igData.error);
-        throw new Error(`Instagram account API error: ${igData.error.message}`);
-    }
-
-    return {
-        ig_user_id: igUserId,
-        ig_username: igData.username,
-        page_id: pageId,
-        page_access_token: pageAccessToken,
-    };
-}
-
-/**
- * Refresh a long-lived token before it expires
- * @param {string} currentToken - The current long-lived access token to refresh
- * @returns {Promise<{access_token: string, expires_in: number}>}
- */
-export async function refreshLongLivedToken(currentToken) {
+export async function getInstagramProfile(accessToken, userId) {
     const response = await fetch(
-        `${GRAPH_API_BASE}/oauth/access_token?` + new URLSearchParams({
-            grant_type: 'fb_exchange_token',
-            client_id: META_APP_ID,
-            client_secret: META_APP_SECRET,
-            fb_exchange_token: currentToken,
+        `${GRAPH_API_BASE}/v21.0/me?` + new URLSearchParams({
+            fields: 'user_id,username',
+            access_token: accessToken,
         })
     );
 
     const data = await response.json();
 
     if (data.error) {
-        console.error('Meta token refresh error:', data.error);
-        throw new Error(`Meta token refresh error: ${data.error.message}`);
+        console.error('Instagram profile API error:', data.error);
+        throw new Error(`Instagram profile API error: ${data.error.message}`);
+    }
+
+    return {
+        ig_user_id: data.user_id || userId,
+        ig_username: data.username,
+    };
+}
+
+/**
+ * Refresh a long-lived Instagram token before it expires
+ * @param {string} currentToken - The current long-lived access token to refresh
+ * @returns {Promise<{access_token: string, expires_in: number}>}
+ */
+export async function refreshLongLivedToken(currentToken) {
+    const response = await fetch(
+        `${GRAPH_API_BASE}/refresh_access_token?` + new URLSearchParams({
+            grant_type: 'ig_refresh_token',
+            access_token: currentToken,
+        })
+    );
+
+    const data = await response.json();
+
+    if (data.error) {
+        console.error('Instagram token refresh error:', data.error);
+        throw new Error(`Instagram token refresh error: ${data.error.message}`);
     }
 
     return {
@@ -166,11 +134,11 @@ export async function refreshLongLivedToken(currentToken) {
  * Reply to an Instagram comment
  * @param {string} commentId - The comment ID to reply to
  * @param {string} message - The reply message text
- * @param {string} accessToken - The page access token
+ * @param {string} accessToken - The access token
  * @returns {Promise<object>} The API response data
  */
 export async function replyToComment(commentId, message, accessToken) {
-    const response = await fetch(`${GRAPH_API_BASE}/${commentId}/replies`, {
+    const response = await fetch(`${GRAPH_API_BASE}/v21.0/${commentId}/replies`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -194,13 +162,13 @@ export async function replyToComment(commentId, message, accessToken) {
 /**
  * Get media details (timestamp) for an Instagram media object
  * @param {string} mediaId - The media ID
- * @param {string} accessToken - The page access token
+ * @param {string} accessToken - The access token
  * @returns {Promise<object|null>} The media data with timestamp, or null on error
  */
 export async function getMediaDetails(mediaId, accessToken) {
     try {
         const response = await fetch(
-            `${GRAPH_API_BASE}/${mediaId}?` + new URLSearchParams({
+            `${GRAPH_API_BASE}/v21.0/${mediaId}?` + new URLSearchParams({
                 fields: 'timestamp',
                 access_token: accessToken,
             })
@@ -224,13 +192,13 @@ export async function getMediaDetails(mediaId, accessToken) {
  * Check if a comment already has a reply from the given Instagram user
  * @param {string} commentId - The comment ID to check
  * @param {string} igUserId - The Instagram user ID to check for
- * @param {string} accessToken - The page access token
+ * @param {string} accessToken - The access token
  * @returns {Promise<boolean>} True if the IG user has already replied
  */
 export async function hasExistingReply(commentId, igUserId, accessToken) {
     try {
         const response = await fetch(
-            `${GRAPH_API_BASE}/${commentId}/replies?` + new URLSearchParams({
+            `${GRAPH_API_BASE}/v21.0/${commentId}/replies?` + new URLSearchParams({
                 fields: 'from',
                 access_token: accessToken,
             })
@@ -258,14 +226,14 @@ export async function hasExistingReply(commentId, igUserId, accessToken) {
  * @returns {boolean} Whether the signature is valid
  */
 export function verifyWebhookSignature(rawBody, signature) {
-    if (!signature || !META_APP_SECRET) {
+    if (!signature || !INSTAGRAM_APP_SECRET) {
         return false;
     }
 
     const signatureHash = signature.replace('sha256=', '');
 
     const expectedHash = crypto
-        .createHmac('sha256', META_APP_SECRET)
+        .createHmac('sha256', INSTAGRAM_APP_SECRET)
         .update(rawBody)
         .digest('hex');
 
@@ -278,32 +246,4 @@ export function verifyWebhookSignature(rawBody, signature) {
         // timingSafeEqual throws if buffers have different lengths
         return false;
     }
-}
-
-/**
- * Subscribe a Facebook Page to webhook events (feed)
- * @param {string} pageId - The Facebook Page ID
- * @param {string} pageAccessToken - The page access token
- * @returns {Promise<object>} The API response data
- */
-export async function subscribeToWebhooks(pageId, pageAccessToken) {
-    const response = await fetch(`${GRAPH_API_BASE}/${pageId}/subscribed_apps`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            subscribed_fields: 'feed',
-            access_token: pageAccessToken,
-        }),
-    });
-
-    const data = await response.json();
-
-    if (data.error) {
-        console.error('Instagram webhook subscription error:', data.error);
-        throw new Error(`Webhook subscription error: ${data.error.message}`);
-    }
-
-    return data;
 }
