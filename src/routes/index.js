@@ -16,6 +16,8 @@ import bookingsRouter from './bookings.js';
 import telegramRouter from './telegram.js';
 import botRouter from './bot.js';
 import cronRouter from './cron.js';
+import instagramRouter from './instagram.js';
+import instagramWebhookRouter from './instagram-webhook.js';
 
 const router = Router();
 
@@ -30,6 +32,9 @@ router.use('/bot', verifySignature, botRouter);
 
 // Cron routes (Bearer token auth for Cloud Scheduler)
 router.use('/cron', cronRouter);
+
+// Instagram webhook (public — Meta sends events here, verified via its own signature)
+router.use('/instagram/webhook', instagramWebhookRouter);
 
 // Booking routes (mixed public and authenticated endpoints - handled internally)
 router.use('/', bookingsRouter);
@@ -46,5 +51,6 @@ router.use('/notifications', verifySignature, notificationsRouter);
 router.use('/distance', verifySignature, distanceRouter);
 router.use('/ai', verifySignature, aiRouter);
 router.use('/businesses/:businessId/conversations', verifySignature, conversationsRouter);
+router.use('/instagram', verifySignature, instagramRouter);
 
 export default router;
