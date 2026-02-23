@@ -4,9 +4,9 @@
 
 import crypto from 'crypto';
 
-const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID;
-const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
-const INSTAGRAM_CALLBACK_URL = process.env.INSTAGRAM_CALLBACK_URL;
+const INSTAGRAM_APP_ID = process.env.INSTAGRAM_APP_ID?.trim();
+const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET?.trim();
+const INSTAGRAM_CALLBACK_URL = process.env.INSTAGRAM_CALLBACK_URL?.trim();
 
 const GRAPH_API_BASE = 'https://graph.instagram.com';
 
@@ -34,9 +34,7 @@ export function getOAuthUrl(businessId) {
  * @returns {Promise<{access_token: string, expires_in: number}>}
  */
 export async function exchangeCodeForToken(code) {
-    // Trim env values to avoid trailing whitespace issues
-    const redirectUri = INSTAGRAM_CALLBACK_URL?.trim();
-    console.log('Instagram token exchange - redirect_uri:', redirectUri, '| code length:', code?.length);
+    console.log('Instagram token exchange - redirect_uri:', INSTAGRAM_CALLBACK_URL, '| code length:', code?.length);
 
     // Step 1: Exchange code for short-lived token
     const shortLivedResponse = await fetch('https://api.instagram.com/oauth/access_token', {
@@ -46,7 +44,7 @@ export async function exchangeCodeForToken(code) {
             client_id: INSTAGRAM_APP_ID,
             client_secret: INSTAGRAM_APP_SECRET,
             grant_type: 'authorization_code',
-            redirect_uri: redirectUri,
+            redirect_uri: INSTAGRAM_CALLBACK_URL,
             code,
         }),
     });
