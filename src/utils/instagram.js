@@ -34,7 +34,12 @@ export function getOAuthUrl(businessId) {
  * @returns {Promise<{access_token: string, expires_in: number}>}
  */
 export async function exchangeCodeForToken(code) {
-    console.log('Instagram token exchange - redirect_uri:', INSTAGRAM_CALLBACK_URL, '| code length:', code?.length);
+    console.log('Instagram token exchange debug:', {
+        client_id: INSTAGRAM_APP_ID,
+        redirect_uri: INSTAGRAM_CALLBACK_URL,
+        code_length: code?.length,
+        secret_last4: INSTAGRAM_APP_SECRET?.slice(-4),
+    });
 
     // Step 1: Exchange code for short-lived token
     const shortLivedResponse = await fetch('https://api.instagram.com/oauth/access_token', {
