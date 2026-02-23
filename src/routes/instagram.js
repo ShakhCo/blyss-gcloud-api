@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/db.js';
-import { authenticate } from '../middleware/authenticate.js';
+import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import { instagramAuthSchema, instagramSettingsSchema } from '../schemas/instagram.js';
 import { getOAuthUrl, exchangeCodeForToken, getInstagramAccount, subscribeToWebhooks } from '../utils/instagram.js';
@@ -11,7 +11,7 @@ const router = Router();
  * GET /oauth-url/:businessId
  * Returns the Meta OAuth URL for Instagram authorization
  */
-router.get('/oauth-url/:businessId', authenticate, async (req, res) => {
+router.get('/oauth-url/:businessId', verifySignature, authenticate, async (req, res) => {
     try {
         const { businessId } = req.params;
 
@@ -39,7 +39,7 @@ router.get('/oauth-url/:businessId', authenticate, async (req, res) => {
  * POST /auth
  * Exchange OAuth code for token and store Instagram connection
  */
-router.post('/auth', authenticate, validate(instagramAuthSchema), async (req, res) => {
+router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
     try {
         const { code, business_id } = req.validated;
 
@@ -47,11 +47,6 @@ router.post('/auth', authenticate, validate(instagramAuthSchema), async (req, re
         const businessDoc = await db.collection('businesses').doc(business_id).get();
         if (!businessDoc.exists) {
             return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
-        }
-
-        // Verify ownership
-        if (businessDoc.data().business_owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
         // Check if already connected
@@ -74,14 +69,12 @@ router.post('/auth', authenticate, validate(instagramAuthSchema), async (req, re
 
         // Store connection document
         const now = new Date();
-        const tokenExpiresAt = new Date(now.getTime() + 55 * 24 * 60 * 60 * 1000); // ~55 days from now
-
+        // Page access tokens derived from long-lived user tokens are permanent (no expiry)
         const connectionData = {
             ig_user_id,
             ig_username,
             page_id,
             access_token: page_access_token,
-            token_expires_at: tokenExpiresAt,
             connected_at: now,
             is_active: true,
             reply_template: '',
@@ -98,7 +91,7 @@ router.post('/auth', authenticate, validate(instagramAuthSchema), async (req, re
             connected_at: now,
         });
     } catch (error) {
-        if (error === 'NO_INSTAGRAM_ACCOUNT') {
+        if (error.message === 'NO_INSTAGRAM_ACCOUNT') {
             return res.status(400).json({
                 error: 'No Instagram Business Account found on your Facebook Pages',
                 error_code: 'NO_INSTAGRAM_ACCOUNT',
@@ -114,7 +107,7 @@ router.post('/auth', authenticate, validate(instagramAuthSchema), async (req, re
  * DELETE /auth/:businessId
  * Disconnect Instagram from a business
  */
-router.delete('/auth/:businessId', authenticate, async (req, res) => {
+router.delete('/auth/:businessId', verifySignature, authenticate, async (req, res) => {
     try {
         const { businessId } = req.params;
 
@@ -144,7 +137,7 @@ router.delete('/auth/:businessId', authenticate, async (req, res) => {
  * GET /status/:businessId
  * Get Instagram connection status for a business
  */
-router.get('/status/:businessId', authenticate, async (req, res) => {
+router.get('/status/:businessId', verifySignature, authenticate, async (req, res) => {
     try {
         const { businessId } = req.params;
 
@@ -186,7 +179,7 @@ router.get('/status/:businessId', authenticate, async (req, res) => {
  * PATCH /settings/:businessId
  * Update Instagram auto-reply settings
  */
-router.patch('/settings/:businessId', authenticate, validate(instagramSettingsSchema), async (req, res) => {
+router.patch('/settings/:businessId', verifySignature, authenticate, validate(instagramSettingsSchema), async (req, res) => {
     try {
         const { businessId } = req.params;
 

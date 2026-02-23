@@ -104,7 +104,7 @@ export async function getInstagramAccount(userAccessToken) {
     );
 
     if (!pageWithIG) {
-        throw 'NO_INSTAGRAM_ACCOUNT';
+        throw new Error('NO_INSTAGRAM_ACCOUNT');
     }
 
     const igUserId = pageWithIG.instagram_business_account.id;

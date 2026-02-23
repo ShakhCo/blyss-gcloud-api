@@ -51,6 +51,8 @@ router.use('/notifications', verifySignature, notificationsRouter);
 router.use('/distance', verifySignature, distanceRouter);
 router.use('/ai', verifySignature, aiRouter);
 router.use('/businesses/:businessId/conversations', verifySignature, conversationsRouter);
-router.use('/instagram', verifySignature, instagramRouter);
+
+// Instagram routes (mixed auth — POST /auth is public for OAuth callback, rest need signature + JWT)
+router.use('/instagram', instagramRouter);
 
 export default router;

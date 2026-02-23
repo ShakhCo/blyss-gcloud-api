@@ -42,7 +42,8 @@ router.post('/', (req, res) => {
 
     // Verify signature
     const signature = req.headers['x-hub-signature-256'];
-    if (!verifyWebhookSignature(req.rawBody, signature)) {
+    const rawBody = req.rawBody || JSON.stringify(req.body);
+    if (!verifyWebhookSignature(rawBody, signature)) {
         console.warn('Instagram webhook: invalid signature');
         return;
     }
@@ -159,7 +160,7 @@ async function handleCommentEvent(igUserId, commentData) {
         if (businessDoc.exists) {
             const tenantUrl = businessDoc.data().tenant_url;
             if (tenantUrl) {
-                replyMessage = replyMessage.replace('{link}', `https://${tenantUrl}`);
+                replyMessage = replyMessage.replace(/\{link\}/g, `https://${tenantUrl}`);
             }
         }
 
