@@ -19,7 +19,7 @@ export function getOAuthUrl(businessId) {
     const params = new URLSearchParams({
         client_id: INSTAGRAM_APP_ID,
         redirect_uri: INSTAGRAM_CALLBACK_URL,
-        scope: 'instagram_business_basic,instagram_manage_comments',
+        scope: 'instagram_business_basic,instagram_business_manage_comments',
         response_type: 'code',
         state: businessId,
     });
