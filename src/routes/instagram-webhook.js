@@ -6,8 +6,11 @@ import {
     getMediaDetails,
     hasExistingReply,
 } from '../utils/instagram.js';
+import { sendTelegramMessage } from '../utils/telegram.js';
 
 const router = Router();
+
+const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
 
 const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
 
@@ -166,9 +169,20 @@ async function handleCommentEvent(igUserId, commentData) {
 
         // 10. Send reply
         await replyToComment(commentId, replyMessage, connection.access_token);
-
-        // 11. Log success
         console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId}`);
+
+        // 11. Notify admin group
+        if (ADMIN_GROUP_ID) {
+            const commenter = commentData.from?.username || commentData.from?.id || 'unknown';
+            const commentText = commentData.text || '';
+            const adminMsg =
+                `📸 <b>Instagram auto-reply</b>\n\n` +
+                `👤 <b>Comment by:</b> @${commenter}\n` +
+                `💬 <b>Comment:</b> ${commentText}\n` +
+                `↩️ <b>Reply:</b> ${replyMessage}\n` +
+                `🏢 <b>Account:</b> @${connection.ig_username}`;
+            sendTelegramMessage(ADMIN_GROUP_ID, adminMsg).catch(() => {});
+        }
     } catch (error) {
         console.error('Instagram webhook: error handling comment event:', error);
         // Never throw — webhook must not fail
