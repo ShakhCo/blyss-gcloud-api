@@ -18,7 +18,7 @@ import {
     sendBookingStatusUpdateNotification
 } from '../utils/telegram.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue } from '@google-cloud/firestore';
 
 const router = Router();
 
