@@ -155,7 +155,10 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
             connected: true,
             ig_username: data.ig_username,
             is_active: data.is_active,
+            reply_mode: data.reply_mode || 'static',
             reply_template: data.reply_template,
+            ai_instructions: data.ai_instructions || '',
+            ai_example_replies: data.ai_example_replies || '',
             connected_at: data.connected_at,
         });
     } catch (error) {
@@ -194,14 +197,13 @@ router.patch('/settings/:businessId', verifySignature, authenticate, validate(in
 
         // Build update object from validated fields
         const updateData = { updated_at: new Date() };
-        const { is_active, reply_template } = req.validated;
+        const { is_active, reply_mode, reply_template, ai_instructions, ai_example_replies } = req.validated;
 
-        if (is_active !== undefined) {
-            updateData.is_active = is_active;
-        }
-        if (reply_template !== undefined) {
-            updateData.reply_template = reply_template;
-        }
+        if (is_active !== undefined) updateData.is_active = is_active;
+        if (reply_mode !== undefined) updateData.reply_mode = reply_mode;
+        if (reply_template !== undefined) updateData.reply_template = reply_template;
+        if (ai_instructions !== undefined) updateData.ai_instructions = ai_instructions;
+        if (ai_example_replies !== undefined) updateData.ai_example_replies = ai_example_replies;
 
         await connectionRef.update(updateData);
 
@@ -213,7 +215,10 @@ router.patch('/settings/:businessId', verifySignature, authenticate, validate(in
             connected: true,
             ig_username: data.ig_username,
             is_active: data.is_active,
+            reply_mode: data.reply_mode || 'static',
             reply_template: data.reply_template,
+            ai_instructions: data.ai_instructions || '',
+            ai_example_replies: data.ai_example_replies || '',
         });
     } catch (error) {
         console.error('Error updating Instagram settings:', error);

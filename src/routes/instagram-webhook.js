@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import OpenAI from 'openai';
 import { db } from '../db/db.js';
 import {
     verifyWebhookSignature,
@@ -7,6 +8,11 @@ import {
 } from '../utils/instagram.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
 import { decrypt } from '../utils/encryption.js';
+
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI();
+}
 
 const router = Router();
 
@@ -141,48 +147,76 @@ async function handleCommentEvent(igUserId, commentData) {
             return;
         }
 
-        // 6. Skip if reply_template is empty/blank
-        if (!connection.reply_template || !connection.reply_template.trim()) {
+        // 6. Determine reply mode (default: static for backward compat)
+        const replyMode = connection.reply_mode || 'static';
+
+        // 6a. Skip if no content configured for the active mode
+        if (replyMode === 'static' && (!connection.reply_template || !connection.reply_template.trim())) {
             console.log('Instagram webhook: skipping — reply_template empty');
             return;
         }
-
-        // 7. Post timestamp check removed — reply to comments on all posts regardless of age
+        if (replyMode === 'ai' && !openai) {
+            console.log('Instagram webhook: skipping — OpenAI not configured');
+            return;
+        }
 
         // Decrypt access token
         const accessToken = decrypt(connection.access_token);
 
-        // 8. Dedup — skip if already replied
+        // 7. Dedup — skip if already replied
         const alreadyReplied = await hasExistingReply(commentId, igUserId, accessToken);
         if (alreadyReplied) {
             console.log(`Instagram webhook: skipping — already replied to comment ${commentId}`);
             return;
         }
 
-        // 9. Build reply message
-        // connectionDoc path: businesses/{businessId}/instagram_connection/connection
+        // 8. Build reply message
         const businessId = connectionDoc.ref.parent.parent.id;
         const businessDoc = await db.collection('businesses').doc(businessId).get();
+        const tenantUrl = businessDoc.exists ? businessDoc.data().tenant_url : null;
+        const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
 
-        let replyMessage = connection.reply_template;
+        let replyMessage;
 
-        if (businessDoc.exists) {
-            const tenantUrl = businessDoc.data().tenant_url;
-            if (tenantUrl) {
-                replyMessage = replyMessage.replace(/\{link\}/g, `https://${tenantUrl}`);
+        if (replyMode === 'ai') {
+            // AI-generated reply — build detailed business context
+            const commentText = commentData.text || '';
+            const businessData = businessDoc.exists ? businessDoc.data() : {};
+            const businessInfo = await buildBusinessInfo(businessId, businessData, bookingLink);
+
+            let systemPrompt = `You are an Instagram comment auto-replier for a business. Reply naturally like a human — short (1-3 sentences), friendly, not robotic.`;
+            systemPrompt += `\n\n${businessInfo}`;
+            systemPrompt += `\n\nRules:\n- Reply in the same language as the comment.\n- Keep it natural and human-like, as if a real person is replying.\n- No hashtags.\n- If the comment is about booking or pricing, mention the booking link.\n- If asked about services or prices, give specific info from the data above.`;
+
+            const aiResponse = await openai.chat.completions.create({
+                model: 'gpt-4o-mini',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: commentText },
+                ],
+                max_tokens: 200,
+            });
+            replyMessage = aiResponse.choices[0].message.content.trim();
+            console.log(`Instagram webhook: AI generated reply for comment ${commentId}: "${replyMessage}"`);
+        } else {
+            // Static template reply
+            replyMessage = connection.reply_template;
+            if (bookingLink) {
+                replyMessage = replyMessage.replace(/\{link\}/g, bookingLink);
             }
         }
 
-        // 10. Send reply
+        // 9. Send reply
         await replyToComment(commentId, replyMessage, accessToken);
-        console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId}`);
+        console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId} (mode: ${replyMode})`);
 
-        // 11. Notify admin group
+        // 10. Notify admin group
         if (ADMIN_GROUP_ID) {
             const commenter = commentData.from?.username || commentData.from?.id || 'unknown';
             const commentText = commentData.text || '';
+            const modeLabel = replyMode === 'ai' ? 'AI' : 'Template';
             const adminMsg =
-                `📸 <b>Instagram auto-reply</b>\n\n` +
+                `📸 <b>Instagram auto-reply (${modeLabel})</b>\n\n` +
                 `👤 <b>Comment by:</b> @${commenter}\n` +
                 `💬 <b>Comment:</b> ${commentText}\n` +
                 `↩️ <b>Reply:</b> ${replyMessage}\n` +
@@ -193,6 +227,103 @@ async function handleCommentEvent(igUserId, commentData) {
         console.error('Instagram webhook: error handling comment event:', error);
         // Never throw — webhook must not fail
     }
+}
+
+/**
+ * Build detailed business info string for AI system prompt.
+ */
+async function buildBusinessInfo(businessId, businessData, bookingLink) {
+    const lines = [];
+
+    // 1. Business name
+    lines.push(`Business: ${businessData.business_name || 'Unknown'}`);
+
+    // 2. Bio
+    if (businessData.bio) lines.push(`About: ${businessData.bio}`);
+
+    // 3. Address with Google Maps link
+    if (businessData.location) {
+        const { lat, lng } = businessData.location;
+        if (lat && lng) {
+            lines.push(`Location: https://www.google.com/maps?q=${lat},${lng}`);
+        }
+    }
+
+    // 4. Working hours
+    if (businessData.working_hours) {
+        const dayNames = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        const hourLines = [];
+        for (const day of dayNames) {
+            const h = businessData.working_hours[day];
+            if (!h) continue;
+            if (!h.is_open) {
+                hourLines.push(`  ${day}: closed`);
+            } else {
+                hourLines.push(`  ${day}: ${formatTime(h.start)} - ${formatTime(h.end)}`);
+            }
+        }
+        if (hourLines.length) {
+            lines.push(`Working hours:\n${hourLines.join('\n')}`);
+        }
+    }
+
+    // 5. Services
+    const servicesSnap = await db.collection('businesses').doc(businessId)
+        .collection('services').where('is_active', '==', true).get();
+    if (!servicesSnap.empty) {
+        const serviceLines = [];
+        for (const doc of servicesSnap.docs) {
+            const s = doc.data();
+            const name = s.name?.uz || s.name?.ru || 'Service';
+            serviceLines.push(`  - ${name}: ${s.price} so'm, ${s.duration_minutes} min`);
+        }
+        lines.push(`Services:\n${serviceLines.join('\n')}`);
+    }
+
+    // 6. Employees with their services
+    const employeesSnap = await db.collection('businesses').doc(businessId)
+        .collection('employees').where('is_accepted', '==', true).get();
+    if (!employeesSnap.empty) {
+        const empLines = [];
+        for (const empDoc of employeesSnap.docs) {
+            const emp = empDoc.data();
+            const empName = emp.phone_number || 'Employee';
+            const position = emp.position || '';
+            let line = `  - ${position}${empName !== 'Employee' ? ` (${empName})` : ''}`;
+
+            // Get employee's services
+            const empServicesSnap = await db.collection('businesses').doc(businessId)
+                .collection('employees').doc(empDoc.id)
+                .collection('employeeServices').where('is_active', '==', true).get();
+            if (!empServicesSnap.empty) {
+                const svcNames = [];
+                for (const esDoc of empServicesSnap.docs) {
+                    const es = esDoc.data();
+                    // Find matching business service name
+                    const matchingService = servicesSnap.docs.find(d => d.id === es.service_id);
+                    const svcName = matchingService ? (matchingService.data().name?.uz || matchingService.data().name?.ru || 'Service') : 'Service';
+                    svcNames.push(`${svcName} (${es.price} so'm, ${es.duration_minutes} min)`);
+                }
+                line += `: ${svcNames.join(', ')}`;
+            }
+            empLines.push(line);
+        }
+        lines.push(`Team:\n${empLines.join('\n')}`);
+    }
+
+    // 7. Booking link
+    if (bookingLink) lines.push(`Online booking: ${bookingLink}`);
+
+    return lines.join('\n');
+}
+
+/**
+ * Convert seconds from midnight to HH:MM string.
+ */
+function formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 export default router;
