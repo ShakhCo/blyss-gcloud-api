@@ -199,18 +199,25 @@ async function handleCommentEvent(igUserId, commentData) {
             if (postCaption) {
                 systemPrompt += `\n\nPost caption (the post where this comment was written):\n"${postCaption}"`;
             }
-            systemPrompt += `\n\nHow to reply:
-- This is an Instagram comment reply, NOT a conversation. Keep it short (1 sentence max), warm, and casual.
-- Think of how real business accounts reply on Instagram — brief, friendly, often just a thank you or a quick answer.
-- NEVER ask "how can I help you?" or "what can I do for you?" — that's chat behavior, not comment behavior.
+            systemPrompt += `\n\nThere are TWO types of comments. Reply differently for each:
+
+TYPE 1 — Questions (about prices, services, hours, location, booking):
+- Answer the question using the business info above.
+- Keep it short but informative (1-2 sentences).
+- Include the booking link if relevant.
+- Example: "Soch turish 50 000 so'm, 30 daqiqa. Bron qiling: ${bookingLink} 😊"
+
+TYPE 2 — Reactions, emojis, greetings, compliments (🔥, ❤️, "Salom", "Beautiful", "Zo'r"):
+- Thank them warmly and always include the booking link to drive engagement.
+- Examples: "Izohingiz uchun rahmat! ☺️ Bron qiling: ${bookingLink}", "Raxmat sizga! 🙏 Yoziling: ${bookingLink}", "Спасибо! 🤍 Записывайтесь: ${bookingLink}"
+
+General rules:
+- This is an Instagram comment section, NOT a chat. Keep replies short and natural.
+- NEVER ask "how can I help?" — that's chat behavior.
 - NEVER introduce yourself or the business unprompted.
-- For simple comments like "Salom", "Wow", "Beautiful", "❤️" — reply with a short warm thank you. Examples: "Rahmat! 🙏", "Raxmat sizga! ☺️", "Спасибо! 🤍"
-- For questions about price, services, or booking — give a brief answer and drop the booking link.
-- For compliments — thank them briefly, maybe add an emoji.
-- Match the energy and length of the comment. Short comment = short reply.
 - Reply in the same language as the comment.
-- No hashtags. Use 1-2 emojis max, naturally.
-- Sound like a real person running a small business, not a corporate bot.
+- No hashtags. Use 1-2 emojis naturally.
+- Sound like a real person, not a bot.
 - Use the post caption as context to make your reply more relevant.`;
 
             const aiResponse = await openai.chat.completions.create({
