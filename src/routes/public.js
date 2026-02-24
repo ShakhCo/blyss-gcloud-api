@@ -1534,6 +1534,59 @@ router.get('/businesses/:businessId/available-slots-v2', verifySignature, valida
             }
         }
 
+        // 7. Determine which slots have active discounts
+        const discountSlotsSet = new Set();
+        if (availableStartTimes.length > 0) {
+            // Fetch all active discounts for filtered employees in parallel
+            const allDiscounts = [];
+            await Promise.all(filteredEmployees.map(async (emp) => {
+                try {
+                    const snap = await db.collection('businesses').doc(businessId)
+                        .collection('employees').doc(emp.id)
+                        .collection('discounts')
+                        .where('is_active', '==', true)
+                        .get();
+                    for (const doc of snap.docs) {
+                        const d = doc.data();
+                        // Only include discounts that could apply to the first service
+                        if (d.applies_to && d.applies_to.length > 0 && !d.applies_to.includes(firstServiceId)) continue;
+                        allDiscounts.push(d);
+                    }
+                } catch (_) { /* skip */ }
+            }));
+
+            if (allDiscounts.length > 0) {
+                const dateObj2 = new Date(date + 'T00:00:00+05:00');
+                const jsDay = dateObj2.getDay();
+                const ourDay = jsDay === 0 ? 7 : jsDay;
+
+                for (const slotStart of availableStartTimes) {
+                    for (const d of allDiscounts) {
+                        let matches = false;
+                        switch (d.trigger) {
+                            case 'date_range':
+                                matches = date >= d.date_start && date <= d.date_end;
+                                break;
+                            case 'day_of_week':
+                                matches = Array.isArray(d.days_of_week) && d.days_of_week.includes(ourDay);
+                                break;
+                            case 'time_of_day':
+                                matches = d.time_start != null && d.time_end != null &&
+                                    slotStart >= d.time_start && slotStart <= d.time_end;
+                                break;
+                            case 'first_visit':
+                                matches = true; // could apply to any slot
+                                break;
+                        }
+                        if (matches) {
+                            discountSlotsSet.add(slotStart);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         res.json({
             first_service: {
                 id: firstServiceId,
@@ -1542,7 +1595,8 @@ router.get('/businesses/:businessId/available-slots-v2', verifySignature, valida
                 original_duration: firstServiceData.duration_minutes
             },
             total_services: service_ids.length,
-            available_start_times: availableStartTimes
+            available_start_times: availableStartTimes,
+            slots_with_discounts: [...discountSlotsSet],
         });
     } catch (error) {
         console.error('Error in GET /public/businesses/:businessId/available-slots-v2:', error);
