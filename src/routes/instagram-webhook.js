@@ -239,15 +239,15 @@ RULES:
 - No hashtags. No "How can I help?". No self-introductions. No "DM us".
 - Sound like a friendly business owner, not a bot or support agent.`;
 
-            const aiResponse = await openai.chat.completions.create({
+            const aiResponse = await openai.responses.create({
                 model: 'o4-mini',
-                messages: [
+                reasoning: { effort: 'low' },
+                input: [
                     { role: 'developer', content: systemPrompt },
                     { role: 'user', content: commentText },
                 ],
-                max_completion_tokens: 500,
             });
-            replyMessage = (aiResponse.choices[0].message.content || '').trim();
+            replyMessage = (aiResponse.output_text || '').trim();
 
             // Skip spam/irrelevant comments or empty responses
             if (!replyMessage || replyMessage === '__SKIP__') {
