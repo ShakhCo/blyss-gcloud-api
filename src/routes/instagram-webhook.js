@@ -237,9 +237,10 @@ RULES:
 - Max 2 sentences. No exceptions.
 - Match the comment's language (uz/ru/en).
 - 1-2 emojis max, naturally placed.
-- Reference the post caption when it adds context.
+- IMPORTANT: The post caption may contain time-relative words like "ertaga", "bugun", "завтра". These were relative to when the post was PUBLISHED, NOT today. Compare "Post published" date with "Today" date. If the post is old, do NOT repeat those time references — they are outdated. Instead, just promote the business normally with the booking link.
 - Vary your wording — never repeat the exact same reply twice.
 - No hashtags. No "How can I help?". No self-introductions. No "DM us".
+- Never invent promotions, discounts, or events that are not currently happening.
 - Sound like a friendly business owner, not a bot or support agent.`;
 
             const aiResponse = await openai.responses.create({
