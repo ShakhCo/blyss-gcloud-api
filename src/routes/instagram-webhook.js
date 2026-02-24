@@ -3,7 +3,6 @@ import { db } from '../db/db.js';
 import {
     verifyWebhookSignature,
     replyToComment,
-    getMediaDetails,
     hasExistingReply,
 } from '../utils/instagram.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
@@ -147,19 +146,7 @@ async function handleCommentEvent(igUserId, commentData) {
             return;
         }
 
-        // 7. Check post timestamp vs connection date — skip if post is older
-        const mediaDetails = await getMediaDetails(mediaId, connection.access_token);
-        if (mediaDetails && mediaDetails.timestamp) {
-            const postDate = new Date(mediaDetails.timestamp);
-            const connectedAt = connection.connected_at?.toDate
-                ? connection.connected_at.toDate()
-                : new Date(connection.connected_at);
-
-            if (postDate < connectedAt) {
-                console.log(`Instagram webhook: skipping — post (${postDate.toISOString()}) older than connection (${connectedAt.toISOString()})`);
-                return;
-            }
-        }
+        // 7. Post timestamp check removed — reply to comments on all posts regardless of age
 
         // 8. Dedup — skip if already replied
         const alreadyReplied = await hasExistingReply(commentId, igUserId, connection.access_token);
