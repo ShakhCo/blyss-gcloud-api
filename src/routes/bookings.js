@@ -18,6 +18,7 @@ import {
     sendBookingStatusUpdateNotification
 } from '../utils/telegram.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
+import { FieldValue } from 'firebase-admin/firestore';
 
 const router = Router();
 
@@ -1463,6 +1464,31 @@ router.patch(
                 }
             }
             await bookingDoc.ref.update(updateData);
+
+            // Track customer visits when booking is completed (for loyalty system)
+            if (status === 'completed' && bookingData.customer_phone) {
+                try {
+                    const employeeIds = new Set(
+                        (bookingData.items || [])
+                            .filter(item => item.employee_id && item.status !== 'cancelled')
+                            .map(item => item.employee_id)
+                    );
+                    const sanitizedPhone = bookingData.customer_phone.replace(/\D/g, '');
+                    if (sanitizedPhone) {
+                        await Promise.all(Array.from(employeeIds).map(empId =>
+                            db.collection('businesses').doc(businessId)
+                                .collection('employees').doc(empId)
+                                .collection('customer_visits').doc(sanitizedPhone)
+                                .set({
+                                    visit_count: FieldValue.increment(1),
+                                    last_visit: now
+                                }, { merge: true })
+                        ));
+                    }
+                } catch (visitError) {
+                    console.error('Failed to track customer visit:', visitError);
+                }
+            }
 
             // Send notification to customer via Telegram
             let customerTelegramId = bookingData.customer_telegram_id;

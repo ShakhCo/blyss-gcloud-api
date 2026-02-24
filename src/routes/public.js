@@ -12,6 +12,7 @@ import { sendOtpSms } from '../utils/eskiz.js';
 import { generateTokenPair, verifyRefreshToken } from '../utils/jwt.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 import { sendBookingCancellationNotification, sendTelegramMessage } from '../utils/telegram.js';
+import { resolveDiscount } from '../utils/discountResolver.js';
 const router = Router();
 const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
 
@@ -1556,7 +1557,7 @@ router.get('/businesses/:businessId/available-slots-v2', verifySignature, valida
 router.get('/businesses/:businessId/slot-employees', verifySignature, validate(publicSlotEmployeesQuerySchema, 'query'), async (req, res) => {
     try {
         const { businessId } = req.params;
-        const { date, service_ids, start_time, employee_id } = req.validated;
+        const { date, service_ids, start_time, employee_id, customer_phone } = req.validated;
 
         // 1. Get business and validate
         const businessDoc = await db.collection('businesses').doc(businessId).get();
@@ -1743,13 +1744,33 @@ router.get('/businesses/:businessId/slot-employees', verifySignature, validate(p
                 }
 
                 if (bookingCount < employee.allowed_booking_count_per_slot) {
-                    availableEmployees.push({
+                    const empEntry = {
                         id: empId,
                         first_name: employee.first_name,
                         last_name: employee.last_name,
                         price: empService.price,
                         duration_minutes: empService.duration_minutes
-                    });
+                    };
+
+                    // Resolve discount if possible
+                    try {
+                        const discountResult = await resolveDiscount({
+                            businessId, employeeId: empId, serviceId,
+                            basePrice: empService.price,
+                            bookingDate: date, bookingTime: currentStartTime,
+                            customerPhone: customer_phone,
+                        });
+                        if (discountResult) {
+                            empEntry.original_price = discountResult.original_price;
+                            empEntry.final_price = discountResult.final_price;
+                            empEntry.discount = discountResult.discount;
+                        }
+                    } catch (e) {
+                        // Discount resolution failure should not block the response
+                        console.error(`Discount resolve error for emp ${empId}:`, e.message);
+                    }
+
+                    availableEmployees.push(empEntry);
 
                     if (empService.duration_minutes < shortestDuration) {
                         shortestDuration = empService.duration_minutes;
@@ -1799,6 +1820,7 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
     try {
         const { businessId } = req.params;
         const { date, start_time, services, notes } = req.validated;
+        const customer_phone = req.user?.phone_number || null;
         const user_id = req.user.id;
 
         // Validate booking date is not in the past (Uzbekistan GMT+5)
@@ -2114,6 +2136,24 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                     const endTimeStr = `${date}T${secondsToTime(slotEnd)}`;
                     const employeeName = [selectedEmployee.first_name, selectedEmployee.last_name].filter(Boolean).join(' ') || '';
 
+                    // Resolve discount for this booking item
+                    let itemPrice = selectedEmpService.price;
+                    let discountApplied = null;
+                    try {
+                        const discountResult = await resolveDiscount({
+                            businessId, employeeId: selectedEmployee.id, serviceId,
+                            basePrice: selectedEmpService.price,
+                            bookingDate: date, bookingTime: currentTime,
+                            customerPhone: customer_phone,
+                        });
+                        if (discountResult) {
+                            itemPrice = discountResult.final_price;
+                            discountApplied = discountResult.discount;
+                        }
+                    } catch (e) {
+                        console.error(`Discount resolve error in booking for emp ${selectedEmployee.id}:`, e.message);
+                    }
+
                     bookingItems.push({
                         id: crypto.randomBytes(8).toString('hex'),
                         service_id,
@@ -2122,13 +2162,15 @@ router.post('/businesses/:businessId/bookings-v2', verifySignature, authenticate
                         employee_name: employeeName,
                         start_time: startTimeStr,
                         end_time: endTimeStr,
-                        price: selectedEmpService.price,
+                        original_price: selectedEmpService.price,
+                        price: itemPrice,
+                        ...(discountApplied && { discount_applied: discountApplied }),
                         duration_minutes: selectedEmpService.duration_minutes,
                         status: 'pending',
                         order_index: i
                     });
 
-                    totalPrice += selectedEmpService.price;
+                    totalPrice += itemPrice;
                     totalDuration += selectedEmpService.duration_minutes;
                     currentTime = slotEnd;
                 }

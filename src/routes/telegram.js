@@ -11,6 +11,7 @@ import { sendSms } from '../utils/eskiz.js';
 import { db } from '../db/db.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 import { sendBookingCancellationNotification } from '../utils/telegram.js';
+import { resolveDiscount } from '../utils/discountResolver.js';
 
 const router = Router();
 
@@ -860,7 +861,7 @@ router.get('/available-slots', validate(telegramAvailableSlotsQuerySchema, 'quer
  */
 router.get('/slot-employees', validate(telegramSlotEmployeesQuerySchema, 'query'), async (req, res) => {
     try {
-        const { business_id, date, service_ids, start_time, employee_id } = req.validated;
+        const { business_id, date, service_ids, start_time, employee_id, customer_phone } = req.validated;
 
         // 1. Get business and validate
         const businessDoc = await db.collection('businesses').doc(business_id).get();
@@ -1033,13 +1034,35 @@ router.get('/slot-employees', validate(telegramSlotEmployeesQuerySchema, 'query'
                 }
 
                 if (bookingCount < employee.allowed_booking_count_per_slot) {
-                    availableEmployees.push({
+                    const empEntry = {
                         id: empId,
                         first_name: employee.first_name,
                         last_name: employee.last_name,
                         price: empService.price,
                         duration_minutes: empService.duration_minutes
-                    });
+                    };
+
+                    // Resolve discount for this employee-service
+                    try {
+                        const discountResult = await resolveDiscount({
+                            businessId: business_id,
+                            employeeId: empId,
+                            serviceId: serviceId,
+                            basePrice: empService.price,
+                            bookingDate: date,
+                            bookingTime: currentStartTime,
+                            customerPhone: customer_phone,
+                        });
+                        if (discountResult) {
+                            empEntry.original_price = discountResult.original_price;
+                            empEntry.final_price = discountResult.final_price;
+                            empEntry.discount = discountResult.discount;
+                        }
+                    } catch (e) {
+                        console.error(`Discount resolve error for emp ${empId}:`, e.message);
+                    }
+
+                    availableEmployees.push(empEntry);
 
                     if (empService.duration_minutes < shortestDuration) {
                         shortestDuration = empService.duration_minutes;
@@ -1374,6 +1397,27 @@ router.post('/bookings', bookingCreateLimiter, validate(telegramCreateBookingSch
             const endTimeStr = `${date}T${secondsToTime(slotEnd)}`;
             const employeeName = [selectedEmployee.first_name, selectedEmployee.last_name].filter(Boolean).join(' ') || '';
 
+            // Resolve discount for this item
+            let itemPrice = selectedEmpService.price;
+            let discountApplied = null;
+            try {
+                const discountResult = await resolveDiscount({
+                    businessId: business_id,
+                    employeeId: selectedEmployee.id,
+                    serviceId: service_id,
+                    basePrice: selectedEmpService.price,
+                    bookingDate: date,
+                    bookingTime: currentTime,
+                    customerPhone: userData.phone_number || null,
+                });
+                if (discountResult) {
+                    itemPrice = discountResult.final_price;
+                    discountApplied = discountResult.discount;
+                }
+            } catch (e) {
+                console.error(`Discount resolve error for booking item emp ${selectedEmployee.id}:`, e.message);
+            }
+
             bookingItems.push({
                 id: crypto.randomBytes(8).toString('hex'),
                 service_id,
@@ -1382,13 +1426,15 @@ router.post('/bookings', bookingCreateLimiter, validate(telegramCreateBookingSch
                 employee_name: employeeName,
                 start_time: startTimeStr,
                 end_time: endTimeStr,
-                price: selectedEmpService.price,
+                original_price: selectedEmpService.price,
+                price: itemPrice,
+                ...(discountApplied && { discount_applied: discountApplied }),
                 duration_minutes: selectedEmpService.duration_minutes,
                 status: 'pending',
                 order_index: i
             });
 
-            totalPrice += selectedEmpService.price;
+            totalPrice += itemPrice;
             totalDuration += selectedEmpService.duration_minutes;
             currentTime = slotEnd;
         }

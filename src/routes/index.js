@@ -16,6 +16,7 @@ import bookingsRouter from './bookings.js';
 import telegramRouter from './telegram.js';
 import botRouter from './bot.js';
 import cronRouter from './cron.js';
+import discountsRouter from './discounts.js';
 import instagramRouter from './instagram.js';
 import instagramWebhookRouter from './instagram-webhook.js';
 
@@ -47,6 +48,7 @@ router.use('/business-owners', verifySignature, businessOwnersRouter);
 router.use('/businesses', verifySignature, businessesRouter);
 router.use('/places', verifySignature, placesRouter);
 router.use('/employees', verifySignature, employeesRouter);
+router.use('/employees', verifySignature, discountsRouter);
 router.use('/notifications', verifySignature, notificationsRouter);
 router.use('/distance', verifySignature, distanceRouter);
 router.use('/ai', verifySignature, aiRouter);

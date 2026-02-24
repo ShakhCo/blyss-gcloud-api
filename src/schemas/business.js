@@ -189,7 +189,8 @@ export const telegramSlotEmployeesQuerySchema = z.object({
         .transform(val => val.split(',').map(s => s.trim()).filter(Boolean))
         .refine(arr => arr.length > 0, 'at least one service_id is required'),
     start_time: z.coerce.number().int().min(0).max(86399, 'start_time must be seconds from midnight (0-86399)'),
-    employee_id: z.string().optional()
+    employee_id: z.string().optional(),
+    customer_phone: z.string().optional()
 });
 
 // Schema for telegram booking service item (v2 - simplified)
@@ -248,7 +249,8 @@ export const publicSlotEmployeesQuerySchema = z.object({
         .transform(val => val.split(',').map(s => s.trim()).filter(Boolean))
         .refine(arr => arr.length > 0, 'at least one service_id is required'),
     start_time: z.coerce.number().int().min(0).max(86399, 'start_time must be seconds from midnight (0-86399)'),
-    employee_id: z.string().optional()
+    employee_id: z.string().optional(),
+    customer_phone: z.string().optional()
 });
 
 // Public booking service item schema
