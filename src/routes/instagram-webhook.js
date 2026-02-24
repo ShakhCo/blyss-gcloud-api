@@ -242,16 +242,16 @@ RULES:
             const aiResponse = await openai.chat.completions.create({
                 model: 'o4-mini',
                 messages: [
-                    { role: 'system', content: systemPrompt },
+                    { role: 'developer', content: systemPrompt },
                     { role: 'user', content: commentText },
                 ],
-                max_completion_tokens: 200,
+                max_completion_tokens: 500,
             });
-            replyMessage = aiResponse.choices[0].message.content.trim();
+            replyMessage = (aiResponse.choices[0].message.content || '').trim();
 
-            // Skip spam/irrelevant comments
-            if (replyMessage === '__SKIP__') {
-                console.log(`Instagram webhook: AI skipped spam comment ${commentId}`);
+            // Skip spam/irrelevant comments or empty responses
+            if (!replyMessage || replyMessage === '__SKIP__') {
+                console.log(`Instagram webhook: AI skipped comment ${commentId} (empty or spam)`);
                 return;
             }
 
