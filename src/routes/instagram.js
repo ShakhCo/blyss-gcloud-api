@@ -4,6 +4,7 @@ import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import { instagramAuthSchema, instagramSettingsSchema } from '../schemas/instagram.js';
 import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile } from '../utils/instagram.js';
+import { encrypt } from '../utils/encryption.js';
 
 const router = Router();
 
@@ -69,7 +70,7 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
         const connectionData = {
             ig_user_id,
             ig_username,
-            access_token,
+            access_token: encrypt(access_token),
             connected_at: now,
             is_active: true,
             reply_template: '',

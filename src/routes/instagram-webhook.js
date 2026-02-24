@@ -6,6 +6,7 @@ import {
     hasExistingReply,
 } from '../utils/instagram.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
+import { decrypt } from '../utils/encryption.js';
 
 const router = Router();
 
@@ -148,8 +149,11 @@ async function handleCommentEvent(igUserId, commentData) {
 
         // 7. Post timestamp check removed — reply to comments on all posts regardless of age
 
+        // Decrypt access token
+        const accessToken = decrypt(connection.access_token);
+
         // 8. Dedup — skip if already replied
-        const alreadyReplied = await hasExistingReply(commentId, igUserId, connection.access_token);
+        const alreadyReplied = await hasExistingReply(commentId, igUserId, accessToken);
         if (alreadyReplied) {
             console.log(`Instagram webhook: skipping — already replied to comment ${commentId}`);
             return;
@@ -170,7 +174,7 @@ async function handleCommentEvent(igUserId, commentData) {
         }
 
         // 10. Send reply
-        await replyToComment(commentId, replyMessage, connection.access_token);
+        await replyToComment(commentId, replyMessage, accessToken);
         console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId}`);
 
         // 11. Notify admin group
