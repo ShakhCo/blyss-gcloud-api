@@ -35,7 +35,13 @@ export function encrypt(text) {
  * @returns {string} Decrypted plaintext
  */
 export function decrypt(encryptedText) {
-    const [ivHex, authTagHex, ciphertext] = encryptedText.split(':');
+    // Handle legacy unencrypted tokens (no iv:authTag:ciphertext format)
+    const parts = encryptedText.split(':');
+    if (parts.length !== 3) {
+        return encryptedText;
+    }
+
+    const [ivHex, authTagHex, ciphertext] = parts;
     const key = getKey();
     const iv = Buffer.from(ivHex, 'hex');
     const authTag = Buffer.from(authTagHex, 'hex');
