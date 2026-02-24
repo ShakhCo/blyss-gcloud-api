@@ -169,7 +169,7 @@ export async function getMediaDetails(mediaId, accessToken) {
     try {
         const response = await fetch(
             `${GRAPH_API_BASE}/v21.0/${mediaId}?` + new URLSearchParams({
-                fields: 'timestamp',
+                fields: 'timestamp,caption',
                 access_token: accessToken,
             })
         );

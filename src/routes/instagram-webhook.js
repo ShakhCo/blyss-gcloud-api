@@ -5,6 +5,7 @@ import {
     verifyWebhookSignature,
     replyToComment,
     hasExistingReply,
+    getMediaDetails,
 } from '../utils/instagram.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
 import { decrypt } from '../utils/encryption.js';
@@ -184,8 +185,20 @@ async function handleCommentEvent(igUserId, commentData) {
             const businessData = businessDoc.exists ? businessDoc.data() : {};
             const businessInfo = await buildBusinessInfo(businessId, businessData, bookingLink);
 
+            // Fetch post caption for context
+            let postCaption = '';
+            try {
+                const media = await getMediaDetails(mediaId, accessToken);
+                if (media?.caption) postCaption = media.caption;
+            } catch (e) {
+                console.log(`Instagram webhook: could not fetch post caption for media ${mediaId}`);
+            }
+
             let systemPrompt = `You are replying to Instagram post comments on behalf of a business. This is a PUBLIC COMMENT SECTION, NOT a private chat or DM.`;
             systemPrompt += `\n\n${businessInfo}`;
+            if (postCaption) {
+                systemPrompt += `\n\nPost caption (the post where this comment was written):\n"${postCaption}"`;
+            }
             systemPrompt += `\n\nHow to reply:
 - This is an Instagram comment reply, NOT a conversation. Keep it short (1 sentence max), warm, and casual.
 - Think of how real business accounts reply on Instagram — brief, friendly, often just a thank you or a quick answer.
@@ -197,7 +210,8 @@ async function handleCommentEvent(igUserId, commentData) {
 - Match the energy and length of the comment. Short comment = short reply.
 - Reply in the same language as the comment.
 - No hashtags. Use 1-2 emojis max, naturally.
-- Sound like a real person running a small business, not a corporate bot.`;
+- Sound like a real person running a small business, not a corporate bot.
+- Use the post caption as context to make your reply more relevant.`;
 
             const aiResponse = await openai.chat.completions.create({
                 model: 'gpt-4o-mini',
