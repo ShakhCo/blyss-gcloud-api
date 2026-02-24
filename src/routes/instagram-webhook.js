@@ -245,7 +245,7 @@ RULES:
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: commentText },
                 ],
-                max_tokens: 200,
+                max_completion_tokens: 200,
             });
             replyMessage = aiResponse.choices[0].message.content.trim();
 
