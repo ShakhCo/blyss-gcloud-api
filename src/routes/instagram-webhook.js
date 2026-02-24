@@ -36,28 +36,26 @@ router.get('/', (req, res) => {
 /**
  * POST /
  * Receives comment events from Meta's Instagram webhooks.
- * MUST respond 200 immediately to prevent Meta from retrying.
+ * Processes comments before responding so Cloud Run keeps CPU allocated.
  */
-router.post('/', (req, res) => {
-    // Always respond 200 immediately to avoid Meta retries
-    res.status(200).send('EVENT_RECEIVED');
-
+router.post('/', async (req, res) => {
     // Verify signature
     const signature = req.headers['x-hub-signature-256'];
     const rawBody = req.rawBody || JSON.stringify(req.body);
     if (!verifyWebhookSignature(rawBody, signature)) {
         console.warn('Instagram webhook: invalid signature');
-        return;
+        return res.status(200).send('EVENT_RECEIVED');
     }
 
     const body = req.body;
 
     if (body.object !== 'instagram') {
         console.log(`Instagram webhook: ignoring non-instagram object: ${body.object}`);
-        return;
+        return res.status(200).send('EVENT_RECEIVED');
     }
 
-    // Process each entry
+    // Process each entry — await all before responding so Cloud Run keeps CPU allocated
+    const tasks = [];
     if (Array.isArray(body.entry)) {
         for (const entry of body.entry) {
             const igUserId = entry.id;
@@ -66,8 +64,7 @@ router.post('/', (req, res) => {
                 for (const change of entry.changes) {
                     console.log(`Instagram webhook: received change field="${change.field}" for user ${igUserId}`);
                     if (change.field === 'comments') {
-                        // Fire and forget — errors are caught inside handleCommentEvent
-                        handleCommentEvent(igUserId, change.value);
+                        tasks.push(handleCommentEvent(igUserId, change.value));
                     }
                 }
             } else {
@@ -77,6 +74,9 @@ router.post('/', (req, res) => {
     } else {
         console.log('Instagram webhook: body has no entry array');
     }
+
+    await Promise.all(tasks);
+    res.status(200).send('EVENT_RECEIVED');
 });
 
 /**
