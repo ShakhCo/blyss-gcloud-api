@@ -198,10 +198,13 @@ async function handleCommentEvent(igUserId, commentData) {
                 console.log(`Instagram webhook: could not fetch post caption for media ${mediaId}`);
             }
 
-            const now = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent', dateStyle: 'medium', timeStyle: 'short' });
+            const tashkentNow = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' });
+            const d = new Date(tashkentNow);
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const now = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
             let systemPrompt = `You are replying to Instagram post comments on behalf of a business.\nThis is a PUBLIC COMMENT SECTION — not a DM or chat.`;
-            systemPrompt += `\nCurrent time: ${now}`;
+            systemPrompt += `\nToday: ${now} (Tashkent, UTC+5)`;
             systemPrompt += `\n\n${businessInfo}`;
             if (postCaption || postTime) {
                 systemPrompt += `\nPost caption: "${postCaption}"`;
