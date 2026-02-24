@@ -240,7 +240,7 @@ RULES:
 - Sound like a friendly business owner, not a bot or support agent.`;
 
             const aiResponse = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+                model: 'o4-mini',
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: commentText },
