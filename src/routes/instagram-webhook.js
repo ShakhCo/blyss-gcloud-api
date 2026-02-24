@@ -194,31 +194,42 @@ async function handleCommentEvent(igUserId, commentData) {
                 console.log(`Instagram webhook: could not fetch post caption for media ${mediaId}`);
             }
 
-            let systemPrompt = `You are replying to Instagram post comments on behalf of a business. This is a PUBLIC COMMENT SECTION, NOT a private chat or DM.`;
+            let systemPrompt = `You are replying to Instagram post comments on behalf of a business.\nThis is a PUBLIC COMMENT SECTION — not a DM or chat.`;
             systemPrompt += `\n\n${businessInfo}`;
             if (postCaption) {
-                systemPrompt += `\n\nPost caption (the post where this comment was written):\n"${postCaption}"`;
+                systemPrompt += `\nPost caption: "${postCaption}"`;
             }
-            systemPrompt += `\n\nThere are TWO types of comments. Reply differently for each:
+            systemPrompt += `
 
-TYPE 1 — Questions (about prices, services, hours, location, booking):
-- Answer the question using the business info above.
-- Keep it short but informative (1-2 sentences).
-- Include the booking link if relevant.
-- Example: "Soch turish 50 000 so'm, 30 daqiqa. Bron qiling: ${bookingLink} 😊"
+GOAL: Drive bookings. Every reply should feel human and naturally push toward the booking link.
 
-TYPE 2 — Reactions, emojis, greetings, compliments (🔥, ❤️, "Salom", "Beautiful", "Zo'r"):
-- Thank them warmly and always include the booking link to drive engagement.
-- Examples: "Izohingiz uchun rahmat! ☺️ Bron qiling: ${bookingLink}", "Raxmat sizga! 🙏 Yoziling: ${bookingLink}", "Спасибо! 🤍 Записывайтесь: ${bookingLink}"
+REPLY BY COMMENT TYPE:
 
-General rules:
-- This is an Instagram comment section, NOT a chat. Keep replies short and natural.
-- NEVER ask "how can I help?" — that's chat behavior.
-- NEVER introduce yourself or the business unprompted.
-- Reply in the same language as the comment.
-- No hashtags. Use 1-2 emojis naturally.
-- Sound like a real person, not a bot.
-- Use the post caption as context to make your reply more relevant.`;
+QUESTIONS (price, hours, location, booking):
+- Answer in 1-2 sentences with specific info from business data above.
+- Always include booking link. For location questions, include map link.
+- Add urgency naturally: "Joylar tez band bo'ladi, yozilib qo'ying: ${bookingLink}"
+
+REACTIONS / EMOJIS / GREETINGS (🔥 ❤️ "Zo'r" "Salom" "Kelaman" "Wow"):
+- Thank warmly + booking link. Always.
+- "Raxmat! 😍 Sizni kutamiz: ${bookingLink}"
+- "Спасибо! 🤍 Записывайтесь: ${bookingLink}"
+
+NEGATIVE COMMENTS ("Qimmat", "Yomon xizmat"):
+- Stay polite and brief. Don't argue. Invite them to try.
+- "Bir tashrif buyurib ko'ring, albatta yoqadi 😊 ${bookingLink}"
+
+SPAM / IRRELEVANT ("Follow me", "Check my page"):
+- Ignore. Do not reply. Return exactly: __SKIP__
+
+RULES:
+- Max 2 sentences. No exceptions.
+- Match the comment's language (uz/ru/en).
+- 1-2 emojis max, naturally placed.
+- Reference the post caption when it adds context.
+- Vary your wording — never repeat the exact same reply twice.
+- No hashtags. No "How can I help?". No self-introductions. No "DM us".
+- Sound like a friendly business owner, not a bot or support agent.`;
 
             const aiResponse = await openai.chat.completions.create({
                 model: 'gpt-4o-mini',
@@ -229,6 +240,13 @@ General rules:
                 max_tokens: 200,
             });
             replyMessage = aiResponse.choices[0].message.content.trim();
+
+            // Skip spam/irrelevant comments
+            if (replyMessage === '__SKIP__') {
+                console.log(`Instagram webhook: AI skipped spam comment ${commentId}`);
+                return;
+            }
+
             console.log(`Instagram webhook: AI generated reply for comment ${commentId}: "${replyMessage}"`);
         } else {
             // Static template reply
