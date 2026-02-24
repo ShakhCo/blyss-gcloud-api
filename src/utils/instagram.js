@@ -99,7 +99,7 @@ export async function getInstagramProfile(accessToken, userId) {
     }
 
     return {
-        ig_user_id: data.user_id || userId,
+        ig_user_id: String(data.user_id || userId),
         ig_username: data.username,
     };
 }

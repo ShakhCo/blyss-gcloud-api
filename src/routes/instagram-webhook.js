@@ -54,6 +54,7 @@ router.post('/', (req, res) => {
     const body = req.body;
 
     if (body.object !== 'instagram') {
+        console.log(`Instagram webhook: ignoring non-instagram object: ${body.object}`);
         return;
     }
 
@@ -64,13 +65,18 @@ router.post('/', (req, res) => {
 
             if (Array.isArray(entry.changes)) {
                 for (const change of entry.changes) {
+                    console.log(`Instagram webhook: received change field="${change.field}" for user ${igUserId}`);
                     if (change.field === 'comments') {
                         // Fire and forget — errors are caught inside handleCommentEvent
                         handleCommentEvent(igUserId, change.value);
                     }
                 }
+            } else {
+                console.log(`Instagram webhook: entry has no changes array`, JSON.stringify(entry));
             }
         }
+    } else {
+        console.log('Instagram webhook: body has no entry array');
     }
 });
 
@@ -94,43 +100,50 @@ router.post('/', (req, res) => {
  */
 async function handleCommentEvent(igUserId, commentData) {
     try {
+        console.log(`Instagram webhook: processing event for IG user ${igUserId}`, JSON.stringify(commentData));
+
         const commentId = commentData.id;
         const mediaId = commentData.media?.id;
         const parentId = commentData.parent_id;
 
         // 1. Skip replies to avoid infinite loops
         if (parentId) {
+            console.log(`Instagram webhook: skipping reply (parent_id: ${parentId})`);
             return;
         }
 
         // 2. Skip if missing required IDs
         if (!mediaId || !commentId) {
+            console.log(`Instagram webhook: missing IDs — mediaId: ${mediaId}, commentId: ${commentId}`);
             return;
         }
 
         // 3. Find business connection by ig_user_id
         const connectionSnapshot = await db
             .collectionGroup('instagram_connection')
-            .where('ig_user_id', '==', igUserId)
+            .where('ig_user_id', '==', String(igUserId))
             .limit(1)
             .get();
 
         // 4. Skip if no connection found
         if (connectionSnapshot.empty) {
-            console.log(`Instagram webhook: no connection found for IG user ${igUserId}`);
+            console.log(`Instagram webhook: no connection found for IG user ${igUserId} (type: ${typeof igUserId})`);
             return;
         }
 
         const connectionDoc = connectionSnapshot.docs[0];
         const connection = connectionDoc.data();
+        console.log(`Instagram webhook: found connection for @${connection.ig_username}, active: ${connection.is_active}, template: "${connection.reply_template}"`);
 
         // 5. Skip if connection is inactive
         if (!connection.is_active) {
+            console.log('Instagram webhook: skipping — connection inactive');
             return;
         }
 
         // 6. Skip if reply_template is empty/blank
         if (!connection.reply_template || !connection.reply_template.trim()) {
+            console.log('Instagram webhook: skipping — reply_template empty');
             return;
         }
 
@@ -143,6 +156,7 @@ async function handleCommentEvent(igUserId, commentData) {
                 : new Date(connection.connected_at);
 
             if (postDate < connectedAt) {
+                console.log(`Instagram webhook: skipping — post (${postDate.toISOString()}) older than connection (${connectedAt.toISOString()})`);
                 return;
             }
         }
@@ -150,6 +164,7 @@ async function handleCommentEvent(igUserId, commentData) {
         // 8. Dedup — skip if already replied
         const alreadyReplied = await hasExistingReply(commentId, igUserId, connection.access_token);
         if (alreadyReplied) {
+            console.log(`Instagram webhook: skipping — already replied to comment ${commentId}`);
             return;
         }
 
