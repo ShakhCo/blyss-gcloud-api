@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Discount trigger types
-export const discountTriggerEnum = z.enum(['date_range', 'day_of_week', 'time_of_day', 'first_visit']);
+export const discountTriggerEnum = z.enum(['date_range', 'day_of_week', 'time_of_day', 'first_visit', 'scheduled']);
 
 // Discount type (percentage or fixed amount)
 export const discountTypeEnum = z.enum(['percentage', 'fixed']);
@@ -60,6 +60,26 @@ export const discountSchema = z.object({
 }, {
     message: 'time_start and time_end are required for time_of_day trigger',
     path: ['trigger'],
+}).refine((data) => {
+    if (data.trigger === 'scheduled') {
+        // At least one condition must be set
+        const hasDays = data.days_of_week && data.days_of_week.length > 0;
+        const hasTime = data.time_start != null && data.time_end != null;
+        const hasDates = data.date_start && data.date_end;
+        return hasDays || hasTime || hasDates;
+    }
+    return true;
+}, {
+    message: 'scheduled trigger requires at least one condition (days_of_week, time range, or date range)',
+    path: ['trigger'],
+}).refine((data) => {
+    if (data.trigger === 'scheduled' && data.date_start && data.date_end) {
+        return data.date_end >= data.date_start;
+    }
+    return true;
+}, {
+    message: 'date_end must be on or after date_start',
+    path: ['date_end'],
 });
 
 // Update discount schema (all fields optional except what's being changed)

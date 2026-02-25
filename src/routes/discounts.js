@@ -279,6 +279,19 @@ function generateDiscountName(data) {
         }
         case 'first_visit':
             return `${valueStr} — Birinchi tashrif`;
+        case 'scheduled': {
+            const parts = [];
+            if (data.days_of_week && data.days_of_week.length > 0) {
+                parts.push(data.days_of_week.map(d => DAY_NAMES_SHORT[d] || d).join(', '));
+            }
+            if (data.time_start != null && data.time_end != null) {
+                parts.push(`${formatSecondsToTime(data.time_start)}-${formatSecondsToTime(data.time_end)}`);
+            }
+            if (data.date_start && data.date_end) {
+                parts.push(`${data.date_start} — ${data.date_end}`);
+            }
+            return `${valueStr} — ${parts.join(' · ')}`;
+        }
         default:
             return valueStr;
     }

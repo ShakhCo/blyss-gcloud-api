@@ -165,6 +165,27 @@ function matchesTrigger(discount, bookingDate, bookingTime, visitCount, customer
             // Only applies if customer phone is provided and visit count is 0
             return !!customerPhone && visitCount === 0;
 
+        case 'scheduled': {
+            // All present conditions must match (AND logic)
+            const date = new Date(bookingDate + 'T00:00:00+05:00');
+            const jsDay = date.getDay();
+            const ourDay = jsDay === 0 ? 7 : jsDay;
+
+            // Check days_of_week if set
+            if (Array.isArray(discount.days_of_week) && discount.days_of_week.length > 0) {
+                if (!discount.days_of_week.includes(ourDay)) return false;
+            }
+            // Check time range if set
+            if (discount.time_start != null && discount.time_end != null) {
+                if (bookingTime < discount.time_start || bookingTime > discount.time_end) return false;
+            }
+            // Check date range if set
+            if (discount.date_start && discount.date_end) {
+                if (bookingDate < discount.date_start || bookingDate > discount.date_end) return false;
+            }
+            return true;
+        }
+
         default:
             return false;
     }
