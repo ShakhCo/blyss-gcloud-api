@@ -2,9 +2,9 @@ import { Router } from 'express';
 import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
-import { instagramAuthSchema, instagramSettingsSchema } from '../schemas/instagram.js';
-import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile } from '../utils/instagram.js';
-import { encrypt } from '../utils/encryption.js';
+import { instagramAuthSchema, instagramSettingsSchema, instagramPostsQuerySchema } from '../schemas/instagram.js';
+import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile, getInstagramPosts } from '../utils/instagram.js';
+import { encrypt, decrypt } from '../utils/encryption.js';
 
 const router = Router();
 
@@ -163,6 +163,56 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
         });
     } catch (error) {
         console.error('Error getting Instagram status:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * GET /posts/:businessId
+ * Get Instagram posts for a business that has a connected Instagram account
+ */
+router.get('/posts/:businessId', verifySignature, authenticate, validate(instagramPostsQuerySchema, 'query'), async (req, res) => {
+    try {
+        const { businessId } = req.params;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Get Instagram connection
+        const connectionDoc = await db.collection('businesses').doc(businessId)
+            .collection('instagram_connection').doc('connection').get();
+
+        if (!connectionDoc.exists) {
+            return res.status(404).json({ error: 'Instagram not connected', error_code: 'NOT_CONNECTED' });
+        }
+
+        const connection = connectionDoc.data();
+
+        if (!connection.is_active) {
+            return res.status(400).json({ error: 'Instagram connection is inactive', error_code: 'CONNECTION_INACTIVE' });
+        }
+
+        // Decrypt access token and fetch posts
+        const accessToken = decrypt(connection.access_token);
+        const { limit, after } = req.validated;
+
+        const { posts, pagination } = await getInstagramPosts(accessToken, connection.ig_user_id, { limit, after });
+
+        res.json({
+            ig_username: connection.ig_username,
+            posts,
+            pagination,
+        });
+    } catch (error) {
+        console.error('Error fetching Instagram posts:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });

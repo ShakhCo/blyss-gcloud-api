@@ -219,6 +219,60 @@ export async function hasExistingReply(commentId, igUserId, accessToken) {
 }
 
 /**
+ * Get Instagram posts (media) for a user
+ * Uses cursor-based pagination from the Instagram Graph API
+ * @param {string} accessToken - The user's access token
+ * @param {string} igUserId - The Instagram user ID
+ * @param {object} options - Pagination options
+ * @param {number} [options.limit=20] - Number of posts to return (max 100)
+ * @param {string} [options.after] - Cursor for next page
+ * @returns {Promise<{posts: Array, pagination: {has_next: boolean, next_cursor: string|null}}>}
+ */
+export async function getInstagramPosts(accessToken, igUserId, { limit = 20, after } = {}) {
+    const params = new URLSearchParams({
+        fields: 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp',
+        limit: String(limit),
+        access_token: accessToken,
+    });
+
+    if (after) {
+        params.set('after', after);
+    }
+
+    const response = await fetch(
+        `${GRAPH_API_BASE}/v21.0/${igUserId}/media?${params}`
+    );
+
+    const data = await response.json();
+
+    if (data.error) {
+        console.error('Instagram posts fetch error:', data.error);
+        throw new Error(`Instagram posts error: ${data.error.message}`);
+    }
+
+    const posts = (data.data || []).map((post) => ({
+        id: post.id,
+        caption: post.caption || '',
+        media_type: post.media_type,
+        media_url: post.media_url || null,
+        thumbnail_url: post.thumbnail_url || null,
+        permalink: post.permalink,
+        timestamp: post.timestamp,
+    }));
+
+    const nextCursor = data.paging?.cursors?.after || null;
+    const hasNext = !!data.paging?.next;
+
+    return {
+        posts,
+        pagination: {
+            has_next: hasNext,
+            next_cursor: nextCursor,
+        },
+    };
+}
+
+/**
  * Verify the webhook signature from Meta using HMAC-SHA256
  * Compares the x-hub-signature-256 header value against the computed signature
  * @param {Buffer|string} rawBody - The raw request body
