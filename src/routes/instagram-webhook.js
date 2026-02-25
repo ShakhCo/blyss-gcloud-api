@@ -148,11 +148,33 @@ async function handleCommentEvent(igUserId, commentData) {
             return;
         }
 
-        // 6. Determine reply mode (default: static for backward compat)
-        const replyMode = connection.reply_mode || 'static';
+        // 5a. Check for per-post custom settings
+        const businessId = connectionDoc.ref.parent.parent.id;
+        const postSettingsDoc = await db.collection('businesses').doc(businessId)
+            .collection('instagram_post_settings').doc(mediaId).get();
 
-        // 6a. Skip if no content configured for the active mode
-        if (replyMode === 'static' && (!connection.reply_template || !connection.reply_template.trim())) {
+        let replyMode;
+        let replyTemplate;
+        let postAiInstructions;
+        let usingPostSettings = false;
+
+        if (postSettingsDoc.exists && postSettingsDoc.data().is_active) {
+            // Use per-post custom settings
+            const postSettings = postSettingsDoc.data();
+            replyMode = postSettings.reply_mode;
+            replyTemplate = postSettings.reply_template || '';
+            postAiInstructions = postSettings.ai_instructions || '';
+            usingPostSettings = true;
+            console.log(`Instagram webhook: using per-post settings for media ${mediaId} (mode: ${replyMode})`);
+        } else {
+            // Fall back to global connection settings
+            replyMode = connection.reply_mode || 'static';
+            replyTemplate = connection.reply_template || '';
+            postAiInstructions = '';
+        }
+
+        // 6. Skip if no content configured for the active mode
+        if (replyMode === 'static' && !replyTemplate.trim()) {
             console.log('Instagram webhook: skipping — reply_template empty');
             return;
         }
@@ -172,7 +194,6 @@ async function handleCommentEvent(igUserId, commentData) {
         }
 
         // 8. Build reply message
-        const businessId = connectionDoc.ref.parent.parent.id;
         const businessDoc = await db.collection('businesses').doc(businessId).get();
         const tenantUrl = businessDoc.exists ? businessDoc.data().tenant_url : null;
         const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
@@ -243,6 +264,21 @@ RULES:
 - Never invent promotions, discounts, or events that are not currently happening.
 - Sound like a friendly business owner, not a bot or support agent.`;
 
+            // Add per-post AI instructions if using custom post settings
+            if (usingPostSettings && postAiInstructions) {
+                systemPrompt += `\n\nSPECIFIC INSTRUCTIONS FOR THIS POST (follow these closely):\n${postAiInstructions}`;
+            }
+
+            // Add global AI instructions/examples if available and not overridden by post settings
+            if (!usingPostSettings) {
+                if (connection.ai_instructions) {
+                    systemPrompt += `\n\nADDITIONAL OWNER INSTRUCTIONS:\n${connection.ai_instructions}`;
+                }
+                if (connection.ai_example_replies) {
+                    systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${connection.ai_example_replies}`;
+                }
+            }
+
             const aiResponse = await openai.responses.create({
                 model: 'o4-mini',
                 reasoning: { effort: 'low' },
@@ -261,8 +297,8 @@ RULES:
 
             console.log(`Instagram webhook: AI generated reply for comment ${commentId}: "${replyMessage}"`);
         } else {
-            // Static template reply
-            replyMessage = connection.reply_template;
+            // Static template reply (uses per-post template if available, otherwise global)
+            replyMessage = replyTemplate;
             if (bookingLink) {
                 replyMessage = replyMessage.replace(/\{link\}/g, bookingLink);
             }
@@ -270,7 +306,7 @@ RULES:
 
         // 9. Send reply
         await replyToComment(commentId, replyMessage, accessToken);
-        console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId} (mode: ${replyMode})`);
+        console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId} (mode: ${replyMode}, post-settings: ${usingPostSettings})`);
 
         // 10. Notify admin group
         if (ADMIN_GROUP_ID) {

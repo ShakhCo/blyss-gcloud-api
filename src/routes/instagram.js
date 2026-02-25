@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
-import { instagramAuthSchema, instagramSettingsSchema, instagramPostsQuerySchema } from '../schemas/instagram.js';
+import { instagramAuthSchema, instagramSettingsSchema, instagramPostsQuerySchema, instagramPostSettingsSchema, instagramPostSettingsUpdateSchema } from '../schemas/instagram.js';
 import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile, getInstagramPosts } from '../utils/instagram.js';
 import { encrypt, decrypt } from '../utils/encryption.js';
 
@@ -272,6 +272,247 @@ router.patch('/settings/:businessId', verifySignature, authenticate, validate(in
         });
     } catch (error) {
         console.error('Error updating Instagram settings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * POST /posts/:businessId/:igMediaId/settings
+ * Create custom reply settings for a specific Instagram post
+ */
+router.post('/posts/:businessId/:igMediaId/settings', verifySignature, authenticate, validate(instagramPostSettingsSchema), async (req, res) => {
+    try {
+        const { businessId, igMediaId } = req.params;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        // Verify Instagram is connected
+        const connectionDoc = await db.collection('businesses').doc(businessId)
+            .collection('instagram_connection').doc('connection').get();
+        if (!connectionDoc.exists) {
+            return res.status(404).json({ error: 'Instagram not connected', error_code: 'NOT_CONNECTED' });
+        }
+
+        // Check if settings already exist for this post
+        const settingsRef = db.collection('businesses').doc(businessId)
+            .collection('instagram_post_settings').doc(igMediaId);
+        const settingsDoc = await settingsRef.get();
+
+        if (settingsDoc.exists) {
+            return res.status(409).json({ error: 'Custom settings already exist for this post', error_code: 'ALREADY_EXISTS' });
+        }
+
+        const { is_active, reply_mode, reply_template, ai_instructions } = req.validated;
+        const now = new Date();
+
+        await settingsRef.set({
+            ig_media_id: igMediaId,
+            is_active,
+            reply_mode,
+            reply_template,
+            ai_instructions,
+            created_at: now,
+            updated_at: now,
+        });
+
+        res.status(201).json({
+            ig_media_id: igMediaId,
+            is_active,
+            reply_mode,
+            reply_template,
+            ai_instructions,
+            created_at: now,
+            updated_at: now,
+        });
+    } catch (error) {
+        console.error('Error creating post settings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * GET /posts/:businessId/:igMediaId/settings
+ * Get custom reply settings for a specific Instagram post
+ */
+router.get('/posts/:businessId/:igMediaId/settings', verifySignature, authenticate, async (req, res) => {
+    try {
+        const { businessId, igMediaId } = req.params;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const settingsDoc = await db.collection('businesses').doc(businessId)
+            .collection('instagram_post_settings').doc(igMediaId).get();
+
+        if (!settingsDoc.exists) {
+            return res.status(404).json({ error: 'No custom settings for this post', error_code: 'POST_SETTINGS_NOT_FOUND' });
+        }
+
+        const data = settingsDoc.data();
+        res.json({
+            ig_media_id: data.ig_media_id,
+            is_active: data.is_active,
+            reply_mode: data.reply_mode,
+            reply_template: data.reply_template,
+            ai_instructions: data.ai_instructions,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+        });
+    } catch (error) {
+        console.error('Error getting post settings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * PATCH /posts/:businessId/:igMediaId/settings
+ * Update custom reply settings for a specific Instagram post
+ */
+router.patch('/posts/:businessId/:igMediaId/settings', verifySignature, authenticate, validate(instagramPostSettingsUpdateSchema), async (req, res) => {
+    try {
+        const { businessId, igMediaId } = req.params;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const settingsRef = db.collection('businesses').doc(businessId)
+            .collection('instagram_post_settings').doc(igMediaId);
+        const settingsDoc = await settingsRef.get();
+
+        if (!settingsDoc.exists) {
+            return res.status(404).json({ error: 'No custom settings for this post', error_code: 'POST_SETTINGS_NOT_FOUND' });
+        }
+
+        // Build update object from validated fields
+        const updateData = { updated_at: new Date() };
+        const { is_active, reply_mode, reply_template, ai_instructions } = req.validated;
+
+        if (is_active !== undefined) updateData.is_active = is_active;
+        if (reply_mode !== undefined) updateData.reply_mode = reply_mode;
+        if (reply_template !== undefined) updateData.reply_template = reply_template;
+        if (ai_instructions !== undefined) updateData.ai_instructions = ai_instructions;
+
+        await settingsRef.update(updateData);
+
+        const updatedDoc = await settingsRef.get();
+        const data = updatedDoc.data();
+
+        res.json({
+            ig_media_id: data.ig_media_id,
+            is_active: data.is_active,
+            reply_mode: data.reply_mode,
+            reply_template: data.reply_template,
+            ai_instructions: data.ai_instructions,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+        });
+    } catch (error) {
+        console.error('Error updating post settings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * DELETE /posts/:businessId/:igMediaId/settings
+ * Remove custom reply settings for a specific post (falls back to global settings)
+ */
+router.delete('/posts/:businessId/:igMediaId/settings', verifySignature, authenticate, async (req, res) => {
+    try {
+        const { businessId, igMediaId } = req.params;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const settingsRef = db.collection('businesses').doc(businessId)
+            .collection('instagram_post_settings').doc(igMediaId);
+        const settingsDoc = await settingsRef.get();
+
+        if (!settingsDoc.exists) {
+            return res.status(404).json({ error: 'No custom settings for this post', error_code: 'POST_SETTINGS_NOT_FOUND' });
+        }
+
+        await settingsRef.delete();
+
+        res.json({ deleted: true, ig_media_id: igMediaId });
+    } catch (error) {
+        console.error('Error deleting post settings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * GET /posts/:businessId/settings
+ * List all posts that have custom reply settings
+ */
+router.get('/posts/:businessId/settings', verifySignature, authenticate, async (req, res) => {
+    try {
+        const { businessId } = req.params;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+
+        // Verify ownership
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const snapshot = await db.collection('businesses').doc(businessId)
+            .collection('instagram_post_settings')
+            .orderBy('created_at', 'desc')
+            .get();
+
+        const post_settings = snapshot.docs.map((doc) => {
+            const data = doc.data();
+            return {
+                ig_media_id: data.ig_media_id,
+                is_active: data.is_active,
+                reply_mode: data.reply_mode,
+                reply_template: data.reply_template,
+                ai_instructions: data.ai_instructions,
+                created_at: data.created_at,
+                updated_at: data.updated_at,
+            };
+        });
+
+        res.json({ post_settings, total: post_settings.length });
+    } catch (error) {
+        console.error('Error listing post settings:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
