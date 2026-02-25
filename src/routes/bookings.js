@@ -19,6 +19,7 @@ import {
 } from '../utils/telegram.js';
 import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 import { FieldValue } from '@google-cloud/firestore';
+import { resolveDiscount } from '../utils/discountResolver.js';
 
 const router = Router();
 
@@ -213,7 +214,7 @@ router.get(
                     }
                 }
 
-                employees.push({
+                const empEntry = {
                     id: employeeDoc.id,
                     first_name: firstName,
                     last_name: lastName,
@@ -223,7 +224,29 @@ router.get(
                     is_open_now: isEmployeeOpenNow(employeeData.availability_type, employeeData.working_hours),
                     service_price: employeeServiceData.price,
                     service_duration_minutes: employeeServiceData.duration_minutes
-                });
+                };
+
+                // Resolve discount if date is provided
+                if (date) {
+                    try {
+                        const nowUzb = new Date(Date.now() + 5 * 3600000);
+                        const bookingTime = nowUzb.getHours() * 3600 + nowUzb.getMinutes() * 60;
+                        const discountResult = await resolveDiscount({
+                            businessId, employeeId: employeeDoc.id, serviceId,
+                            basePrice: employeeServiceData.price,
+                            bookingDate: date, bookingTime,
+                        });
+                        if (discountResult) {
+                            empEntry.service_original_price = discountResult.original_price;
+                            empEntry.service_final_price = discountResult.final_price;
+                            empEntry.discount = discountResult.discount;
+                        }
+                    } catch (e) {
+                        // Discount failure should not block response
+                    }
+                }
+
+                employees.push(empEntry);
             }
 
             res.json({

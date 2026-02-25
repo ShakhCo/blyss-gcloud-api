@@ -1577,6 +1577,20 @@ router.get('/businesses/:businessId/available-slots-v2', verifySignature, valida
                             case 'first_visit':
                                 matches = true; // could apply to any slot
                                 break;
+                            case 'scheduled': {
+                                let ok = true;
+                                if (Array.isArray(d.days_of_week) && d.days_of_week.length > 0) {
+                                    if (!d.days_of_week.includes(ourDay)) ok = false;
+                                }
+                                if (ok && d.time_start != null && d.time_end != null) {
+                                    if (slotStart < d.time_start || slotStart > d.time_end) ok = false;
+                                }
+                                if (ok && d.date_start && d.date_end) {
+                                    if (date < d.date_start || date > d.date_end) ok = false;
+                                }
+                                matches = ok;
+                                break;
+                            }
                         }
                         if (matches) {
                             discountSlotsSet.add(slotStart);
