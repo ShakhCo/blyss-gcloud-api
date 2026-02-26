@@ -303,9 +303,13 @@ async function getMediaImpressions(mediaId, accessToken) {
             })
         );
         const data = await response.json();
-        if (data.error) return undefined;
+        if (data.error) {
+            console.error('Instagram insights error for media', mediaId, ':', data.error.message, `(code: ${data.error.code}, subcode: ${data.error.error_subcode})`);
+            return undefined;
+        }
         return data.data?.[0]?.values?.[0]?.value;
-    } catch {
+    } catch (err) {
+        console.error('Instagram insights fetch failed for media', mediaId, ':', err.message);
         return undefined;
     }
 }
