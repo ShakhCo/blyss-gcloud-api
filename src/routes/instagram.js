@@ -76,7 +76,7 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
             media_count,
             access_token: encrypt(access_token),
             connected_at: now,
-            is_active: true,
+            is_active: false,
             reply_template: '',
             updated_at: now,
         };
@@ -90,7 +90,7 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
             followers_count,
             follows_count,
             media_count,
-            is_active: true,
+            is_active: false,
             reply_template: '',
             connected_at: now,
         });
@@ -119,9 +119,23 @@ router.delete('/auth/:businessId', verifySignature, authenticate, async (req, re
             return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
 
-        // Delete connection document
-        await db.collection('businesses').doc(businessId)
-            .collection('instagram_connection').doc('connection').delete();
+        // Delete all custom post settings
+        const postSettingsSnapshot = await db.collection('businesses').doc(businessId)
+            .collection('instagram_post_settings').get();
+
+        if (!postSettingsSnapshot.empty) {
+            const batch = db.batch();
+            for (const doc of postSettingsSnapshot.docs) {
+                batch.delete(doc.ref);
+            }
+            batch.delete(db.collection('businesses').doc(businessId)
+                .collection('instagram_connection').doc('connection'));
+            await batch.commit();
+        } else {
+            // No post settings — just delete the connection document
+            await db.collection('businesses').doc(businessId)
+                .collection('instagram_connection').doc('connection').delete();
+        }
 
         res.json({ disconnected: true });
     } catch (error) {
@@ -234,10 +248,6 @@ router.get('/posts/:businessId', verifySignature, authenticate, validate(instagr
 
         const connection = connectionDoc.data();
 
-        if (!connection.is_active) {
-            return res.status(400).json({ error: 'Instagram connection is inactive', error_code: 'CONNECTION_INACTIVE' });
-        }
-
         // Decrypt access token and fetch posts
         const accessToken = decrypt(connection.access_token);
         const { limit, after } = req.validated;
@@ -278,10 +288,6 @@ router.get('/posts/:businessId/:igMediaId/children', verifySignature, authentica
         }
 
         const connection = connectionDoc.data();
-        if (!connection.is_active) {
-            return res.status(400).json({ error: 'Instagram connection is inactive', error_code: 'CONNECTION_INACTIVE' });
-        }
-
         const accessToken = decrypt(connection.access_token);
         const children = await getCarouselChildren(igMediaId, accessToken);
 
@@ -316,10 +322,6 @@ router.get('/posts/:businessId/:igMediaId/comments', verifySignature, authentica
         }
 
         const connection = connectionDoc.data();
-        if (!connection.is_active) {
-            return res.status(400).json({ error: 'Instagram connection is inactive', error_code: 'CONNECTION_INACTIVE' });
-        }
-
         const accessToken = decrypt(connection.access_token);
         const result = await getMediaComments(igMediaId, accessToken, {
             limit: limit ? Number(limit) : 20,
