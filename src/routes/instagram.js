@@ -159,8 +159,15 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
 
         let data = connectionDoc.data();
 
-        // Backfill profile stats for connections created before this feature
-        if (data.profile_picture_url === undefined || data.followers_count === undefined) {
+        // Refresh profile stats if missing or older than 24 hours
+        const lastRefresh = data.profile_stats_updated_at?.toDate?.() || data.profile_stats_updated_at;
+        const staleMs = 24 * 60 * 60 * 1000;
+        const needsRefresh = !data.profile_picture_url && data.profile_picture_url !== null
+            || data.followers_count === undefined
+            || !lastRefresh
+            || (Date.now() - new Date(lastRefresh).getTime()) > staleMs;
+
+        if (needsRefresh) {
             try {
                 const accessToken = decrypt(data.access_token);
                 const profile = await getInstagramProfile(accessToken, data.ig_user_id);
@@ -169,11 +176,12 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
                     followers_count: profile.followers_count,
                     follows_count: profile.follows_count,
                     media_count: profile.media_count,
+                    profile_stats_updated_at: new Date(),
                 };
                 await connectionDoc.ref.update(updates);
                 data = { ...data, ...updates };
             } catch (err) {
-                console.error('Failed to backfill Instagram profile stats:', err.message);
+                console.error('Failed to refresh Instagram profile stats:', err.message);
             }
         }
 
