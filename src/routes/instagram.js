@@ -157,7 +157,25 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
             return res.json({ connected: false });
         }
 
-        const data = connectionDoc.data();
+        let data = connectionDoc.data();
+
+        // Backfill profile stats for connections created before this feature
+        if (data.profile_picture_url === undefined || data.followers_count === undefined) {
+            try {
+                const accessToken = decrypt(data.access_token);
+                const profile = await getInstagramProfile(accessToken, data.ig_user_id);
+                const updates = {
+                    profile_picture_url: profile.profile_picture_url,
+                    followers_count: profile.followers_count,
+                    follows_count: profile.follows_count,
+                    media_count: profile.media_count,
+                };
+                await connectionDoc.ref.update(updates);
+                data = { ...data, ...updates };
+            } catch (err) {
+                console.error('Failed to backfill Instagram profile stats:', err.message);
+            }
+        }
 
         res.json({
             connected: true,
