@@ -142,13 +142,7 @@ async function handleCommentEvent(igUserId, commentData) {
         const connection = connectionDoc.data();
         console.log(`Instagram webhook: found connection for @${connection.ig_username}, active: ${connection.is_active}, template: "${connection.reply_template}"`);
 
-        // 5. Skip if connection is inactive
-        if (!connection.is_active) {
-            console.log('Instagram webhook: skipping — connection inactive');
-            return;
-        }
-
-        // 5a. Check for per-post custom settings
+        // 5. Check per-post settings first, then fall back to global
         const businessId = connectionDoc.ref.parent.parent.id;
         const postSettingsDoc = await db.collection('businesses').doc(businessId)
             .collection('instagram_post_settings').doc(mediaId).get();
@@ -165,14 +159,18 @@ async function handleCommentEvent(igUserId, commentData) {
                 console.log(`Instagram webhook: skipping — auto-reply disabled for media ${mediaId}`);
                 return;
             }
-            // Use per-post custom settings
+            // Use per-post custom settings (overrides global is_active)
             replyMode = postSettings.reply_mode;
             replyTemplate = postSettings.reply_template || '';
             postAiInstructions = postSettings.ai_instructions || '';
             usingPostSettings = true;
             console.log(`Instagram webhook: using per-post settings for media ${mediaId} (mode: ${replyMode})`);
         } else {
-            // No post settings — fall back to global connection settings
+            // No post settings — use global connection settings
+            if (!connection.is_active) {
+                console.log('Instagram webhook: skipping — connection inactive and no post-level override');
+                return;
+            }
             replyMode = connection.reply_mode || 'static';
             replyTemplate = connection.reply_template || '';
             postAiInstructions = '';
