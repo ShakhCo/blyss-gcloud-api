@@ -63,13 +63,14 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
         const { access_token, user_id } = await exchangeCodeForToken(code);
 
         // Get Instagram profile info
-        const { ig_user_id, ig_username, followers_count, follows_count, media_count } = await getInstagramProfile(access_token, user_id);
+        const { ig_user_id, ig_username, profile_picture_url, followers_count, follows_count, media_count } = await getInstagramProfile(access_token, user_id);
 
         // Store connection document
         const now = new Date();
         const connectionData = {
             ig_user_id,
             ig_username,
+            profile_picture_url,
             followers_count,
             follows_count,
             media_count,
@@ -85,6 +86,7 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
         res.json({
             connected: true,
             ig_username,
+            profile_picture_url,
             followers_count,
             follows_count,
             media_count,
@@ -160,6 +162,7 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
         res.json({
             connected: true,
             ig_username: data.ig_username,
+            profile_picture_url: data.profile_picture_url || null,
             followers_count: data.followers_count || 0,
             follows_count: data.follows_count || 0,
             media_count: data.media_count || 0,

@@ -81,12 +81,12 @@ export async function exchangeCodeForToken(code) {
  * Get the Instagram user's profile info using their access token
  * @param {string} accessToken - The user's long-lived access token
  * @param {string} userId - The Instagram user ID from token exchange
- * @returns {Promise<{ig_user_id: string, ig_username: string, followers_count: number, follows_count: number, media_count: number}>}
+ * @returns {Promise<{ig_user_id: string, ig_username: string, profile_picture_url: string|null, followers_count: number, follows_count: number, media_count: number}>}
  */
 export async function getInstagramProfile(accessToken, userId) {
     const response = await fetch(
         `${GRAPH_API_BASE}/v21.0/me?` + new URLSearchParams({
-            fields: 'user_id,username,followers_count,follows_count,media_count',
+            fields: 'user_id,username,profile_picture_url,followers_count,follows_count,media_count',
             access_token: accessToken,
         })
     );
@@ -101,6 +101,7 @@ export async function getInstagramProfile(accessToken, userId) {
     return {
         ig_user_id: String(data.user_id || userId),
         ig_username: data.username,
+        profile_picture_url: data.profile_picture_url || null,
         followers_count: data.followers_count || 0,
         follows_count: data.follows_count || 0,
         media_count: data.media_count || 0,
