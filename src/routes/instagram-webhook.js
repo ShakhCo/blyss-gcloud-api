@@ -158,16 +158,21 @@ async function handleCommentEvent(igUserId, commentData) {
         let postAiInstructions;
         let usingPostSettings = false;
 
-        if (postSettingsDoc.exists && postSettingsDoc.data().is_active) {
-            // Use per-post custom settings
+        if (postSettingsDoc.exists) {
             const postSettings = postSettingsDoc.data();
+            if (!postSettings.is_active) {
+                // Post has custom settings but auto-reply is disabled — skip entirely
+                console.log(`Instagram webhook: skipping — auto-reply disabled for media ${mediaId}`);
+                return;
+            }
+            // Use per-post custom settings
             replyMode = postSettings.reply_mode;
             replyTemplate = postSettings.reply_template || '';
             postAiInstructions = postSettings.ai_instructions || '';
             usingPostSettings = true;
             console.log(`Instagram webhook: using per-post settings for media ${mediaId} (mode: ${replyMode})`);
         } else {
-            // Fall back to global connection settings
+            // No post settings — fall back to global connection settings
             replyMode = connection.reply_mode || 'static';
             replyTemplate = connection.reply_template || '';
             postAiInstructions = '';
