@@ -340,6 +340,61 @@ export async function getCarouselChildren(mediaId, accessToken) {
 }
 
 /**
+ * Get comments for an Instagram media post
+ * @param {string} mediaId - The media ID
+ * @param {string} accessToken - The access token
+ * @param {object} options - Pagination options
+ * @param {number} [options.limit=20] - Number of comments
+ * @param {string} [options.after] - Cursor for next page
+ * @returns {Promise<{comments: Array, pagination: {has_next: boolean, next_cursor: string|null}}>}
+ */
+export async function getMediaComments(mediaId, accessToken, { limit = 20, after } = {}) {
+    const params = new URLSearchParams({
+        fields: 'id,text,username,timestamp,like_count,replies{id,text,username,timestamp,like_count}',
+        limit: String(limit),
+        access_token: accessToken,
+    });
+
+    if (after) {
+        params.set('after', after);
+    }
+
+    const response = await fetch(
+        `${GRAPH_API_BASE}/v21.0/${mediaId}/comments?${params}`
+    );
+
+    const data = await response.json();
+
+    if (data.error) {
+        console.error('Instagram comments fetch error:', data.error);
+        throw new Error(`Instagram comments error: ${data.error.message}`);
+    }
+
+    const comments = (data.data || []).map((c) => ({
+        id: c.id,
+        text: c.text,
+        username: c.username,
+        timestamp: c.timestamp,
+        like_count: c.like_count || 0,
+        replies: (c.replies?.data || []).map((r) => ({
+            id: r.id,
+            text: r.text,
+            username: r.username,
+            timestamp: r.timestamp,
+            like_count: r.like_count || 0,
+        })),
+    }));
+
+    const nextCursor = data.paging?.cursors?.after || null;
+    const hasNext = !!data.paging?.next;
+
+    return {
+        comments,
+        pagination: { has_next: hasNext, next_cursor: nextCursor },
+    };
+}
+
+/**
  * Verify the webhook signature from Meta using HMAC-SHA256
  * Compares the x-hub-signature-256 header value against the computed signature
  * @param {Buffer|string} rawBody - The raw request body
