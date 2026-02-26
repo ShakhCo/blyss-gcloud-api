@@ -262,6 +262,8 @@ export async function getInstagramPosts(accessToken, igUserId, { limit = 20, aft
         thumbnail_url: post.thumbnail_url || null,
         permalink: post.permalink,
         timestamp: post.timestamp,
+        like_count: post.like_count,
+        comments_count: post.comments_count,
     }));
 
     const nextCursor = data.paging?.cursors?.after || null;
