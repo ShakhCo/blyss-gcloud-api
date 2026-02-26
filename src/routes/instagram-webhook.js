@@ -236,7 +236,23 @@ async function handleCommentEvent(igUserId, commentData) {
                 systemPrompt += `\nPost caption: "${postCaption}"`;
                 if (postTime) systemPrompt += `\nPost published: ${postTime}`;
             }
-            systemPrompt += `
+
+            if (usingPostSettings && postAiInstructions) {
+                // Per-post custom AI instructions — follow these instead of global rules
+                systemPrompt += `\n\nINSTRUCTIONS FOR REPLYING TO COMMENTS ON THIS POST:\n${postAiInstructions}`;
+                systemPrompt += `
+
+RULES:
+- Max 2 sentences. No exceptions.
+- Match the comment's language (uz/ru/en).
+- 1-2 emojis max, naturally placed.
+- Vary your wording — never repeat the exact same reply twice.
+- No hashtags. No self-introductions. No "DM us".
+- Sound like a friendly business owner, not a bot or support agent.
+- SPAM / IRRELEVANT ("Follow me", "Check my page"): Do not reply. Return exactly: __SKIP__`;
+            } else {
+                // Global default rules — drive bookings
+                systemPrompt += `
 
 GOAL: Drive bookings. Every reply should feel human and naturally push toward the booking link.
 
@@ -269,13 +285,6 @@ RULES:
 - Never invent promotions, discounts, or events that are not currently happening.
 - Sound like a friendly business owner, not a bot or support agent.`;
 
-            // Add per-post AI instructions if using custom post settings
-            if (usingPostSettings && postAiInstructions) {
-                systemPrompt += `\n\nSPECIFIC INSTRUCTIONS FOR THIS POST (follow these closely):\n${postAiInstructions}`;
-            }
-
-            // Add global AI instructions/examples if available and not overridden by post settings
-            if (!usingPostSettings) {
                 if (connection.ai_instructions) {
                     systemPrompt += `\n\nADDITIONAL OWNER INSTRUCTIONS:\n${connection.ai_instructions}`;
                 }
