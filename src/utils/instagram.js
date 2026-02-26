@@ -19,7 +19,7 @@ export function getOAuthUrl(businessId) {
     const params = new URLSearchParams({
         client_id: INSTAGRAM_APP_ID,
         redirect_uri: INSTAGRAM_CALLBACK_URL,
-        scope: 'instagram_business_basic,instagram_business_manage_comments',
+        scope: 'instagram_business_basic,instagram_business_manage_comments,instagram_business_manage_insights',
         response_type: 'code',
         state: businessId,
     });
@@ -254,7 +254,7 @@ export async function getInstagramPosts(accessToken, igUserId, { limit = 20, aft
         throw new Error(`Instagram posts error: ${data.error.message}`);
     }
 
-    const posts = (data.data || []).map((post) => ({
+    const rawPosts = (data.data || []).map((post) => ({
         id: post.id,
         caption: post.caption || '',
         media_type: post.media_type,
@@ -264,6 +264,16 @@ export async function getInstagramPosts(accessToken, igUserId, { limit = 20, aft
         timestamp: post.timestamp,
         like_count: post.like_count,
         comments_count: post.comments_count,
+    }));
+
+    // Fetch view counts (impressions) in parallel
+    const viewCounts = await Promise.all(
+        rawPosts.map((post) => getMediaImpressions(post.id, accessToken))
+    );
+
+    const posts = rawPosts.map((post, i) => ({
+        ...post,
+        view_count: viewCounts[i],
     }));
 
     const nextCursor = data.paging?.cursors?.after || null;
@@ -276,6 +286,28 @@ export async function getInstagramPosts(accessToken, igUserId, { limit = 20, aft
             next_cursor: nextCursor,
         },
     };
+}
+
+/**
+ * Get impressions (view count) for a single media item
+ * @param {string} mediaId - The media ID
+ * @param {string} accessToken - The access token
+ * @returns {Promise<number|undefined>} The impressions count, or undefined if unavailable
+ */
+async function getMediaImpressions(mediaId, accessToken) {
+    try {
+        const response = await fetch(
+            `${GRAPH_API_BASE}/v21.0/${mediaId}/insights?` + new URLSearchParams({
+                metric: 'impressions',
+                access_token: accessToken,
+            })
+        );
+        const data = await response.json();
+        if (data.error) return undefined;
+        return data.data?.[0]?.values?.[0]?.value;
+    } catch {
+        return undefined;
+    }
 }
 
 /**
