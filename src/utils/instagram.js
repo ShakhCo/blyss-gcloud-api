@@ -234,7 +234,7 @@ export async function hasExistingReply(commentId, igUserId, accessToken) {
  */
 export async function getInstagramPosts(accessToken, igUserId, { limit = 20, after } = {}) {
     const params = new URLSearchParams({
-        fields: 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp',
+        fields: 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count',
         limit: String(limit),
         access_token: accessToken,
     });
