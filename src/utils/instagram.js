@@ -277,6 +277,35 @@ export async function getInstagramPosts(accessToken, igUserId, { limit = 20, aft
 }
 
 /**
+ * Get carousel/album children media items
+ * @param {string} mediaId - The carousel media ID
+ * @param {string} accessToken - The access token
+ * @returns {Promise<Array<{id: string, media_type: string, media_url: string|null, thumbnail_url: string|null}>>}
+ */
+export async function getCarouselChildren(mediaId, accessToken) {
+    const response = await fetch(
+        `${GRAPH_API_BASE}/v21.0/${mediaId}/children?` + new URLSearchParams({
+            fields: 'id,media_type,media_url,thumbnail_url',
+            access_token: accessToken,
+        })
+    );
+
+    const data = await response.json();
+
+    if (data.error) {
+        console.error('Instagram carousel children error:', data.error);
+        throw new Error(`Instagram carousel children error: ${data.error.message}`);
+    }
+
+    return (data.data || []).map((item) => ({
+        id: item.id,
+        media_type: item.media_type,
+        media_url: item.media_url || null,
+        thumbnail_url: item.thumbnail_url || null,
+    }));
+}
+
+/**
  * Verify the webhook signature from Meta using HMAC-SHA256
  * Compares the x-hub-signature-256 header value against the computed signature
  * @param {Buffer|string} rawBody - The raw request body

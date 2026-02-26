@@ -3,7 +3,7 @@ import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import { instagramAuthSchema, instagramSettingsSchema, instagramPostsQuerySchema, instagramPostSettingsSchema, instagramPostSettingsUpdateSchema } from '../schemas/instagram.js';
-import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile, getInstagramPosts } from '../utils/instagram.js';
+import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile, getInstagramPosts, getCarouselChildren } from '../utils/instagram.js';
 import { encrypt, decrypt } from '../utils/encryption.js';
 
 const router = Router();
@@ -251,6 +251,43 @@ router.get('/posts/:businessId', verifySignature, authenticate, validate(instagr
         });
     } catch (error) {
         console.error('Error fetching Instagram posts:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * GET /posts/:businessId/:igMediaId/children
+ * Get carousel/album children for a specific post
+ */
+router.get('/posts/:businessId/:igMediaId/children', verifySignature, authenticate, async (req, res) => {
+    try {
+        const { businessId, igMediaId } = req.params;
+
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const connectionDoc = await db.collection('businesses').doc(businessId)
+            .collection('instagram_connection').doc('connection').get();
+        if (!connectionDoc.exists) {
+            return res.status(404).json({ error: 'Instagram not connected', error_code: 'NOT_CONNECTED' });
+        }
+
+        const connection = connectionDoc.data();
+        if (!connection.is_active) {
+            return res.status(400).json({ error: 'Instagram connection is inactive', error_code: 'CONNECTION_INACTIVE' });
+        }
+
+        const accessToken = decrypt(connection.access_token);
+        const children = await getCarouselChildren(igMediaId, accessToken);
+
+        res.json({ children });
+    } catch (error) {
+        console.error('Error fetching carousel children:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
