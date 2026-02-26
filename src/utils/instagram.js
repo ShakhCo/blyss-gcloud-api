@@ -266,9 +266,9 @@ export async function getInstagramPosts(accessToken, igUserId, { limit = 20, aft
         comments_count: post.comments_count,
     }));
 
-    // Fetch view counts (impressions) in parallel
+    // Fetch view counts in parallel (plays for reels, impressions for images/carousels)
     const viewCounts = await Promise.all(
-        rawPosts.map((post) => getMediaImpressions(post.id, accessToken))
+        rawPosts.map((post) => getMediaViewCount(post.id, post.media_type, accessToken))
     );
 
     const posts = rawPosts.map((post, i) => ({
@@ -289,27 +289,26 @@ export async function getInstagramPosts(accessToken, igUserId, { limit = 20, aft
 }
 
 /**
- * Get impressions (view count) for a single media item
+ * Get view count for a single media item
+ * Uses 'plays' for VIDEO/Reels, 'impressions' for IMAGE/CAROUSEL_ALBUM
  * @param {string} mediaId - The media ID
+ * @param {string} mediaType - The media type (IMAGE, VIDEO, CAROUSEL_ALBUM)
  * @param {string} accessToken - The access token
- * @returns {Promise<number|undefined>} The impressions count, or undefined if unavailable
+ * @returns {Promise<number|undefined>} The view count, or undefined if unavailable
  */
-async function getMediaImpressions(mediaId, accessToken) {
+async function getMediaViewCount(mediaId, mediaType, accessToken) {
+    const metric = mediaType === 'VIDEO' ? 'plays' : 'impressions';
     try {
         const response = await fetch(
             `${GRAPH_API_BASE}/v21.0/${mediaId}/insights?` + new URLSearchParams({
-                metric: 'impressions',
+                metric,
                 access_token: accessToken,
             })
         );
         const data = await response.json();
-        if (data.error) {
-            console.error('Instagram insights error for media', mediaId, ':', data.error.message, `(code: ${data.error.code}, subcode: ${data.error.error_subcode})`);
-            return undefined;
-        }
+        if (data.error) return undefined;
         return data.data?.[0]?.values?.[0]?.value;
-    } catch (err) {
-        console.error('Instagram insights fetch failed for media', mediaId, ':', err.message);
+    } catch {
         return undefined;
     }
 }
