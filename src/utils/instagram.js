@@ -354,7 +354,7 @@ export async function getCarouselChildren(mediaId, accessToken) {
 export async function getMediaComments(mediaId, accessToken, { limit = 20, after, igUserId, igUsername } = {}) {
     // Step 1: Fetch top-level comments (without replies expansion — it doesn't return usernames)
     const params = new URLSearchParams({
-        fields: 'id,text,username,from{id,username},timestamp,like_count,parent_id',
+        fields: 'id,text,username,from,timestamp,like_count,parent_id',
         limit: String(limit),
         access_token: accessToken,
     });
@@ -388,12 +388,13 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
             try {
                 const repliesRes = await fetch(
                     `${GRAPH_API_BASE}/v21.0/${c.id}/replies?` + new URLSearchParams({
-                        fields: 'id,text,username,from{id,username},timestamp,like_count',
+                        fields: 'id,text,username,from,timestamp,like_count',
                         access_token: accessToken,
                     })
                 );
                 const repliesData = await repliesRes.json();
-                console.log(`[DEBUG] Replies for comment ${c.id}:`, JSON.stringify(repliesData.data?.slice(0, 2), null, 2));
+                console.log(`[DEBUG] Replies raw for ${c.id}:`, JSON.stringify(repliesData.data?.slice(0, 3)));
+                console.log(`[DEBUG] igUserId=${igUserId}, igUsername=${igUsername}`);
                 if (repliesData.data) {
                     replies = repliesData.data
                         .map((r) => ({
