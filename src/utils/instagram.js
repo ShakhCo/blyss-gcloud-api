@@ -353,7 +353,7 @@ export async function getCarouselChildren(mediaId, accessToken) {
  */
 export async function getMediaComments(mediaId, accessToken, { limit = 20, after } = {}) {
     const params = new URLSearchParams({
-        fields: 'id,text,username,from{id,username},timestamp,like_count,replies{id,text,username,from{id,username},timestamp,like_count}',
+        fields: 'id,text,username,from{id,username},timestamp,like_count,parent_id,replies{id,text,username,from{id,username},timestamp,like_count}',
         limit: String(limit),
         access_token: accessToken,
     });
@@ -373,21 +373,62 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
         throw new Error(`Instagram comments error: ${data.error.message}`);
     }
 
-    const comments = (data.data || []).map((c) => ({
-        id: c.id,
-        text: c.text,
-        username: c.username || c.from?.username || '',
-        timestamp: c.timestamp,
-        like_count: c.like_count || 0,
-        replies: (c.replies?.data || [])
-            .map((r) => ({
-                id: r.id,
-                text: r.text,
-                username: r.username || r.from?.username || '',
-                timestamp: r.timestamp,
-                like_count: r.like_count || 0,
-            }))
-            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+    const rawComments = data.data || [];
+
+    // Separate top-level comments from misplaced replies
+    // Instagram API sometimes returns replies as top-level comments (especially business's own replies)
+    const topLevel = [];
+    const misplacedReplies = [];
+
+    for (const c of rawComments) {
+        if (c.parent_id) {
+            misplacedReplies.push(c);
+        } else {
+            topLevel.push(c);
+        }
+    }
+
+    // Build a map for quick lookup
+    const commentMap = new Map();
+
+    const mapReply = (r) => ({
+        id: r.id,
+        text: r.text,
+        username: r.username || r.from?.username || '',
+        timestamp: r.timestamp,
+        like_count: r.like_count || 0,
+    });
+
+    for (const c of topLevel) {
+        const existingReplyIds = new Set((c.replies?.data || []).map((r) => r.id));
+        const replies = (c.replies?.data || []).map(mapReply);
+
+        commentMap.set(c.id, {
+            id: c.id,
+            text: c.text,
+            username: c.username || c.from?.username || '',
+            timestamp: c.timestamp,
+            like_count: c.like_count || 0,
+            replies,
+            _replyIds: existingReplyIds,
+        });
+    }
+
+    // Re-attach misplaced replies to their parent comments
+    for (const r of misplacedReplies) {
+        const parentId = r.parent_id;
+        const parent = commentMap.get(parentId);
+        if (parent && !parent._replyIds.has(r.id)) {
+            parent.replies.push(mapReply(r));
+            parent._replyIds.add(r.id);
+        }
+        // If parent not found in this page, skip (reply to a comment on a different page)
+    }
+
+    // Sort replies chronologically and clean up internal fields
+    const comments = [...commentMap.values()].map(({ _replyIds, ...c }) => ({
+        ...c,
+        replies: c.replies.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
     }));
 
     const nextCursor = data.paging?.cursors?.after || null;
