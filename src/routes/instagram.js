@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
-import { instagramAuthSchema, instagramSettingsSchema, instagramPostsQuerySchema, instagramPostSettingsSchema, instagramPostSettingsUpdateSchema } from '../schemas/instagram.js';
+import { instagramAuthSchema, instagramSettingsSchema, instagramDmSettingsSchema, instagramPostsQuerySchema, instagramPostSettingsSchema, instagramPostSettingsUpdateSchema } from '../schemas/instagram.js';
 import { getOAuthUrl, exchangeCodeForToken, getInstagramProfile, getInstagramPosts, getCarouselChildren, getMediaComments } from '../utils/instagram.js';
 import { encrypt, decrypt } from '../utils/encryption.js';
 
@@ -78,6 +78,12 @@ router.post('/auth', validate(instagramAuthSchema), async (req, res) => {
             connected_at: now,
             is_active: false,
             reply_template: '',
+            has_messaging_scope: true,
+            dm_auto_reply_enabled: false,
+            dm_reply_mode: 'static',
+            dm_reply_template: '',
+            dm_ai_instructions: '',
+            dm_ai_example_replies: '',
             updated_at: now,
         };
 
@@ -199,7 +205,9 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
             }
         }
 
-        res.json({
+        const needsReauth = !data.has_messaging_scope;
+
+        const response = {
             connected: true,
             ig_username: data.ig_username,
             profile_picture_url: data.profile_picture_url || null,
@@ -212,7 +220,19 @@ router.get('/status/:businessId', verifySignature, authenticate, async (req, res
             ai_instructions: data.ai_instructions || '',
             ai_example_replies: data.ai_example_replies || '',
             connected_at: data.connected_at,
-        });
+            dm_auto_reply_enabled: data.dm_auto_reply_enabled || false,
+            dm_reply_mode: data.dm_reply_mode || 'static',
+            dm_reply_template: data.dm_reply_template || '',
+            dm_ai_instructions: data.dm_ai_instructions || '',
+            dm_ai_example_replies: data.dm_ai_example_replies || '',
+            needs_reauth: needsReauth,
+        };
+
+        if (needsReauth) {
+            response.reauth_url = getOAuthUrl(businessId);
+        }
+
+        res.json(response);
     } catch (error) {
         console.error('Error getting Instagram status:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
@@ -398,6 +418,63 @@ router.patch('/settings/:businessId', verifySignature, authenticate, validate(in
 });
 
 /**
+ * PATCH /dm-settings/:businessId
+ * Update Instagram DM auto-reply settings (separate from comment settings)
+ */
+router.patch('/dm-settings/:businessId', verifySignature, authenticate, validate(instagramDmSettingsSchema), async (req, res) => {
+    try {
+        const { businessId } = req.params;
+
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const connectionRef = db.collection('businesses').doc(businessId)
+            .collection('instagram_connection').doc('connection');
+        const connectionDoc = await connectionRef.get();
+
+        if (!connectionDoc.exists) {
+            return res.status(404).json({ error: 'Instagram not connected', error_code: 'NOT_CONNECTED' });
+        }
+
+        if (!connectionDoc.data().has_messaging_scope) {
+            return res.status(400).json({ error: 'Messaging permission not granted. Please reconnect Instagram.', error_code: 'MISSING_MESSAGING_SCOPE' });
+        }
+
+        const updateData = { updated_at: new Date() };
+        const { dm_auto_reply_enabled, dm_reply_mode, dm_reply_template, dm_ai_instructions, dm_ai_example_replies } = req.validated;
+
+        if (dm_auto_reply_enabled !== undefined) updateData.dm_auto_reply_enabled = dm_auto_reply_enabled;
+        if (dm_reply_mode !== undefined) updateData.dm_reply_mode = dm_reply_mode;
+        if (dm_reply_template !== undefined) updateData.dm_reply_template = dm_reply_template;
+        if (dm_ai_instructions !== undefined) updateData.dm_ai_instructions = dm_ai_instructions;
+        if (dm_ai_example_replies !== undefined) updateData.dm_ai_example_replies = dm_ai_example_replies;
+
+        await connectionRef.update(updateData);
+
+        const updatedDoc = await connectionRef.get();
+        const data = updatedDoc.data();
+
+        res.json({
+            connected: true,
+            ig_username: data.ig_username,
+            dm_auto_reply_enabled: data.dm_auto_reply_enabled || false,
+            dm_reply_mode: data.dm_reply_mode || 'static',
+            dm_reply_template: data.dm_reply_template || '',
+            dm_ai_instructions: data.dm_ai_instructions || '',
+            dm_ai_example_replies: data.dm_ai_example_replies || '',
+        });
+    } catch (error) {
+        console.error('Error updating Instagram DM settings:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
  * POST /posts/:businessId/:igMediaId/settings
  * Create custom reply settings for a specific Instagram post
  */
@@ -432,28 +509,27 @@ router.post('/posts/:businessId/:igMediaId/settings', verifySignature, authentic
             return res.status(409).json({ error: 'Custom settings already exist for this post', error_code: 'ALREADY_EXISTS' });
         }
 
-        const { is_active, reply_mode, reply_template, ai_instructions } = req.validated;
+        const { is_active, reply_mode, reply_template, ai_instructions, dm_keyword, dm_enabled, dm_reply_mode, dm_template, dm_ai_instructions } = req.validated;
         const now = new Date();
 
-        await settingsRef.set({
+        const settingsData = {
             ig_media_id: igMediaId,
             is_active,
             reply_mode,
             reply_template,
             ai_instructions,
+            dm_keyword,
+            dm_enabled,
+            dm_reply_mode,
+            dm_template,
+            dm_ai_instructions,
             created_at: now,
             updated_at: now,
-        });
+        };
 
-        res.status(201).json({
-            ig_media_id: igMediaId,
-            is_active,
-            reply_mode,
-            reply_template,
-            ai_instructions,
-            created_at: now,
-            updated_at: now,
-        });
+        await settingsRef.set(settingsData);
+
+        res.status(201).json(settingsData);
     } catch (error) {
         console.error('Error creating post settings:', error);
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
@@ -493,6 +569,11 @@ router.get('/posts/:businessId/:igMediaId/settings', verifySignature, authentica
             reply_mode: data.reply_mode,
             reply_template: data.reply_template,
             ai_instructions: data.ai_instructions,
+            dm_keyword: data.dm_keyword || '',
+            dm_enabled: data.dm_enabled || false,
+            dm_reply_mode: data.dm_reply_mode || 'static',
+            dm_template: data.dm_template || '',
+            dm_ai_instructions: data.dm_ai_instructions || '',
             created_at: data.created_at,
             updated_at: data.updated_at,
         });
@@ -531,12 +612,17 @@ router.patch('/posts/:businessId/:igMediaId/settings', verifySignature, authenti
 
         // Build update object from validated fields
         const updateData = { updated_at: new Date() };
-        const { is_active, reply_mode, reply_template, ai_instructions } = req.validated;
+        const { is_active, reply_mode, reply_template, ai_instructions, dm_keyword, dm_enabled, dm_reply_mode, dm_template, dm_ai_instructions } = req.validated;
 
         if (is_active !== undefined) updateData.is_active = is_active;
         if (reply_mode !== undefined) updateData.reply_mode = reply_mode;
         if (reply_template !== undefined) updateData.reply_template = reply_template;
         if (ai_instructions !== undefined) updateData.ai_instructions = ai_instructions;
+        if (dm_keyword !== undefined) updateData.dm_keyword = dm_keyword;
+        if (dm_enabled !== undefined) updateData.dm_enabled = dm_enabled;
+        if (dm_reply_mode !== undefined) updateData.dm_reply_mode = dm_reply_mode;
+        if (dm_template !== undefined) updateData.dm_template = dm_template;
+        if (dm_ai_instructions !== undefined) updateData.dm_ai_instructions = dm_ai_instructions;
 
         await settingsRef.update(updateData);
 
@@ -549,6 +635,11 @@ router.patch('/posts/:businessId/:igMediaId/settings', verifySignature, authenti
             reply_mode: data.reply_mode,
             reply_template: data.reply_template,
             ai_instructions: data.ai_instructions,
+            dm_keyword: data.dm_keyword || '',
+            dm_enabled: data.dm_enabled || false,
+            dm_reply_mode: data.dm_reply_mode || 'static',
+            dm_template: data.dm_template || '',
+            dm_ai_instructions: data.dm_ai_instructions || '',
             created_at: data.created_at,
             updated_at: data.updated_at,
         });
@@ -626,6 +717,11 @@ router.get('/posts/:businessId/settings', verifySignature, authenticate, async (
                 reply_mode: data.reply_mode,
                 reply_template: data.reply_template,
                 ai_instructions: data.ai_instructions,
+                dm_keyword: data.dm_keyword || '',
+                dm_enabled: data.dm_enabled || false,
+                dm_reply_mode: data.dm_reply_mode || 'static',
+                dm_template: data.dm_template || '',
+                dm_ai_instructions: data.dm_ai_instructions || '',
                 created_at: data.created_at,
                 updated_at: data.updated_at,
             };

@@ -6,6 +6,8 @@ import {
     replyToComment,
     hasExistingReply,
     getMediaDetails,
+    sendDirectMessage,
+    sendPrivateReply,
 } from '../utils/instagram.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
 import { decrypt } from '../utils/encryption.js';
@@ -20,6 +22,25 @@ const router = Router();
 const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
 
 const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN;
+
+// ---------- In-memory DM rate limiter (200/hour per IG account) ----------
+const DM_RATE_LIMIT = 200;
+const DM_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const dmRateCounts = new Map(); // igUserId → { count, resetAt }
+
+function canSendDm(igUserId) {
+    const now = Date.now();
+    const entry = dmRateCounts.get(igUserId);
+    if (!entry || now >= entry.resetAt) {
+        dmRateCounts.set(igUserId, { count: 1, resetAt: now + DM_RATE_WINDOW_MS });
+        return true;
+    }
+    if (entry.count >= DM_RATE_LIMIT) {
+        return false;
+    }
+    entry.count++;
+    return true;
+}
 
 /**
  * GET /
@@ -43,8 +64,8 @@ router.get('/', (req, res) => {
 
 /**
  * POST /
- * Receives comment events from Meta's Instagram webhooks.
- * Processes comments before responding so Cloud Run keeps CPU allocated.
+ * Receives comment and messaging events from Meta's Instagram webhooks.
+ * Processes events before responding so Cloud Run keeps CPU allocated.
  */
 router.post('/', async (req, res) => {
     // Verify signature
@@ -68,6 +89,7 @@ router.post('/', async (req, res) => {
         for (const entry of body.entry) {
             const igUserId = entry.id;
 
+            // Handle field changes (comments)
             if (Array.isArray(entry.changes)) {
                 for (const change of entry.changes) {
                     console.log(`Instagram webhook: received change field="${change.field}" for user ${igUserId}`);
@@ -75,8 +97,14 @@ router.post('/', async (req, res) => {
                         tasks.push(handleCommentEvent(igUserId, change.value));
                     }
                 }
-            } else {
-                console.log(`Instagram webhook: entry has no changes array`, JSON.stringify(entry));
+            }
+
+            // Handle messaging events (DMs)
+            if (Array.isArray(entry.messaging)) {
+                for (const messagingEvent of entry.messaging) {
+                    console.log(`Instagram webhook: received messaging event for user ${igUserId}`);
+                    tasks.push(handleMessagingEvent(igUserId, messagingEvent));
+                }
             }
         }
     } else {
@@ -90,6 +118,7 @@ router.post('/', async (req, res) => {
 /**
  * Handle an incoming Instagram comment event.
  * Auto-replies with the configured template if all conditions are met.
+ * Also checks for keyword-triggered DMs.
  *
  * Checks (in order):
  * 1. Skip replies (parent_id present) to avoid infinite loops
@@ -151,24 +180,27 @@ async function handleCommentEvent(igUserId, commentData) {
         let replyTemplate;
         let postAiInstructions;
         let usingPostSettings = false;
+        let postSettings = null;
 
         if (postSettingsDoc.exists) {
-            const postSettings = postSettingsDoc.data();
+            postSettings = postSettingsDoc.data();
             if (!postSettings.is_active) {
-                // Post has custom settings but auto-reply is disabled — skip entirely
-                console.log(`Instagram webhook: skipping — auto-reply disabled for media ${mediaId}`);
-                return;
+                // Post has custom settings but auto-reply is disabled — skip comment reply
+                // But still check keyword DM below
+                console.log(`Instagram webhook: comment auto-reply disabled for media ${mediaId}`);
+            } else {
+                // Use per-post custom settings (overrides global is_active)
+                replyMode = postSettings.reply_mode;
+                replyTemplate = postSettings.reply_template || '';
+                postAiInstructions = postSettings.ai_instructions || '';
+                usingPostSettings = true;
+                console.log(`Instagram webhook: using per-post settings for media ${mediaId} (mode: ${replyMode})`);
             }
-            // Use per-post custom settings (overrides global is_active)
-            replyMode = postSettings.reply_mode;
-            replyTemplate = postSettings.reply_template || '';
-            postAiInstructions = postSettings.ai_instructions || '';
-            usingPostSettings = true;
-            console.log(`Instagram webhook: using per-post settings for media ${mediaId} (mode: ${replyMode})`);
         } else {
             // No post settings — use global connection settings
             if (!connection.is_active) {
                 console.log('Instagram webhook: skipping — connection inactive and no post-level override');
+                // No post settings at all, so no keyword DM either — exit early
                 return;
             }
             replyMode = connection.reply_mode || 'static';
@@ -176,69 +208,320 @@ async function handleCommentEvent(igUserId, commentData) {
             postAiInstructions = '';
         }
 
-        // 6. Skip if no content configured for the active mode
-        if (replyMode === 'static' && !replyTemplate.trim()) {
-            console.log('Instagram webhook: skipping — reply_template empty');
-            return;
-        }
-        if (replyMode === 'ai' && !openai) {
-            console.log('Instagram webhook: skipping — OpenAI not configured');
-            return;
-        }
-
         // Decrypt access token
         const accessToken = decrypt(connection.access_token);
 
-        // 7. Dedup — skip if already replied
-        const alreadyReplied = await hasExistingReply(commentId, igUserId, accessToken);
-        if (alreadyReplied) {
-            console.log(`Instagram webhook: skipping — already replied to comment ${commentId}`);
+        // --- Comment auto-reply (existing logic) ---
+        const shouldReplyToComment = usingPostSettings || (connection.is_active && !postSettings);
+
+        if (shouldReplyToComment) {
+            // 6. Skip if no content configured for the active mode
+            let skipCommentReply = false;
+            if (replyMode === 'static' && !replyTemplate.trim()) {
+                console.log('Instagram webhook: skipping comment reply — reply_template empty');
+                skipCommentReply = true;
+            }
+            if (replyMode === 'ai' && !openai) {
+                console.log('Instagram webhook: skipping comment reply — OpenAI not configured');
+                skipCommentReply = true;
+            }
+
+            if (!skipCommentReply) {
+                // 7. Dedup — skip if already replied
+                const alreadyReplied = await hasExistingReply(commentId, igUserId, accessToken);
+                if (alreadyReplied) {
+                    console.log(`Instagram webhook: skipping — already replied to comment ${commentId}`);
+                } else {
+                    // 8. Build and send comment reply
+                    const businessDoc = await db.collection('businesses').doc(businessId).get();
+                    const tenantUrl = businessDoc.exists ? businessDoc.data().tenant_url : null;
+                    const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
+
+                    const replyMessage = await buildReplyMessage(replyMode, replyTemplate, commentData, connection, businessId, businessDoc, bookingLink, mediaId, accessToken, usingPostSettings, postAiInstructions);
+
+                    if (replyMessage) {
+                        await replyToComment(commentId, replyMessage, accessToken);
+                        console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId} (mode: ${replyMode}, post-settings: ${usingPostSettings})`);
+
+                        // Notify admin group
+                        if (ADMIN_GROUP_ID) {
+                            const commenter = commentData.from?.username || commentData.from?.id || 'unknown';
+                            const commentText = commentData.text || '';
+                            const modeLabel = replyMode === 'ai' ? 'AI' : 'Template';
+                            const adminMsg =
+                                `📸 <b>Instagram auto-reply (${modeLabel})</b>\n\n` +
+                                `👤 <b>Comment by:</b> @${commenter}\n` +
+                                `💬 <b>Comment:</b> ${commentText}\n` +
+                                `↩️ <b>Reply:</b> ${replyMessage}\n` +
+                                `🏢 <b>Account:</b> @${connection.ig_username}`;
+                            sendTelegramMessage(ADMIN_GROUP_ID, adminMsg).catch(() => {});
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Keyword-to-DM logic (runs independently of comment reply) ---
+        if (postSettings && postSettings.dm_enabled && postSettings.dm_keyword && connection.has_messaging_scope) {
+            const commentText = (commentData.text || '').trim();
+            const keyword = postSettings.dm_keyword.trim();
+
+            // Case-insensitive match: comment text contains the keyword
+            if (keyword && commentText.toLowerCase().includes(keyword.toLowerCase())) {
+                console.log(`Instagram webhook: keyword "${keyword}" matched in comment ${commentId} — sending DM`);
+
+                // Rate limit check
+                if (!canSendDm(igUserId)) {
+                    console.warn(`Instagram webhook: DM rate limit reached for IG user ${igUserId}, skipping keyword DM`);
+                } else {
+                    const businessDoc = await db.collection('businesses').doc(businessId).get();
+                    const tenantUrl = businessDoc.exists ? businessDoc.data().tenant_url : null;
+                    const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
+
+                    const dmMessage = await buildDmMessage(
+                        postSettings.dm_reply_mode || 'static',
+                        postSettings.dm_template || '',
+                        postSettings.dm_ai_instructions || '',
+                        commentData,
+                        connection,
+                        businessId,
+                        businessDoc,
+                        bookingLink,
+                        mediaId,
+                        accessToken,
+                    );
+
+                    if (dmMessage) {
+                        try {
+                            await sendPrivateReply(igUserId, commentId, dmMessage, accessToken);
+                            console.log(`Instagram webhook: sent keyword DM for comment ${commentId} (keyword: "${keyword}")`);
+
+                            if (ADMIN_GROUP_ID) {
+                                const commenter = commentData.from?.username || commentData.from?.id || 'unknown';
+                                const adminMsg =
+                                    `✉️ <b>Instagram keyword DM</b>\n\n` +
+                                    `👤 <b>Triggered by:</b> @${commenter}\n` +
+                                    `🔑 <b>Keyword:</b> ${keyword}\n` +
+                                    `💬 <b>Comment:</b> ${commentText}\n` +
+                                    `📩 <b>DM sent:</b> ${dmMessage.substring(0, 200)}${dmMessage.length > 200 ? '...' : ''}\n` +
+                                    `🏢 <b>Account:</b> @${connection.ig_username}`;
+                                sendTelegramMessage(ADMIN_GROUP_ID, adminMsg).catch(() => {});
+                            }
+                        } catch (dmError) {
+                            console.error(`Instagram webhook: failed to send keyword DM for comment ${commentId}:`, dmError.message);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Instagram webhook: error handling comment event:', error);
+        // Never throw — webhook must not fail
+    }
+}
+
+/**
+ * Handle an incoming Instagram messaging event (DM auto-reply).
+ *
+ * @param {string} igUserId - The Instagram user ID that owns the business account
+ * @param {object} messagingEvent - The messaging event from Meta's webhook payload
+ */
+async function handleMessagingEvent(igUserId, messagingEvent) {
+    try {
+        const senderId = messagingEvent.sender?.id;
+        const recipientId = messagingEvent.recipient?.id;
+        const messageData = messagingEvent.message;
+
+        // Skip if not a text message (ignore reactions, attachments, etc. for now)
+        if (!messageData?.text) {
+            console.log('Instagram webhook DM: skipping non-text message');
             return;
         }
 
-        // 8. Build reply message
-        const businessDoc = await db.collection('businesses').doc(businessId).get();
-        const tenantUrl = businessDoc.exists ? businessDoc.data().tenant_url : null;
-        const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
+        // Skip echo messages (sent by the business itself)
+        if (String(senderId) === String(igUserId)) {
+            console.log('Instagram webhook DM: skipping echo (business sent this message)');
+            return;
+        }
+
+        const messageText = messageData.text;
+        const messageId = messageData.mid;
+        console.log(`Instagram webhook DM: received message "${messageText}" from ${senderId} to ${recipientId}`);
+
+        // Find business connection
+        const connectionSnapshot = await db
+            .collectionGroup('instagram_connection')
+            .where('ig_user_id', '==', String(igUserId))
+            .limit(1)
+            .get();
+
+        if (connectionSnapshot.empty) {
+            console.log(`Instagram webhook DM: no connection found for IG user ${igUserId}`);
+            return;
+        }
+
+        const connectionDoc = connectionSnapshot.docs[0];
+        const connection = connectionDoc.data();
+
+        // Check if DM auto-reply is enabled
+        if (!connection.dm_auto_reply_enabled) {
+            console.log(`Instagram webhook DM: DM auto-reply disabled for @${connection.ig_username}`);
+            return;
+        }
+
+        // Check messaging scope
+        if (!connection.has_messaging_scope) {
+            console.log(`Instagram webhook DM: missing messaging scope for @${connection.ig_username}`);
+            return;
+        }
+
+        const dmReplyMode = connection.dm_reply_mode || 'static';
+        const dmReplyTemplate = connection.dm_reply_template || '';
+
+        // Validate configuration
+        if (dmReplyMode === 'static' && !dmReplyTemplate.trim()) {
+            console.log('Instagram webhook DM: skipping — dm_reply_template empty');
+            return;
+        }
+        if (dmReplyMode === 'ai' && !openai) {
+            console.log('Instagram webhook DM: skipping — OpenAI not configured');
+            return;
+        }
+
+        // Rate limit check
+        if (!canSendDm(igUserId)) {
+            console.warn(`Instagram webhook DM: rate limit reached for IG user ${igUserId}, skipping DM reply`);
+            return;
+        }
+
+        const accessToken = decrypt(connection.access_token);
+        const businessId = connectionDoc.ref.parent.parent.id;
 
         let replyMessage;
 
-        if (replyMode === 'ai') {
-            // AI-generated reply — build detailed business context
-            const commentText = commentData.text || '';
+        if (dmReplyMode === 'ai') {
+            // AI-generated DM reply
+            const businessDoc = await db.collection('businesses').doc(businessId).get();
             const businessData = businessDoc.exists ? businessDoc.data() : {};
+            const tenantUrl = businessData.tenant_url;
+            const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
             const businessInfo = await buildBusinessInfo(businessId, businessData, bookingLink);
-
-            // Fetch post caption and timestamp for context
-            let postCaption = '';
-            let postTime = '';
-            try {
-                const media = await getMediaDetails(mediaId, accessToken);
-                if (media?.caption) postCaption = media.caption;
-                if (media?.timestamp) {
-                    postTime = new Date(media.timestamp).toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent', dateStyle: 'medium', timeStyle: 'short' });
-                }
-            } catch (e) {
-                console.log(`Instagram webhook: could not fetch post caption for media ${mediaId}`);
-            }
 
             const tashkentNow = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' });
             const d = new Date(tashkentNow);
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const now = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
-            let systemPrompt = `You are replying to Instagram post comments on behalf of a business.\nThis is a PUBLIC COMMENT SECTION — not a DM or chat.`;
+            let systemPrompt = `You are replying to a customer's Instagram Direct Message on behalf of a business.\nThis is a PRIVATE DM conversation — be warm, helpful, and detailed.`;
             systemPrompt += `\nToday: ${now} (Tashkent, UTC+5)`;
             systemPrompt += `\n\n${businessInfo}`;
-            if (postCaption || postTime) {
-                systemPrompt += `\nPost caption: "${postCaption}"`;
-                if (postTime) systemPrompt += `\nPost published: ${postTime}`;
+
+            systemPrompt += `
+
+GOAL: Help the customer and drive bookings. Be friendly, personal, and informative.
+
+RULES:
+- Max 3-4 sentences. Keep it conversational.
+- Match the customer's language (uz/ru/en).
+- Answer questions with specific info from business data above.
+- Include booking link when relevant: ${bookingLink}
+- Sound like a friendly business owner, not a bot.
+- If the message is spam or irrelevant, return exactly: __SKIP__`;
+
+            if (connection.dm_ai_instructions) {
+                systemPrompt += `\n\nADDITIONAL OWNER INSTRUCTIONS:\n${connection.dm_ai_instructions}`;
+            }
+            if (connection.dm_ai_example_replies) {
+                systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${connection.dm_ai_example_replies}`;
             }
 
-            if (usingPostSettings && postAiInstructions) {
-                // Per-post custom AI instructions — follow these instead of global rules
-                systemPrompt += `\n\nINSTRUCTIONS FOR REPLYING TO COMMENTS ON THIS POST:\n${postAiInstructions}`;
-                systemPrompt += `
+            const aiResponse = await openai.responses.create({
+                model: 'o4-mini',
+                reasoning: { effort: 'low' },
+                input: [
+                    { role: 'developer', content: systemPrompt },
+                    { role: 'user', content: messageText },
+                ],
+            });
+            replyMessage = (aiResponse.output_text || '').trim();
+
+            if (!replyMessage || replyMessage === '__SKIP__') {
+                console.log(`Instagram webhook DM: AI skipped message ${messageId} (empty or spam)`);
+                return;
+            }
+
+            console.log(`Instagram webhook DM: AI generated reply for message ${messageId}: "${replyMessage}"`);
+        } else {
+            // Static template reply
+            const businessDoc = await db.collection('businesses').doc(businessId).get();
+            const tenantUrl = businessDoc.exists ? businessDoc.data().tenant_url : null;
+            const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
+
+            replyMessage = dmReplyTemplate;
+            if (bookingLink) {
+                replyMessage = replyMessage.replace(/\{link\}/g, bookingLink);
+            }
+        }
+
+        // Send DM reply
+        await sendDirectMessage(igUserId, senderId, replyMessage, accessToken);
+        console.log(`Instagram webhook DM: replied to ${senderId} for business ${businessId} (mode: ${dmReplyMode})`);
+
+        // Notify admin group
+        if (ADMIN_GROUP_ID) {
+            const modeLabel = dmReplyMode === 'ai' ? 'AI' : 'Template';
+            const adminMsg =
+                `✉️ <b>Instagram DM auto-reply (${modeLabel})</b>\n\n` +
+                `👤 <b>From:</b> ${senderId}\n` +
+                `💬 <b>Message:</b> ${messageText}\n` +
+                `↩️ <b>Reply:</b> ${replyMessage}\n` +
+                `🏢 <b>Account:</b> @${connection.ig_username}`;
+            sendTelegramMessage(ADMIN_GROUP_ID, adminMsg).catch(() => {});
+        }
+    } catch (error) {
+        console.error('Instagram webhook DM: error handling messaging event:', error);
+        // Never throw — webhook must not fail
+    }
+}
+
+/**
+ * Build a comment reply message (static or AI).
+ * Extracted from handleCommentEvent to keep it clean.
+ */
+async function buildReplyMessage(replyMode, replyTemplate, commentData, connection, businessId, businessDoc, bookingLink, mediaId, accessToken, usingPostSettings, postAiInstructions) {
+    if (replyMode === 'ai') {
+        const commentText = commentData.text || '';
+        const businessData = businessDoc.exists ? businessDoc.data() : {};
+        const businessInfo = await buildBusinessInfo(businessId, businessData, bookingLink);
+
+        let postCaption = '';
+        let postTime = '';
+        try {
+            const media = await getMediaDetails(mediaId, accessToken);
+            if (media?.caption) postCaption = media.caption;
+            if (media?.timestamp) {
+                postTime = new Date(media.timestamp).toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent', dateStyle: 'medium', timeStyle: 'short' });
+            }
+        } catch (e) {
+            console.log(`Instagram webhook: could not fetch post caption for media ${mediaId}`);
+        }
+
+        const tashkentNow = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' });
+        const d = new Date(tashkentNow);
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const now = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+        let systemPrompt = `You are replying to Instagram post comments on behalf of a business.\nThis is a PUBLIC COMMENT SECTION — not a DM or chat.`;
+        systemPrompt += `\nToday: ${now} (Tashkent, UTC+5)`;
+        systemPrompt += `\n\n${businessInfo}`;
+        if (postCaption || postTime) {
+            systemPrompt += `\nPost caption: "${postCaption}"`;
+            if (postTime) systemPrompt += `\nPost published: ${postTime}`;
+        }
+
+        if (usingPostSettings && postAiInstructions) {
+            systemPrompt += `\n\nINSTRUCTIONS FOR REPLYING TO COMMENTS ON THIS POST:\n${postAiInstructions}`;
+            systemPrompt += `
 
 RULES:
 - Max 2 sentences. No exceptions.
@@ -248,9 +531,8 @@ RULES:
 - No hashtags. No self-introductions. No "DM us".
 - Sound like a friendly business owner, not a bot or support agent.
 - SPAM / IRRELEVANT ("Follow me", "Check my page"): Do not reply. Return exactly: __SKIP__`;
-            } else {
-                // Global default rules — drive bookings
-                systemPrompt += `
+        } else {
+            systemPrompt += `
 
 GOAL: Drive bookings. Every reply should feel human and naturally push toward the booking link.
 
@@ -283,59 +565,111 @@ RULES:
 - Never invent promotions, discounts, or events that are not currently happening.
 - Sound like a friendly business owner, not a bot or support agent.`;
 
-                if (connection.ai_instructions) {
-                    systemPrompt += `\n\nADDITIONAL OWNER INSTRUCTIONS:\n${connection.ai_instructions}`;
-                }
-                if (connection.ai_example_replies) {
-                    systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${connection.ai_example_replies}`;
-                }
+            if (connection.ai_instructions) {
+                systemPrompt += `\n\nADDITIONAL OWNER INSTRUCTIONS:\n${connection.ai_instructions}`;
             }
-
-            const aiResponse = await openai.responses.create({
-                model: 'o4-mini',
-                reasoning: { effort: 'low' },
-                input: [
-                    { role: 'developer', content: systemPrompt },
-                    { role: 'user', content: commentText },
-                ],
-            });
-            replyMessage = (aiResponse.output_text || '').trim();
-
-            // Skip spam/irrelevant comments or empty responses
-            if (!replyMessage || replyMessage === '__SKIP__') {
-                console.log(`Instagram webhook: AI skipped comment ${commentId} (empty or spam)`);
-                return;
-            }
-
-            console.log(`Instagram webhook: AI generated reply for comment ${commentId}: "${replyMessage}"`);
-        } else {
-            // Static template reply (uses per-post template if available, otherwise global)
-            replyMessage = replyTemplate;
-            if (bookingLink) {
-                replyMessage = replyMessage.replace(/\{link\}/g, bookingLink);
+            if (connection.ai_example_replies) {
+                systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${connection.ai_example_replies}`;
             }
         }
 
-        // 9. Send reply
-        await replyToComment(commentId, replyMessage, accessToken);
-        console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId} (mode: ${replyMode}, post-settings: ${usingPostSettings})`);
+        const aiResponse = await openai.responses.create({
+            model: 'o4-mini',
+            reasoning: { effort: 'low' },
+            input: [
+                { role: 'developer', content: systemPrompt },
+                { role: 'user', content: commentText },
+            ],
+        });
+        const replyMessage = (aiResponse.output_text || '').trim();
 
-        // 10. Notify admin group
-        if (ADMIN_GROUP_ID) {
-            const commenter = commentData.from?.username || commentData.from?.id || 'unknown';
-            const commentText = commentData.text || '';
-            const modeLabel = replyMode === 'ai' ? 'AI' : 'Template';
-            const adminMsg =
-                `📸 <b>Instagram auto-reply (${modeLabel})</b>\n\n` +
-                `👤 <b>Comment by:</b> @${commenter}\n` +
-                `💬 <b>Comment:</b> ${commentText}\n` +
-                `↩️ <b>Reply:</b> ${replyMessage}\n` +
-                `🏢 <b>Account:</b> @${connection.ig_username}`;
-            sendTelegramMessage(ADMIN_GROUP_ID, adminMsg).catch(() => {});
+        if (!replyMessage || replyMessage === '__SKIP__') {
+            console.log(`Instagram webhook: AI skipped comment ${commentData.id} (empty or spam)`);
+            return null;
         }
-    } catch (error) {
-        console.error('Instagram webhook: error handling comment event:', error);
-        // Never throw — webhook must not fail
+
+        console.log(`Instagram webhook: AI generated reply for comment ${commentData.id}: "${replyMessage}"`);
+        return replyMessage;
+    } else {
+        // Static template reply
+        let replyMessage = replyTemplate;
+        if (bookingLink) {
+            replyMessage = replyMessage.replace(/\{link\}/g, bookingLink);
+        }
+        return replyMessage;
+    }
+}
+
+/**
+ * Build a DM message for keyword-triggered private replies (static or AI).
+ */
+async function buildDmMessage(dmReplyMode, dmTemplate, dmAiInstructions, commentData, connection, businessId, businessDoc, bookingLink, mediaId, accessToken) {
+    if (dmReplyMode === 'ai') {
+        if (!openai) {
+            console.log('Instagram webhook: skipping keyword DM — OpenAI not configured');
+            return null;
+        }
+
+        const commentText = commentData.text || '';
+        const businessData = businessDoc.exists ? businessDoc.data() : {};
+        const businessInfo = await buildBusinessInfo(businessId, businessData, bookingLink);
+
+        let postCaption = '';
+        try {
+            const media = await getMediaDetails(mediaId, accessToken);
+            if (media?.caption) postCaption = media.caption;
+        } catch (e) {
+            console.log(`Instagram webhook: could not fetch post caption for media ${mediaId}`);
+        }
+
+        const tashkentNow = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' });
+        const d = new Date(tashkentNow);
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const now = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+        let systemPrompt = `You are sending a private Instagram DM to a customer who commented on a post.\nThis is a PRIVATE MESSAGE — be warm, detailed, and helpful.`;
+        systemPrompt += `\nToday: ${now} (Tashkent, UTC+5)`;
+        systemPrompt += `\n\n${businessInfo}`;
+        if (postCaption) {
+            systemPrompt += `\nPost caption: "${postCaption}"`;
+        }
+
+        if (dmAiInstructions) {
+            systemPrompt += `\n\nINSTRUCTIONS FOR THIS DM:\n${dmAiInstructions}`;
+        }
+
+        systemPrompt += `
+
+RULES:
+- Max 3-4 sentences. Be conversational and helpful.
+- Match the customer's language (uz/ru/en).
+- Include booking link when relevant: ${bookingLink}
+- Sound like a friendly business owner, not a bot.
+- If the comment is spam, return exactly: __SKIP__`;
+
+        const aiResponse = await openai.responses.create({
+            model: 'o4-mini',
+            reasoning: { effort: 'low' },
+            input: [
+                { role: 'developer', content: systemPrompt },
+                { role: 'user', content: `Customer commented: "${commentText}"` },
+            ],
+        });
+        const dmMessage = (aiResponse.output_text || '').trim();
+
+        if (!dmMessage || dmMessage === '__SKIP__') {
+            console.log(`Instagram webhook: AI skipped keyword DM for comment ${commentData.id}`);
+            return null;
+        }
+
+        return dmMessage;
+    } else {
+        // Static template
+        let dmMessage = dmTemplate;
+        if (bookingLink) {
+            dmMessage = dmMessage.replace(/\{link\}/g, bookingLink);
+        }
+        return dmMessage || null;
     }
 }
 

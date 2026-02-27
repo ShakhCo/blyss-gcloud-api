@@ -19,7 +19,7 @@ export function getOAuthUrl(businessId) {
     const params = new URLSearchParams({
         client_id: INSTAGRAM_APP_ID,
         redirect_uri: INSTAGRAM_CALLBACK_URL,
-        scope: 'instagram_business_basic,instagram_business_manage_comments,instagram_business_manage_insights',
+        scope: 'instagram_business_basic,instagram_business_manage_comments,instagram_business_manage_insights,instagram_business_manage_messages',
         response_type: 'code',
         state: businessId,
     });
@@ -220,6 +220,64 @@ export async function hasExistingReply(commentId, igUserId, accessToken) {
         console.error('Error checking existing replies:', error);
         return false;
     }
+}
+
+/**
+ * Send a direct message to a user (for DM auto-reply)
+ * @param {string} igUserId - The business's Instagram user ID
+ * @param {string} recipientId - The recipient's Instagram-scoped ID (IGSID)
+ * @param {string} messageText - The message text to send
+ * @param {string} accessToken - The access token
+ * @returns {Promise<object>} The API response data
+ */
+export async function sendDirectMessage(igUserId, recipientId, messageText, accessToken) {
+    const response = await fetch(`${GRAPH_API_BASE}/v21.0/${igUserId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            recipient: { id: recipientId },
+            message: { text: messageText },
+            access_token: accessToken,
+        }),
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+        console.error('Instagram DM send error:', data.error);
+        throw new Error(`Instagram DM send error: ${data.error.message}`);
+    }
+
+    return data;
+}
+
+/**
+ * Send a private reply (DM) to a user who commented on a post
+ * @param {string} igUserId - The business's Instagram user ID
+ * @param {string} commentId - The comment ID to reply to privately
+ * @param {string} messageText - The message text to send
+ * @param {string} accessToken - The access token
+ * @returns {Promise<object>} The API response data
+ */
+export async function sendPrivateReply(igUserId, commentId, messageText, accessToken) {
+    const response = await fetch(`${GRAPH_API_BASE}/v21.0/${igUserId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            recipient: { comment_id: commentId },
+            message: { text: messageText },
+            access_token: accessToken,
+        }),
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+        console.error('Instagram private reply error:', data.error);
+        throw new Error(`Instagram private reply error: ${data.error.message}`);
+    }
+
+    return data;
 }
 
 /**

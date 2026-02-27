@@ -23,6 +23,20 @@ export const instagramPostSettingsSchema = z.object({
         .max(1000, 'ai_instructions must be 1000 characters or less')
         .optional()
         .default(''),
+    dm_keyword: z.string()
+        .max(50, 'dm_keyword must be 50 characters or less')
+        .optional()
+        .default(''),
+    dm_enabled: z.boolean().optional().default(false),
+    dm_reply_mode: z.enum(['static', 'ai']).optional().default('static'),
+    dm_template: z.string()
+        .max(1000, 'dm_template must be 1000 characters or less')
+        .optional()
+        .default(''),
+    dm_ai_instructions: z.string()
+        .max(1000, 'dm_ai_instructions must be 1000 characters or less')
+        .optional()
+        .default(''),
 });
 
 export const instagramPostSettingsUpdateSchema = z.object({
@@ -33,6 +47,17 @@ export const instagramPostSettingsUpdateSchema = z.object({
         .optional(),
     ai_instructions: z.string()
         .max(1000, 'ai_instructions must be 1000 characters or less')
+        .optional(),
+    dm_keyword: z.string()
+        .max(50, 'dm_keyword must be 50 characters or less')
+        .optional(),
+    dm_enabled: z.boolean().optional(),
+    dm_reply_mode: z.enum(['static', 'ai']).optional(),
+    dm_template: z.string()
+        .max(1000, 'dm_template must be 1000 characters or less')
+        .optional(),
+    dm_ai_instructions: z.string()
+        .max(1000, 'dm_ai_instructions must be 1000 characters or less')
         .optional(),
 });
 
@@ -47,5 +72,19 @@ export const instagramSettingsSchema = z.object({
         .optional(),
     ai_example_replies: z.string()
         .max(1500, 'ai_example_replies must be 1500 characters or less')
+        .optional(),
+});
+
+export const instagramDmSettingsSchema = z.object({
+    dm_auto_reply_enabled: z.boolean().optional(),
+    dm_reply_mode: z.enum(['static', 'ai']).optional(),
+    dm_reply_template: z.string()
+        .max(1000, 'dm_reply_template must be 1000 characters or less')
+        .optional(),
+    dm_ai_instructions: z.string()
+        .max(1000, 'dm_ai_instructions must be 1000 characters or less')
+        .optional(),
+    dm_ai_example_replies: z.string()
+        .max(1500, 'dm_ai_example_replies must be 1500 characters or less')
         .optional(),
 });
