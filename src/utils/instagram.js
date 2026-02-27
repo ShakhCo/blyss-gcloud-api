@@ -393,6 +393,7 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
                     })
                 );
                 const repliesData = await repliesRes.json();
+                console.log(`[DEBUG] Replies for comment ${c.id}:`, JSON.stringify(repliesData.data?.slice(0, 2), null, 2));
                 if (repliesData.data) {
                     replies = repliesData.data
                         .map((r) => ({
