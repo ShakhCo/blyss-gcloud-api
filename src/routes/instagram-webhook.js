@@ -321,7 +321,14 @@ async function handleCommentEvent(igUserId, commentData) {
 }
 
 /**
- * Handle an incoming Instagram messaging event (DM auto-reply).
+ * Handle an incoming Instagram messaging event (DM chatbot).
+ * Saves conversation history and uses it as context for AI replies.
+ *
+ * Firestore structure:
+ *   businesses/{businessId}/instagram_dm_conversations/{senderIgId}
+ *     - sender_id, last_message_at, created_at
+ *     /messages/{auto-id}
+ *       - role: 'user' | 'assistant', text, timestamp, mid
  *
  * @param {string} igUserId - The Instagram user ID that owns the business account
  * @param {object} messagingEvent - The messaging event from Meta's webhook payload
@@ -362,10 +369,31 @@ async function handleMessagingEvent(igUserId, messagingEvent) {
 
         const connectionDoc = connectionSnapshot.docs[0];
         const connection = connectionDoc.data();
+        const businessId = connectionDoc.ref.parent.parent.id;
+
+        // Always save incoming message to conversation history (even if auto-reply is off)
+        const convoRef = db.collection('businesses').doc(businessId)
+            .collection('instagram_dm_conversations').doc(String(senderId));
+        const messagesRef = convoRef.collection('messages');
+
+        const now = new Date();
+        await Promise.all([
+            convoRef.set({
+                sender_id: String(senderId),
+                last_message_at: now,
+                created_at: now,
+            }, { merge: true }),
+            messagesRef.add({
+                role: 'user',
+                text: messageText,
+                timestamp: now,
+                mid: messageId || '',
+            }),
+        ]);
 
         // Check if DM auto-reply is enabled
         if (!connection.dm_auto_reply_enabled) {
-            console.log(`Instagram webhook DM: DM auto-reply disabled for @${connection.ig_username}`);
+            console.log(`Instagram webhook DM: DM auto-reply disabled for @${connection.ig_username} — message saved only`);
             return;
         }
 
@@ -395,12 +423,25 @@ async function handleMessagingEvent(igUserId, messagingEvent) {
         }
 
         const accessToken = decrypt(connection.access_token);
-        const businessId = connectionDoc.ref.parent.parent.id;
 
         let replyMessage;
 
         if (dmReplyMode === 'ai') {
-            // AI-generated DM reply
+            // Load conversation history (last 20 messages for context)
+            const historySnapshot = await messagesRef
+                .orderBy('timestamp', 'desc')
+                .limit(20)
+                .get();
+
+            const conversationHistory = historySnapshot.docs
+                .map((doc) => doc.data())
+                .reverse() // oldest first
+                .map((msg) => ({
+                    role: msg.role === 'assistant' ? 'assistant' : 'user',
+                    content: msg.text,
+                }));
+
+            // AI-generated DM reply with full conversation context
             const businessDoc = await db.collection('businesses').doc(businessId).get();
             const businessData = businessDoc.exists ? businessDoc.data() : {};
             const tenantUrl = businessData.tenant_url;
@@ -410,10 +451,10 @@ async function handleMessagingEvent(igUserId, messagingEvent) {
             const tashkentNow = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' });
             const d = new Date(tashkentNow);
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            const now = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            const nowStr = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
-            let systemPrompt = `You are replying to a customer's Instagram Direct Message on behalf of a business.\nThis is a PRIVATE DM conversation — be warm, helpful, and detailed.`;
-            systemPrompt += `\nToday: ${now} (Tashkent, UTC+5)`;
+            let systemPrompt = `You are a friendly chatbot replying to Instagram Direct Messages on behalf of a business.\nThis is an ongoing PRIVATE DM conversation — remember previous messages and maintain context.`;
+            systemPrompt += `\nToday: ${nowStr} (Tashkent, UTC+5)`;
             systemPrompt += `\n\n${businessInfo}`;
 
             systemPrompt += `
@@ -425,6 +466,8 @@ RULES:
 - Match the customer's language (uz/ru/en).
 - Answer questions with specific info from business data above.
 - Include booking link when relevant: ${bookingLink}
+- You have the full conversation history. Refer to previous messages naturally.
+- Don't repeat information you already provided unless the customer asks again.
 - Sound like a friendly business owner, not a bot.
 - If the message is spam or irrelevant, return exactly: __SKIP__`;
 
@@ -435,13 +478,16 @@ RULES:
                 systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${connection.dm_ai_example_replies}`;
             }
 
+            // Build multi-turn input: system prompt + conversation history
+            const aiInput = [
+                { role: 'developer', content: systemPrompt },
+                ...conversationHistory,
+            ];
+
             const aiResponse = await openai.responses.create({
                 model: 'o4-mini',
                 reasoning: { effort: 'low' },
-                input: [
-                    { role: 'developer', content: systemPrompt },
-                    { role: 'user', content: messageText },
-                ],
+                input: aiInput,
             });
             replyMessage = (aiResponse.output_text || '').trim();
 
@@ -466,6 +512,15 @@ RULES:
         // Send DM reply
         await sendDirectMessage(igUserId, senderId, replyMessage, accessToken);
         console.log(`Instagram webhook DM: replied to ${senderId} for business ${businessId} (mode: ${dmReplyMode})`);
+
+        // Save bot reply to conversation history
+        await messagesRef.add({
+            role: 'assistant',
+            text: replyMessage,
+            timestamp: new Date(),
+            mid: '',
+        });
+        await convoRef.update({ last_message_at: new Date() });
 
         // Notify admin group
         if (ADMIN_GROUP_ID) {

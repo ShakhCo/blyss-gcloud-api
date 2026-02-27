@@ -734,4 +734,121 @@ router.get('/posts/:businessId/settings', verifySignature, authenticate, async (
     }
 });
 
+/**
+ * GET /dm-conversations/:businessId
+ * List all DM conversations for a business (most recent first)
+ */
+router.get('/dm-conversations/:businessId', verifySignature, authenticate, async (req, res) => {
+    try {
+        const { businessId } = req.params;
+        const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const snapshot = await db.collection('businesses').doc(businessId)
+            .collection('instagram_dm_conversations')
+            .orderBy('last_message_at', 'desc')
+            .limit(limit)
+            .get();
+
+        // For each conversation, fetch the last message for preview
+        const conversations = await Promise.all(snapshot.docs.map(async (doc) => {
+            const data = doc.data();
+
+            // Get the latest message for preview
+            const lastMsgSnapshot = await doc.ref.collection('messages')
+                .orderBy('timestamp', 'desc')
+                .limit(1)
+                .get();
+
+            const lastMessage = lastMsgSnapshot.empty ? null : {
+                role: lastMsgSnapshot.docs[0].data().role,
+                text: lastMsgSnapshot.docs[0].data().text,
+                timestamp: lastMsgSnapshot.docs[0].data().timestamp,
+            };
+
+            return {
+                sender_id: data.sender_id,
+                last_message_at: data.last_message_at,
+                created_at: data.created_at,
+                last_message: lastMessage,
+            };
+        }));
+
+        res.json({ conversations, total: conversations.length });
+    } catch (error) {
+        console.error('Error listing DM conversations:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * GET /dm-conversations/:businessId/:senderId
+ * Get message history for a specific DM conversation
+ */
+router.get('/dm-conversations/:businessId/:senderId', verifySignature, authenticate, async (req, res) => {
+    try {
+        const { businessId, senderId } = req.params;
+        const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+        const before = req.query.before; // ISO timestamp for pagination
+
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'NOT_FOUND' });
+        }
+        if (businessDoc.data().business_owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+        }
+
+        const convoDoc = await db.collection('businesses').doc(businessId)
+            .collection('instagram_dm_conversations').doc(senderId).get();
+
+        if (!convoDoc.exists) {
+            return res.status(404).json({ error: 'Conversation not found', error_code: 'CONVERSATION_NOT_FOUND' });
+        }
+
+        let query = convoDoc.ref.collection('messages')
+            .orderBy('timestamp', 'desc')
+            .limit(limit);
+
+        if (before) {
+            query = query.where('timestamp', '<', new Date(before));
+        }
+
+        const snapshot = await query.get();
+
+        const messages = snapshot.docs
+            .map((doc) => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    role: data.role,
+                    text: data.text,
+                    timestamp: data.timestamp,
+                    mid: data.mid || '',
+                };
+            })
+            .reverse(); // Return in chronological order (oldest first)
+
+        const convoData = convoDoc.data();
+
+        res.json({
+            sender_id: convoData.sender_id,
+            created_at: convoData.created_at,
+            last_message_at: convoData.last_message_at,
+            messages,
+            has_more: snapshot.docs.length === limit,
+        });
+    } catch (error) {
+        console.error('Error fetching DM conversation:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
