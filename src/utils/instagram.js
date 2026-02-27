@@ -351,7 +351,7 @@ export async function getCarouselChildren(mediaId, accessToken) {
  * @param {string} [options.after] - Cursor for next page
  * @returns {Promise<{comments: Array, pagination: {has_next: boolean, next_cursor: string|null}}>}
  */
-export async function getMediaComments(mediaId, accessToken, { limit = 20, after, igUserId, igUsername } = {}) {
+export async function getMediaComments(mediaId, accessToken, { limit = 20, after, igUserId, igUsername, igProfilePicture } = {}) {
     const params = new URLSearchParams({
         fields: 'id,text,username,from,timestamp,like_count,parent_id',
         limit: String(limit),
@@ -376,6 +376,9 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
     const resolveUsername = (item) =>
         item.username || item.from?.username || (igUserId && String(item.from?.id) === String(igUserId) ? igUsername : '') || '';
 
+    const resolveProfilePicture = (item) =>
+        (igUserId && String(item.from?.id) === String(igUserId) ? igProfilePicture : null) || null;
+
     // The API returns both top-level comments and replies (with parent_id) as flat items.
     // Replies returned here DO have username/from data, unlike /{comment-id}/replies endpoint.
     // Build a comment tree using parent_id.
@@ -389,6 +392,7 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
                 id: c.id,
                 text: c.text,
                 username: resolveUsername(c),
+                profile_picture_url: resolveProfilePicture(c),
                 timestamp: c.timestamp,
                 like_count: c.like_count || 0,
                 replies: [],
@@ -405,6 +409,7 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
                     id: c.id,
                     text: c.text,
                     username: resolveUsername(c),
+                    profile_picture_url: resolveProfilePicture(c),
                     timestamp: c.timestamp,
                     like_count: c.like_count || 0,
                 });

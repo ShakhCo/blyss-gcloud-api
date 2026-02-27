@@ -328,6 +328,7 @@ router.get('/posts/:businessId/:igMediaId/comments', verifySignature, authentica
             after: after || undefined,
             igUserId: connection.ig_user_id,
             igUsername: connection.ig_username,
+            igProfilePicture: connection.profile_picture_url,
         });
 
         res.json(result);
