@@ -376,13 +376,44 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
     const resolveUsername = (item) =>
         item.username || item.from?.username || (igUserId && String(item.from?.id) === String(igUserId) ? igUsername : '') || '';
 
+    const rawComments = data.data || [];
+
+    // Collect unique user IDs to fetch profile pictures in batch
+    const userIds = new Set();
+    for (const c of rawComments) {
+        if (c.from?.id) userIds.add(String(c.from.id));
+    }
+
+    // Fetch profile pictures for all unique users in parallel
+    const profilePicMap = new Map();
+    // Use business's stored picture for their own account (avoids an API call)
+    if (igUserId && igProfilePicture) {
+        profilePicMap.set(String(igUserId), igProfilePicture);
+        userIds.delete(String(igUserId));
+    }
+
+    await Promise.all(
+        [...userIds].map(async (uid) => {
+            try {
+                const res = await fetch(
+                    `${GRAPH_API_BASE}/v21.0/${uid}?fields=profile_picture_url&access_token=${accessToken}`
+                );
+                const userData = await res.json();
+                if (userData.profile_picture_url) {
+                    profilePicMap.set(uid, userData.profile_picture_url);
+                }
+            } catch {
+                // Skip — user will get letter avatar
+            }
+        })
+    );
+
     const resolveProfilePicture = (item) =>
-        (igUserId && String(item.from?.id) === String(igUserId) ? igProfilePicture : null) || null;
+        profilePicMap.get(String(item.from?.id)) || null;
 
     // The API returns both top-level comments and replies (with parent_id) as flat items.
     // Replies returned here DO have username/from data, unlike /{comment-id}/replies endpoint.
     // Build a comment tree using parent_id.
-    const rawComments = data.data || [];
     const commentMap = new Map();
 
     // First pass: add all top-level comments
