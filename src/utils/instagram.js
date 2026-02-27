@@ -353,7 +353,7 @@ export async function getCarouselChildren(mediaId, accessToken) {
  */
 export async function getMediaComments(mediaId, accessToken, { limit = 20, after } = {}) {
     const params = new URLSearchParams({
-        fields: 'id,text,username,timestamp,like_count,replies{id,text,username,timestamp,like_count}',
+        fields: 'id,text,username,from{id,username},timestamp,like_count,replies{id,text,username,from{id,username},timestamp,like_count}',
         limit: String(limit),
         access_token: accessToken,
     });
@@ -376,16 +376,18 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
     const comments = (data.data || []).map((c) => ({
         id: c.id,
         text: c.text,
-        username: c.username,
+        username: c.username || c.from?.username || '',
         timestamp: c.timestamp,
         like_count: c.like_count || 0,
-        replies: (c.replies?.data || []).map((r) => ({
-            id: r.id,
-            text: r.text,
-            username: r.username,
-            timestamp: r.timestamp,
-            like_count: r.like_count || 0,
-        })),
+        replies: (c.replies?.data || [])
+            .map((r) => ({
+                id: r.id,
+                text: r.text,
+                username: r.username || r.from?.username || '',
+                timestamp: r.timestamp,
+                like_count: r.like_count || 0,
+            }))
+            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
     }));
 
     const nextCursor = data.paging?.cursors?.after || null;
