@@ -352,7 +352,6 @@ export async function getCarouselChildren(mediaId, accessToken) {
  * @returns {Promise<{comments: Array, pagination: {has_next: boolean, next_cursor: string|null}}>}
  */
 export async function getMediaComments(mediaId, accessToken, { limit = 20, after, igUserId, igUsername } = {}) {
-    // Step 1: Fetch top-level comments (without replies expansion — it doesn't return usernames)
     const params = new URLSearchParams({
         fields: 'id,text,username,from,timestamp,like_count,parent_id',
         limit: String(limit),
@@ -377,60 +376,53 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
     const resolveUsername = (item) =>
         item.username || item.from?.username || (igUserId && String(item.from?.id) === String(igUserId) ? igUsername : '') || '';
 
+    // The API returns both top-level comments and replies (with parent_id) as flat items.
+    // Replies returned here DO have username/from data, unlike /{comment-id}/replies endpoint.
+    // Build a comment tree using parent_id.
     const rawComments = data.data || [];
-    console.log(`[DEBUG] Raw comments from /{media}/comments (first 5):`,
-        JSON.stringify(rawComments.slice(0, 5).map(c => ({ id: c.id, username: c.username, from: c.from, parent_id: c.parent_id, text: c.text?.slice(0, 30) }))));
+    const commentMap = new Map();
 
-    // Filter out misplaced replies (comments with parent_id)
-    const topLevel = rawComments.filter((c) => !c.parent_id);
-    const misplacedReplies = rawComments.filter((c) => c.parent_id);
-
-    // Step 2: Fetch replies for each comment in parallel via /{comment-id}/replies
-    // This endpoint reliably returns username and from fields
-    const commentsWithReplies = await Promise.all(
-        topLevel.map(async (c) => {
-            let replies = [];
-            try {
-                const repliesRes = await fetch(
-                    `${GRAPH_API_BASE}/v21.0/${c.id}/replies?` + new URLSearchParams({
-                        fields: 'id,text,username,from,timestamp,like_count',
-                        access_token: accessToken,
-                    })
-                );
-                const repliesData = await repliesRes.json();
-                console.log(`[DEBUG] Replies raw for ${c.id}:`, JSON.stringify(repliesData.data?.slice(0, 3)));
-                console.log(`[DEBUG] igUserId=${igUserId}, igUsername=${igUsername}`);
-                if (repliesData.data) {
-                    replies = repliesData.data
-                        .map((r) => ({
-                            id: r.id,
-                            text: r.text,
-                            username: resolveUsername(r),
-                            timestamp: r.timestamp,
-                            like_count: r.like_count || 0,
-                        }))
-                        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-                }
-            } catch (err) {
-                console.error(`Error fetching replies for comment ${c.id}:`, err);
-            }
-
-            return {
+    // First pass: add all top-level comments
+    for (const c of rawComments) {
+        if (!c.parent_id) {
+            commentMap.set(c.id, {
                 id: c.id,
                 text: c.text,
                 username: resolveUsername(c),
                 timestamp: c.timestamp,
                 like_count: c.like_count || 0,
-                replies,
-            };
-        })
-    );
+                replies: [],
+            });
+        }
+    }
+
+    // Second pass: attach replies to their parent
+    for (const c of rawComments) {
+        if (c.parent_id) {
+            const parent = commentMap.get(c.parent_id);
+            if (parent) {
+                parent.replies.push({
+                    id: c.id,
+                    text: c.text,
+                    username: resolveUsername(c),
+                    timestamp: c.timestamp,
+                    like_count: c.like_count || 0,
+                });
+            }
+        }
+    }
+
+    // Sort replies chronologically
+    const comments = [...commentMap.values()].map((c) => ({
+        ...c,
+        replies: c.replies.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+    }));
 
     const nextCursor = data.paging?.cursors?.after || null;
     const hasNext = !!data.paging?.next;
 
     return {
-        comments: commentsWithReplies,
+        comments,
         pagination: { has_next: hasNext, next_cursor: nextCursor },
     };
 }
