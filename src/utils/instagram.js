@@ -351,7 +351,7 @@ export async function getCarouselChildren(mediaId, accessToken) {
  * @param {string} [options.after] - Cursor for next page
  * @returns {Promise<{comments: Array, pagination: {has_next: boolean, next_cursor: string|null}}>}
  */
-export async function getMediaComments(mediaId, accessToken, { limit = 20, after } = {}) {
+export async function getMediaComments(mediaId, accessToken, { limit = 20, after, igUserId, igUsername } = {}) {
     const params = new URLSearchParams({
         fields: 'id,text,username,from{id,username},timestamp,like_count,parent_id,replies{id,text,username,from{id,username},timestamp,like_count}',
         limit: String(limit),
@@ -391,10 +391,13 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
     // Build a map for quick lookup
     const commentMap = new Map();
 
+    const resolveUsername = (item) =>
+        item.username || item.from?.username || (igUserId && item.from?.id === igUserId ? igUsername : '') || '';
+
     const mapReply = (r) => ({
         id: r.id,
         text: r.text,
-        username: r.username || r.from?.username || '',
+        username: resolveUsername(r),
         timestamp: r.timestamp,
         like_count: r.like_count || 0,
     });
@@ -406,7 +409,7 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
         commentMap.set(c.id, {
             id: c.id,
             text: c.text,
-            username: c.username || c.from?.username || '',
+            username: resolveUsername(c),
             timestamp: c.timestamp,
             like_count: c.like_count || 0,
             replies,

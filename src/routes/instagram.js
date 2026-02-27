@@ -326,6 +326,8 @@ router.get('/posts/:businessId/:igMediaId/comments', verifySignature, authentica
         const result = await getMediaComments(igMediaId, accessToken, {
             limit: limit ? Number(limit) : 20,
             after: after || undefined,
+            igUserId: connection.ig_user_id,
+            igUsername: connection.ig_username,
         });
 
         res.json(result);
