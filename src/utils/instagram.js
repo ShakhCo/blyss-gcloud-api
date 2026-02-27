@@ -377,8 +377,13 @@ export async function getMediaComments(mediaId, accessToken, { limit = 20, after
     const resolveUsername = (item) =>
         item.username || item.from?.username || (igUserId && String(item.from?.id) === String(igUserId) ? igUsername : '') || '';
 
+    const rawComments = data.data || [];
+    console.log(`[DEBUG] Raw comments from /{media}/comments (first 5):`,
+        JSON.stringify(rawComments.slice(0, 5).map(c => ({ id: c.id, username: c.username, from: c.from, parent_id: c.parent_id, text: c.text?.slice(0, 30) }))));
+
     // Filter out misplaced replies (comments with parent_id)
-    const topLevel = (data.data || []).filter((c) => !c.parent_id);
+    const topLevel = rawComments.filter((c) => !c.parent_id);
+    const misplacedReplies = rawComments.filter((c) => c.parent_id);
 
     // Step 2: Fetch replies for each comment in parallel via /{comment-id}/replies
     // This endpoint reliably returns username and from fields
