@@ -384,6 +384,7 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
                 avatar_url: businessData.avatar_url || null,
                 cover_url: businessData.cover_url || null,
                 primary_color: businessData.primary_color || null,
+                review_stats: businessData.review_stats || null,
             },
             photos: photosSnapshot.docs.map(doc => ({
                 id: doc.id,
@@ -395,6 +396,94 @@ router.get('/businesses/:slug/services', verifySignature, async (req, res) => {
         });
     } catch (error) {
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * Get public reviews for a business by slug
+ * Example: GET /public/businesses/my-salon/reviews?page=1&page_size=10
+ * Public endpoint - only requires signature verification
+ * Customer names are anonymized (first letter + "***")
+ */
+router.get('/businesses/:slug/reviews', verifySignature, async (req, res) => {
+    try {
+        const { slug } = req.params;
+        const zoneDomain = process.env.CLOUDFLARE_ZONE_DOMAIN || 'blyss.uz';
+        const tenantUrl = `${slug}.${zoneDomain}`;
+
+        // Find business by tenant_url first, then fallback to document ID
+        let businessId;
+        const businessesSnapshot = await db.collection('businesses')
+            .where('tenant_url', '==', tenantUrl)
+            .limit(1)
+            .get();
+
+        if (!businessesSnapshot.empty) {
+            businessId = businessesSnapshot.docs[0].id;
+        } else {
+            const byIdDoc = await db.collection('businesses').doc(slug).get();
+            if (!byIdDoc.exists) {
+                return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+            }
+            businessId = byIdDoc.id;
+        }
+
+        const { page = '1', page_size = '10' } = req.query;
+        const pageNum = Math.max(1, parseInt(page));
+        const pageSizeNum = Math.min(20, Math.max(1, parseInt(page_size)));
+
+        const allDocs = await db.collection('reviews')
+            .where('business_id', '==', businessId)
+            .where('status', '==', 'submitted')
+            .orderBy('submitted_at', 'desc')
+            .get();
+
+        const total = allDocs.docs.length;
+        const totalPages = Math.ceil(total / pageSizeNum);
+        const start = (pageNum - 1) * pageSizeNum;
+        const paginated = allDocs.docs.slice(start, start + pageSizeNum);
+
+        const reviews = paginated.map(doc => {
+            const data = doc.data();
+            const items = data.items || [];
+
+            // Anonymize customer name: "Shahzod A." → "S***"
+            const name = (data.customer_name || '').trim();
+            const anonymized = name.length > 0 ? name.charAt(0).toUpperCase() + '***' : '';
+
+            // Compute average rating from items
+            const rated = items.filter(i => i.rating != null);
+            const avgRating = rated.length > 0
+                ? Math.round((rated.reduce((sum, i) => sum + i.rating, 0) / rated.length) * 10) / 10
+                : null;
+
+            return {
+                id: doc.id,
+                customer_name: anonymized,
+                comment: data.comment || '',
+                submitted_at: data.submitted_at?.toDate?.().toISOString() || data.submitted_at,
+                rating: avgRating,
+                services: items.map(item => ({
+                    service_name: item.service_name,
+                    employee_name: item.employee_name,
+                }))
+            };
+        });
+
+        res.json({
+            data: reviews,
+            pagination: {
+                page: pageNum,
+                page_size: pageSizeNum,
+                total,
+                total_pages: totalPages,
+                has_next: pageNum < totalPages,
+                has_prev: pageNum > 1
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
 
