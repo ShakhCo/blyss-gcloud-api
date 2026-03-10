@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: planning
-stopped_at: Completed 04-history-writes-persistence-loop 04-01-PLAN.md
-last_updated: "2026-03-10T12:29:09.733Z"
-last_activity: 2026-03-10 — Roadmap created
+milestone_name: Instagram AI Auto-Reply
+status: completed
+stopped_at: Milestone v1.0 completed and archived
+last_updated: "2026-03-10T18:30:00Z"
+last_activity: 2026-03-10 — v1.0 milestone completed
 progress:
   total_phases: 4
   completed_phases: 4
   total_plans: 5
   completed_plans: 5
-  percent: 0
+  percent: 100
 ---
 
 # Project State
@@ -21,85 +21,48 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-10)
 
 **Core value:** Every AI reply should be indistinguishable from a skilled human social media manager
-**Current focus:** Phase 1 — Prompt Architecture & Model Switch
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 1 of 4 (Prompt Architecture & Model Switch)
-Plan: 0 of ? in current phase
-Status: Ready to plan
-Last activity: 2026-03-10 — Roadmap created
+Milestone v1.0 shipped (2026-03-10).
+All 4 phases complete, 5 plans executed, 127 tests passing.
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: —
+- Total plans completed: 5
+- Average duration: ~17 min/plan
+- Total execution time: ~86 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-- Last 5 plans: —
-- Trend: —
-
-*Updated after each plan completion*
-| Phase 01-prompt-architecture-model-switch P01 | 6min | 2 tasks | 2 files |
-| Phase 01-prompt-architecture-model-switch P02 | 15min | 2 tasks | 2 files |
-| Phase 01-prompt-architecture-model-switch P02 | 20min | 3 tasks | 2 files |
-| Phase 02-commenter-history-infrastructure P01 | 7min | 2 tasks | 3 files |
-| Phase 03-memory-variety-in-prompt P01 | 18min | 2 tasks | 2 files |
-| Phase 04-history-writes-persistence-loop P01 | 20min | 2 tasks | 2 files |
+| 01-prompt-architecture-model-switch P01 | 1 | 6min | 6min |
+| 01-prompt-architecture-model-switch P02 | 1 | 15min | 15min |
+| 02-commenter-history-infrastructure P01 | 1 | 7min | 7min |
+| 03-memory-variety-in-prompt P01 | 1 | 18min | 18min |
+| 04-history-writes-persistence-loop P01 | 1 | 20min | 20min |
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- [Pre-Phase 1]: Switch AI model from o4-mini (reasoning) to gpt-4.1-mini (chat completions) — balance cost vs quality; verify pricing at platform.openai.com before implementation
-- [Pre-Phase 1]: Track commenter history in Firestore (single document per commenter per business, not one per comment) — TTL: delete records older than 90 days
-- [Pre-Phase 1]: Personality via prompt engineering first — improve prompts before changing architecture
-- [Phase 01-prompt-architecture-model-switch]: buildSystemPrompt() is a named export pure function — enables unit testing without mocks, extracted from inline construction in handleCommentEvent
-- [Phase 01-prompt-architecture-model-switch]: Switched OpenAI API from responses.create(o4-mini) to chat.completions.create(gpt-4.1-mini, temperature=0.9) — balances cost vs quality
-- [Phase 01-prompt-architecture-model-switch]: bookingLink conditionally included in prompt — only in booking-intent rules sections, not unconditionally
-- [Phase 01-prompt-architecture-model-switch]: Booking link removed from REACTIONS/NEGATIVE routing — only in BOOKING-INTENT section; DO NOT include the booking link rule explicit in both sections
-- [Phase 01-prompt-architecture-model-switch]: NEGATIVE comments get empathy + DM invite (DMga yozing, hal qilamiz) with no booking link — respects human frustration, builds trust
-- [Phase 01-prompt-architecture-model-switch]: Default examples use real Uzbek (Rahmat! Har doim xush kelibsiz) and Russian (Спасибо! Всегда рады видеть вас) — warm & balanced tone with script-matching demonstration
-- [Phase 01-prompt-architecture-model-switch]: Booking link appears ONLY in BOOKING-INTENT section — removed from REACTIONS and NEGATIVE routing entirely
-- [Phase 01-prompt-architecture-model-switch]: NEGATIVE comments get empathy + DM invite (DMga yozing, hal qilamiz) with no booking link — respects human frustration, builds trust
-- [Phase 01-prompt-architecture-model-switch]: Default examples use real Uzbek (Rahmat! Har doim xush kelibsiz) and Russian (Спасибо! Всегда рады видеть вас) — warm & balanced tone with script-matching demonstration
-- [Phase 02-commenter-history-infrastructure]: getCommenterHistory and getPostReplies are named exports — testable in isolation without mocking handleCommentEvent
-- [Phase 02-commenter-history-infrastructure]: igCommenterId guard: getCommenterHistory only called when commentData.from?.id is truthy — avoids unnecessary reads for anonymous comments
-- [Phase 02-commenter-history-infrastructure]: TTL fieldOverrides configured in firestore.indexes.json with ttl: true and indexes: [] — relies on Firestore auto-delete, not manual cleanup
-- [Phase 02-commenter-history-infrastructure]: commenterHistory and postReplies passed through buildSystemPrompt call site but NOT used in body — clean Phase 2/3 boundary
-- [Phase 03-memory-variety-in-prompt]: RETURNING COMMENTER section gated on comment_count >= 2, warmth calibrated: loyal regular (>=4) vs subtle nod (2-3), last_comment_text NOT quoted to avoid privacy/injection risk
-- [Phase 03-memory-variety-in-prompt]: POST TYPE section present whenever postCaption is non-empty — AI classifies from keywords in prompt, no pre-parsing in JS; RECENT REPLIES slice(0,5) guard prevents prompt bloat
-- [Phase 03-memory-variety-in-prompt]: All new prompt sections placed only in else branch (global rules path) — postAiInstructions per-post override path unaffected
-- [Phase 04-history-writes-persistence-loop]: updateCommenterHistory uses merge:true so first_seen_at is preserved on subsequent writes — FieldValue.increment(1) is atomic, no race conditions
-- [Phase 04-history-writes-persistence-loop]: updatePostReplies uses read-modify-write (not arrayUnion) to enforce slice(-8) cap — arrayUnion has no length limit
-- [Phase 04-history-writes-persistence-loop]: igCommenterId/username/commentText extracted before mode branch — history writes apply to both AI and static reply modes
-- [Phase 04-history-writes-persistence-loop]: fire-and-forget Promise.all guarded by igCommenterId check — no writes for anonymous comments, outer .catch() prevents unhandled rejection
+See .planning/PROJECT.md Key Decisions table for full history.
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-- gpt-4.1-mini pricing and availability should be verified before Phase 1 implementation (fallback: gpt-4o-mini already in codebase at src/routes/ai.js)
-- Instagram OAuth token expiry silently kills auto-reply — token alerting/refresh should be addressed during or before Phase 1
-- Most businesses may have empty ai_example_replies — consider providing default examples per language to anchor Phase 1 persona quality
+- Instagram OAuth token expiry silently kills auto-reply — deferred to v2 (REL-01, REL-02)
 
 ## Session Continuity
 
-Last session: 2026-03-10T12:26:11.221Z
-Stopped at: Completed 04-history-writes-persistence-loop 04-01-PLAN.md
+Last session: 2026-03-10
+Stopped at: Milestone v1.0 completed and archived
 Resume file: None
