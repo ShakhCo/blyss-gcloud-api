@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-10T11:54:29.545Z"
+stopped_at: Completed 04-history-writes-persistence-loop 04-01-PLAN.md
+last_updated: "2026-03-10T12:26:11.223Z"
 last_activity: 2026-03-10 — Roadmap created
 progress:
   total_phases: 4
-  completed_phases: 3
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 4
+  total_plans: 5
+  completed_plans: 5
   percent: 0
 ---
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-prompt-architecture-model-switch P02 | 20min | 3 tasks | 2 files |
 | Phase 02-commenter-history-infrastructure P01 | 7min | 2 tasks | 3 files |
 | Phase 03-memory-variety-in-prompt P01 | 18min | 2 tasks | 2 files |
+| Phase 04-history-writes-persistence-loop P01 | 20min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,10 @@ Recent decisions affecting current work:
 - [Phase 03-memory-variety-in-prompt]: RETURNING COMMENTER section gated on comment_count >= 2, warmth calibrated: loyal regular (>=4) vs subtle nod (2-3), last_comment_text NOT quoted to avoid privacy/injection risk
 - [Phase 03-memory-variety-in-prompt]: POST TYPE section present whenever postCaption is non-empty — AI classifies from keywords in prompt, no pre-parsing in JS; RECENT REPLIES slice(0,5) guard prevents prompt bloat
 - [Phase 03-memory-variety-in-prompt]: All new prompt sections placed only in else branch (global rules path) — postAiInstructions per-post override path unaffected
+- [Phase 04-history-writes-persistence-loop]: updateCommenterHistory uses merge:true so first_seen_at is preserved on subsequent writes — FieldValue.increment(1) is atomic, no race conditions
+- [Phase 04-history-writes-persistence-loop]: updatePostReplies uses read-modify-write (not arrayUnion) to enforce slice(-8) cap — arrayUnion has no length limit
+- [Phase 04-history-writes-persistence-loop]: igCommenterId/username/commentText extracted before mode branch — history writes apply to both AI and static reply modes
+- [Phase 04-history-writes-persistence-loop]: fire-and-forget Promise.all guarded by igCommenterId check — no writes for anonymous comments, outer .catch() prevents unhandled rejection
 
 ### Pending Todos
 
@@ -95,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T11:54:29.542Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-history-writes-persistence-loop/04-CONTEXT.md
+Last session: 2026-03-10T12:26:11.221Z
+Stopped at: Completed 04-history-writes-persistence-loop 04-01-PLAN.md
+Resume file: None

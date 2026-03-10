@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Prompt Architecture & Model Switch** - Rewrite the AI persona, switch to gpt-4.1-mini, extract buildSystemPrompt(), and fix infrastructure prerequisites (completed 2026-03-10)
 - [x] **Phase 2: Commenter History Infrastructure** - Design and implement Firestore subcollections for commenter memory and post reply log; wire reads into the pipeline (completed 2026-03-10)
 - [x] **Phase 3: Memory & Variety in Prompt** - Inject commenter history and post reply data into the prompt; add post type classification and engagement questions (completed 2026-03-10)
-- [ ] **Phase 4: History Writes & Persistence Loop** - Add fire-and-forget Firestore writes after each reply to close the memory loop
+- [x] **Phase 4: History Writes & Persistence Loop** - Add fire-and-forget Firestore writes after each reply to close the memory loop (completed 2026-03-10)
 
 ## Phase Details
 
@@ -71,7 +71,7 @@ Plans:
   2. After a reply is posted, the post's recent_replies array in Firestore is updated and capped at 8 entries
   3. Writes happen fire-and-forget after replyToComment() succeeds and do not delay the webhook response
   4. Commenter history persists correctly after a Cloud Run instance restart (i.e., the in-memory Map fallback is replaced by durable Firestore state)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 04-01-PLAN.md — TDD: implement updateCommenterHistory, updatePostReplies, and wire fire-and-forget call site
@@ -86,4 +86,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Prompt Architecture & Model Switch | 2/2 | Complete   | 2026-03-10 |
 | 2. Commenter History Infrastructure | 1/1 | Complete   | 2026-03-10 |
 | 3. Memory & Variety in Prompt | 1/1 | Complete   | 2026-03-10 |
-| 4. History Writes & Persistence Loop | 0/1 | Planning complete | - |
+| 4. History Writes & Persistence Loop | 1/1 | Complete   | 2026-03-10 |
