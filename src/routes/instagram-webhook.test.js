@@ -875,7 +875,7 @@ describe('buildSystemPrompt — extended signature with commenterHistory and pos
         expect(promptWithNulls).toBe(promptWithoutParams);
     });
 
-    it('output is identical when commenterHistory and postReplies have data (params ignored in Phase 2)', () => {
+    it('output differs when commenterHistory has comment_count >= 2 (Phase 3 activates params)', () => {
         const promptWithoutParams = buildSystemPrompt(baseArgs);
         const promptWithData = buildSystemPrompt({
             ...baseArgs,
@@ -894,8 +894,8 @@ describe('buildSystemPrompt — extended signature with commenterHistory and pos
                 expires_at: makeTimestamp(new Date(Date.now() + 1e9)),
             },
         });
-        // In Phase 2 the params are accepted but not used — output must be identical
-        expect(promptWithData).toBe(promptWithoutParams);
+        // In Phase 3 the params ARE used — output must differ when commenterHistory has count >= 2
+        expect(promptWithData).not.toBe(promptWithoutParams);
     });
 
     it('does not throw when commenterHistory is provided with data', () => {
@@ -910,5 +910,295 @@ describe('buildSystemPrompt — extended signature with commenterHistory and pos
             ...baseArgs,
             postReplies: { recent_replies: [{ text: 'reply', at: null }] },
         })).not.toThrow();
+    });
+});
+
+// ─── PERS-03: Returning commenter acknowledgment ───────────────────────────────
+
+describe('PERS-03: returning commenter acknowledgment', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon\nServices:\n  - Haircut: 50000 som, 30 min',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: 'testuser',
+        postCaption: '',
+        postTime: 'Mon, 2026-03-10 10:00',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('PERS-03: prompt contains RETURNING COMMENTER section when comment_count >= 2', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'repeat_client', comment_count: 3 },
+        });
+        expect(prompt).toContain('RETURNING COMMENTER');
+    });
+
+    it('PERS-03: RETURNING COMMENTER section includes the comment_count value', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'repeat_client', comment_count: 3 },
+        });
+        expect(prompt).toMatch(/3 times?/i);
+    });
+
+    it('PERS-03: includes "loyal regular" warmth hint when comment_count >= 4', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'loyal_client', comment_count: 5 },
+        });
+        expect(prompt).toMatch(/loyal regular/i);
+    });
+
+    it('PERS-03: includes "commented before" subtle warmth hint when comment_count is 2-3', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'occasional_client', comment_count: 2 },
+        });
+        expect(prompt).toMatch(/commented before/i);
+    });
+
+    it('PERS-03: prompt omits RETURNING COMMENTER section when commenterHistory is null', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, commenterHistory: null });
+        expect(prompt).not.toContain('RETURNING COMMENTER');
+    });
+
+    it('PERS-03: prompt omits RETURNING COMMENTER section when commenterHistory is undefined (omitted)', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs });
+        expect(prompt).not.toContain('RETURNING COMMENTER');
+    });
+
+    it('PERS-03: prompt omits RETURNING COMMENTER section when comment_count is 1 (first-timer)', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'new_client', comment_count: 1 },
+        });
+        expect(prompt).not.toContain('RETURNING COMMENTER');
+    });
+
+    it('PERS-03: prompt omits RETURNING COMMENTER section when comment_count is 0', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'never_commented', comment_count: 0 },
+        });
+        expect(prompt).not.toContain('RETURNING COMMENTER');
+    });
+
+    it('PERS-03: RETURNING COMMENTER section does not appear in postAiInstructions path', () => {
+        // The new sections should ONLY be in the else (global rules) path
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postAiInstructions: 'Custom instructions for this post',
+            commenterHistory: { username: 'repeat_client', comment_count: 5 },
+        });
+        expect(prompt).not.toContain('RETURNING COMMENTER');
+    });
+});
+
+// ─── PERS-04: Follow-up question for returning visitors ───────────────────────
+
+describe('PERS-04: follow-up question guidance for returning visitors', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon\nServices:\n  - Haircut: 50000 som, 30 min',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: 'testuser',
+        postCaption: '',
+        postTime: 'Mon, 2026-03-10 10:00',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('PERS-04: RETURNING COMMENTER section includes follow-up question guidance when comment_count >= 2', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'repeat_client', comment_count: 3 },
+        });
+        expect(prompt).toMatch(/question|Qaysi uslubni/i);
+    });
+
+    it('PERS-04: follow-up question guidance is NOT present when commenterHistory is null', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, commenterHistory: null });
+        // The phrase "Qaysi uslubni" should not appear when there's no returning commenter section
+        expect(prompt).not.toMatch(/Qaysi uslubni/i);
+    });
+
+    it('PERS-04: follow-up question guidance is NOT present when comment_count is 1', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'new_client', comment_count: 1 },
+        });
+        expect(prompt).not.toMatch(/Qaysi uslubni/i);
+    });
+});
+
+// ─── QUAL-01 + QUAL-02: Reply deduplication via recent replies ────────────────
+
+describe('QUAL-01 + QUAL-02: reply deduplication via negative examples', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon\nServices:\n  - Haircut: 50000 som, 30 min',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: 'testuser',
+        postCaption: '',
+        postTime: 'Mon, 2026-03-10 10:00',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('QUAL-01: prompt contains RECENT REPLIES section when postReplies.recent_replies has items', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postReplies: { recent_replies: [{ text: 'Raxmat sizga!', at: null }] },
+        });
+        expect(prompt).toMatch(/RECENT REPLIES|DO NOT REPEAT/i);
+    });
+
+    it('QUAL-01: recent reply texts are injected into the prompt', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postReplies: { recent_replies: [{ text: 'Rahmat, keling yana!', at: null }] },
+        });
+        expect(prompt).toContain('Rahmat, keling yana!');
+    });
+
+    it('QUAL-02: prompt contains "Do NOT start your reply with the same word" instruction', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postReplies: { recent_replies: [{ text: 'Some reply text', at: null }] },
+        });
+        expect(prompt).toMatch(/Do NOT start your reply with the same word/i);
+    });
+
+    it('QUAL-01: prompt omits RECENT REPLIES section when postReplies is null', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, postReplies: null });
+        expect(prompt).not.toMatch(/RECENT REPLIES ON THIS POST/i);
+    });
+
+    it('QUAL-01: prompt omits RECENT REPLIES section when postReplies is undefined (omitted)', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs });
+        expect(prompt).not.toMatch(/RECENT REPLIES ON THIS POST/i);
+    });
+
+    it('QUAL-01: prompt omits RECENT REPLIES section when recent_replies is an empty array', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postReplies: { recent_replies: [] },
+        });
+        expect(prompt).not.toMatch(/RECENT REPLIES ON THIS POST/i);
+    });
+
+    it('QUAL-01: at most 5 replies injected when recent_replies has 7 items (slice guard)', () => {
+        const sevenReplies = [
+            { text: 'Reply one', at: null },
+            { text: 'Reply two', at: null },
+            { text: 'Reply three', at: null },
+            { text: 'Reply four', at: null },
+            { text: 'Reply five', at: null },
+            { text: 'Reply SIX should not appear', at: null },
+            { text: 'Reply SEVEN should not appear', at: null },
+        ];
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postReplies: { recent_replies: sevenReplies },
+        });
+        expect(prompt).not.toContain('Reply SIX should not appear');
+        expect(prompt).not.toContain('Reply SEVEN should not appear');
+        expect(prompt).toContain('Reply five');
+    });
+
+    it('QUAL-01: RECENT REPLIES section does not appear in postAiInstructions path', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postAiInstructions: 'Custom instructions for this post',
+            postReplies: { recent_replies: [{ text: 'Some reply', at: null }] },
+        });
+        expect(prompt).not.toMatch(/RECENT REPLIES ON THIS POST/i);
+    });
+});
+
+// ─── QUAL-03 + QUAL-04: Post type classification and tone adaptation ──────────
+
+describe('QUAL-03 + QUAL-04: post type classification and tone adaptation', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon\nServices:\n  - Haircut: 50000 som, 30 min',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: 'testuser',
+        postCaption: 'Big sale happening now!',
+        postTime: 'Mon, 2026-03-10 10:00',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('QUAL-03: prompt contains POST TYPE section when postCaption is non-empty', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, postCaption: 'Some caption here' });
+        expect(prompt).toContain('POST TYPE');
+    });
+
+    it('QUAL-03: POST TYPE section includes promo keywords (aksiya, chegirma, discount)', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, postCaption: 'Some caption here' });
+        expect(prompt).toMatch(/aksiya|chegirma|discount/i);
+    });
+
+    it('QUAL-03: POST TYPE section includes before/after keywords (oldin\/keyin, natija, transformation)', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, postCaption: 'Some caption here' });
+        expect(prompt).toMatch(/oldin.*keyin|natija|transformation/i);
+    });
+
+    it('QUAL-03: POST TYPE section includes milestone keywords (anniversary, yil)', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, postCaption: 'Some caption here' });
+        expect(prompt).toMatch(/anniversary|yil/i);
+    });
+
+    it('QUAL-04: POST TYPE section includes urgency tone hint for promo', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, postCaption: 'Some caption here' });
+        expect(prompt).toMatch(/urgency|Hozir band bo'ling|Taklifdan foydalaning/i);
+    });
+
+    it('QUAL-04: POST TYPE section includes celebratory tone hint for milestone', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, postCaption: 'Some caption here' });
+        expect(prompt).toMatch(/celebratory|Tabriklaymiz|Katta yutuq/i);
+    });
+
+    it('QUAL-03: prompt omits POST TYPE section when postCaption is empty string', () => {
+        // Note: baseArgs has postCaption set, override with empty string
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postCaption: '',
+        });
+        expect(prompt).not.toContain('POST TYPE');
+    });
+
+    it('QUAL-03: prompt omits POST TYPE section when postCaption is null', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postCaption: null,
+        });
+        expect(prompt).not.toContain('POST TYPE');
+    });
+
+    it('QUAL-03: prompt omits POST TYPE section when postCaption is undefined', () => {
+        const { postCaption: _omitted, ...argsWithoutCaption } = baseArgs;
+        const prompt = buildSystemPrompt(argsWithoutCaption);
+        expect(prompt).not.toContain('POST TYPE');
+    });
+
+    it('QUAL-03: POST TYPE section does not appear in postAiInstructions path', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postCaption: 'Sale happening now!',
+            postAiInstructions: 'Custom instructions for this post',
+        });
+        expect(prompt).not.toContain('POST TYPE');
     });
 });
