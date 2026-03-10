@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: "Checkpoint: 01-02 Task 2 human-verify — awaiting approval of buildSystemPrompt() persona quality"
-last_updated: "2026-03-10T09:43:11.534Z"
+stopped_at: Completed 01-02-PLAN.md — Phase 1 complete, human-verify approved
+last_updated: "2026-03-10T09:48:38.679Z"
 last_activity: 2026-03-10 — Roadmap created
 progress:
   total_phases: 4
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01-prompt-architecture-model-switch P01 | 6min | 2 tasks | 2 files |
 | Phase 01-prompt-architecture-model-switch P02 | 15min | 2 tasks | 2 files |
+| Phase 01-prompt-architecture-model-switch P02 | 20min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,9 @@ Recent decisions affecting current work:
 - [Phase 01-prompt-architecture-model-switch]: Booking link removed from REACTIONS/NEGATIVE routing — only in BOOKING-INTENT section; DO NOT include the booking link rule explicit in both sections
 - [Phase 01-prompt-architecture-model-switch]: NEGATIVE comments get empathy + DM invite (DMga yozing, hal qilamiz) with no booking link — respects human frustration, builds trust
 - [Phase 01-prompt-architecture-model-switch]: Default examples use real Uzbek (Rahmat! Har doim xush kelibsiz) and Russian (Спасибо! Всегда рады видеть вас) — warm & balanced tone with script-matching demonstration
+- [Phase 01-prompt-architecture-model-switch]: Booking link appears ONLY in BOOKING-INTENT section — removed from REACTIONS and NEGATIVE routing entirely
+- [Phase 01-prompt-architecture-model-switch]: NEGATIVE comments get empathy + DM invite (DMga yozing, hal qilamiz) with no booking link — respects human frustration, builds trust
+- [Phase 01-prompt-architecture-model-switch]: Default examples use real Uzbek (Rahmat! Har doim xush kelibsiz) and Russian (Спасибо! Всегда рады видеть вас) — warm & balanced tone with script-matching demonstration
 
 ### Pending Todos
 
@@ -82,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T09:43:11.532Z
-Stopped at: Checkpoint: 01-02 Task 2 human-verify — awaiting approval of buildSystemPrompt() persona quality
+Last session: 2026-03-10T09:48:38.677Z
+Stopped at: Completed 01-02-PLAN.md — Phase 1 complete, human-verify approved
 Resume file: None
