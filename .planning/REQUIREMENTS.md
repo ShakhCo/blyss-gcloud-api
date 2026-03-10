@@ -9,16 +9,16 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Personality & Tone
 
-- [ ] **TONE-01**: AI replies use a persona-first prompt — warm, playful, confident voice instead of corporate booking funnel
-- [ ] **TONE-02**: Booking link is only included when the commenter asks about booking, price, or availability — not on every reply
-- [ ] **TONE-03**: Emoji-only comments (🔥, ❤️, 💪) get witty one-liner replies, not booking pushes
-- [ ] **TONE-04**: Negative comments get empathetic acknowledgment and DM invitation, not canned deflection with booking link
-- [ ] **TONE-05**: Reply length matches comment length — short comments (≤3 words) get ≤1 sentence replies
-- [ ] **TONE-06**: Emoji usage mirrors the commenter's energy level and style, capped at 2 per reply
+- [x] **TONE-01**: AI replies use a persona-first prompt — warm, playful, confident voice instead of corporate booking funnel
+- [x] **TONE-02**: Booking link is only included when the commenter asks about booking, price, or availability — not on every reply
+- [x] **TONE-03**: Emoji-only comments (🔥, ❤️, 💪) get witty one-liner replies, not booking pushes
+- [x] **TONE-04**: Negative comments get empathetic acknowledgment and DM invitation, not canned deflection with booking link
+- [x] **TONE-05**: Reply length matches comment length — short comments (≤3 words) get ≤1 sentence replies
+- [x] **TONE-06**: Emoji usage mirrors the commenter's energy level and style, capped at 2 per reply
 
 ### Personalization
 
-- [ ] **PERS-01**: AI uses @username naturally in replies — once, where a human would place it
+- [x] **PERS-01**: AI uses @username naturally in replies — once, where a human would place it
 - [ ] **PERS-02**: System tracks returning commenters per business in Firestore (username, comment_count, last_seen)
 - [ ] **PERS-03**: AI acknowledges returning commenters differently from first-timers ("Glad you're back!" vs generic)
 - [ ] **PERS-04**: AI asks engaging follow-up questions on genuine praise and curiosity comments to spark conversation
@@ -69,13 +69,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TONE-01 | Phase 1 | Pending |
-| TONE-02 | Phase 1 | Pending |
-| TONE-03 | Phase 1 | Pending |
-| TONE-04 | Phase 1 | Pending |
-| TONE-05 | Phase 1 | Pending |
-| TONE-06 | Phase 1 | Pending |
-| PERS-01 | Phase 1 | Pending |
+| TONE-01 | Phase 1 | Complete |
+| TONE-02 | Phase 1 | Complete |
+| TONE-03 | Phase 1 | Complete |
+| TONE-04 | Phase 1 | Complete |
+| TONE-05 | Phase 1 | Complete |
+| TONE-06 | Phase 1 | Complete |
+| PERS-01 | Phase 1 | Complete |
 | PERS-02 | Phase 2 | Pending |
 | PERS-03 | Phase 3 | Pending |
 | PERS-04 | Phase 3 | Pending |
