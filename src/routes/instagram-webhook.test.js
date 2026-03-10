@@ -315,6 +315,172 @@ describe('Script matching and time-relative word warning', () => {
     });
 });
 
+// ─── Task 1B: RED tests for Sections 4-5 rewrite ─────────────────────────────
+
+describe('TONE-02: booking-intent routing — bookingLink only in this section', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: '',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('TONE-02: prompt contains BOOKING-INTENT section header', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/BOOKING-INTENT/i);
+    });
+
+    it('TONE-02: bookingLink appears in BOOKING-INTENT section when provided', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, bookingLink: 'https://salon.blyss.uz' });
+        expect(prompt).toContain('https://salon.blyss.uz');
+        // Specifically in a booking-intent context
+        expect(prompt).toMatch(/BOOKING-INTENT[\s\S]*?https:\/\/salon\.blyss\.uz/i);
+    });
+
+    it('TONE-02: booking section explicitly lists intent keywords (qancha, yozilish, etc)', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/qancha|yozilish|zapisatsya|how much|booking/i);
+    });
+
+    it('TONE-02: when bookingLink is empty, prompt has no https:// references', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, bookingLink: '' });
+        expect(prompt).not.toContain('https://');
+    });
+});
+
+describe('TONE-03: reactions/emoji/praise routing — no booking link', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: '',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('TONE-03: prompt contains REACTIONS / EMOJIS / PRAISE section', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/REACTIONS|PRAISE|EMOJIS.*PRAISE|praise.*emoji/i);
+    });
+
+    it('TONE-03: reactions section explicitly says DO NOT include the booking link', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        // Find the REACTIONS section and check it contains no-booking-link rule
+        expect(prompt).toMatch(/DO NOT include the booking link/i);
+    });
+
+    it('TONE-03: reactions section mentions witty one-liner or genuine human reaction', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/witty|one-liner|genuine human|genuine.*react/i);
+    });
+});
+
+describe('TONE-04: negative comment routing — empathy + DM invite, no booking link', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: '',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('TONE-04: prompt contains NEGATIVE COMMENTS section', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/NEGATIVE COMMENTS|negative.*comment/i);
+    });
+
+    it('TONE-04: negative section mentions empathy or acknowledgment', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/empathy|Acknowledge with empathy|Do not argue/i);
+    });
+
+    it('TONE-04: negative section invites DM for resolution', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/DM|DMga yozing|hal qilamiz/i);
+    });
+
+    it('TONE-04: negative section explicitly says DO NOT include the booking link', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        // The "DO NOT include the booking link" must appear at least twice
+        // (once in REACTIONS, once in NEGATIVE)
+        const matches = prompt.match(/DO NOT include the booking link/gi) || [];
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('TONE-04: negative section lists negative trigger words (qimmat, yomon, ploxo)', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/qimmat|yomon|ploxo|dorogo|complaint/i);
+    });
+});
+
+describe('SPAM routing and default examples', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: '',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('SPAM: routing section instructs to return exactly __SKIP__', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toContain('__SKIP__');
+    });
+
+    it('default examples: uz and ru sections present when aiExampleReplies is empty', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, aiExampleReplies: '' });
+        // Should have both Uzbek and Russian example sections
+        expect(prompt).toMatch(/uzbek|uz:/i);
+        expect(prompt).toMatch(/russian|ru:/i);
+    });
+
+    it('default examples: warm tone demonstrated (Rahmat, Spasibo, etc)', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, aiExampleReplies: '' });
+        expect(prompt).toMatch(/Rahmat|Raxmat|Спасибо|Spasibo/i);
+    });
+
+    it('default examples: booking-intent example includes link when bookingLink is set', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            bookingLink: 'https://salon.blyss.uz',
+            aiExampleReplies: '',
+        });
+        // The booking-intent example in default examples should contain the link
+        expect(prompt).toMatch(/booking intent[\s\S]*?https:\/\/salon\.blyss\.uz|https:\/\/salon\.blyss\.uz[\s\S]*?booking intent/i);
+    });
+
+    it('owner-provided aiExampleReplies replace defaults when present', () => {
+        const customExamples = 'Xush kelibsiz! Har doim tayyor';
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            aiExampleReplies: customExamples,
+        });
+        expect(prompt).toContain(customExamples);
+        // Default Uzbek/Russian sections should not appear alongside custom examples
+        expect(prompt).not.toMatch(/Rahmat! Har doim xush kelibsiz/i);
+    });
+});
+
 // ─── buildBusinessInfo + API call tests ─────────────────────────────────────
 
 // Mock the db module so tests don't touch real Firestore
