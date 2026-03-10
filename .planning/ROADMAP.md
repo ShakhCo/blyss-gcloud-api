@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Prompt Architecture & Model Switch** - Rewrite the AI persona, switch to gpt-4.1-mini, extract buildSystemPrompt(), and fix infrastructure prerequisites (completed 2026-03-10)
 - [x] **Phase 2: Commenter History Infrastructure** - Design and implement Firestore subcollections for commenter memory and post reply log; wire reads into the pipeline (completed 2026-03-10)
-- [ ] **Phase 3: Memory & Variety in Prompt** - Inject commenter history and post reply data into the prompt; add post type classification and engagement questions
+- [x] **Phase 3: Memory & Variety in Prompt** - Inject commenter history and post reply data into the prompt; add post type classification and engagement questions (completed 2026-03-10)
 - [ ] **Phase 4: History Writes & Persistence Loop** - Add fire-and-forget Firestore writes after each reply to close the memory loop
 
 ## Phase Details
@@ -57,7 +57,7 @@ Plans:
   2. The 4th reply on a single post does not start with the same word as any of the previous 3 replies on that post
   3. A before/after post generates a reply celebrating transformation; a promo post generates a reply with urgency language; a milestone post generates a celebratory reply
   4. A genuine praise or curiosity comment receives a reply that ends with a follow-up question rather than a booking link
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 03-01-PLAN.md — TDD: inject commenter history, post type, and reply deduplication into buildSystemPrompt()
@@ -82,5 +82,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Prompt Architecture & Model Switch | 2/2 | Complete   | 2026-03-10 |
 | 2. Commenter History Infrastructure | 1/1 | Complete   | 2026-03-10 |
-| 3. Memory & Variety in Prompt | 0/1 | Not started | - |
+| 3. Memory & Variety in Prompt | 1/1 | Complete   | 2026-03-10 |
 | 4. History Writes & Persistence Loop | 0/? | Not started | - |

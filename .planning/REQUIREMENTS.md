@@ -20,15 +20,15 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [x] **PERS-01**: AI uses @username naturally in replies — once, where a human would place it
 - [x] **PERS-02**: System tracks returning commenters per business in Firestore (username, comment_count, last_seen)
-- [ ] **PERS-03**: AI acknowledges returning commenters differently from first-timers ("Glad you're back!" vs generic)
-- [ ] **PERS-04**: AI asks engaging follow-up questions on genuine praise and curiosity comments to spark conversation
+- [x] **PERS-03**: AI acknowledges returning commenters differently from first-timers ("Glad you're back!" vs generic)
+- [x] **PERS-04**: AI asks engaging follow-up questions on genuine praise and curiosity comments to spark conversation
 
 ### Reply Quality
 
-- [ ] **QUAL-01**: No two consecutive replies on the same post start with the same word or pattern
-- [ ] **QUAL-02**: Recent replies per post are tracked in memory and injected as negative examples in the prompt
-- [ ] **QUAL-03**: Post type is classified from caption (promo, before/after, new_service, milestone, general)
-- [ ] **QUAL-04**: AI adapts reply style to post type — celebration for milestones, aspiration for before/after, urgency for promos
+- [x] **QUAL-01**: No two consecutive replies on the same post start with the same word or pattern
+- [x] **QUAL-02**: Recent replies per post are tracked in memory and injected as negative examples in the prompt
+- [x] **QUAL-03**: Post type is classified from caption (promo, before/after, new_service, milestone, general)
+- [x] **QUAL-04**: AI adapts reply style to post type — celebration for milestones, aspiration for before/after, urgency for promos
 
 ### Infrastructure
 
@@ -77,12 +77,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TONE-06 | Phase 1 | Complete |
 | PERS-01 | Phase 1 | Complete |
 | PERS-02 | Phase 2 | Complete |
-| PERS-03 | Phase 3 | Pending |
-| PERS-04 | Phase 3 | Pending |
-| QUAL-01 | Phase 3 | Pending |
-| QUAL-02 | Phase 3 | Pending |
-| QUAL-03 | Phase 3 | Pending |
-| QUAL-04 | Phase 3 | Pending |
+| PERS-03 | Phase 3 | Complete |
+| PERS-04 | Phase 3 | Complete |
+| QUAL-01 | Phase 3 | Complete |
+| QUAL-02 | Phase 3 | Complete |
+| QUAL-03 | Phase 3 | Complete |
+| QUAL-04 | Phase 3 | Complete |
 | INFR-01 | Phase 1 | Complete |
 | INFR-02 | Phase 1 | Complete |
 | INFR-03 | Phase 1 | Complete |

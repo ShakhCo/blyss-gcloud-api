@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 3 context gathered
-last_updated: "2026-03-10T11:18:48.153Z"
+stopped_at: Completed 03-memory-variety-in-prompt/03-01-PLAN.md
+last_updated: "2026-03-10T11:38:36.102Z"
 last_activity: 2026-03-10 — Roadmap created
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 3
-  completed_plans: 3
+  completed_phases: 3
+  total_plans: 4
+  completed_plans: 4
   percent: 0
 ---
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-prompt-architecture-model-switch P02 | 15min | 2 tasks | 2 files |
 | Phase 01-prompt-architecture-model-switch P02 | 20min | 3 tasks | 2 files |
 | Phase 02-commenter-history-infrastructure P01 | 7min | 2 tasks | 3 files |
+| Phase 03-memory-variety-in-prompt P01 | 18min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,9 @@ Recent decisions affecting current work:
 - [Phase 02-commenter-history-infrastructure]: igCommenterId guard: getCommenterHistory only called when commentData.from?.id is truthy — avoids unnecessary reads for anonymous comments
 - [Phase 02-commenter-history-infrastructure]: TTL fieldOverrides configured in firestore.indexes.json with ttl: true and indexes: [] — relies on Firestore auto-delete, not manual cleanup
 - [Phase 02-commenter-history-infrastructure]: commenterHistory and postReplies passed through buildSystemPrompt call site but NOT used in body — clean Phase 2/3 boundary
+- [Phase 03-memory-variety-in-prompt]: RETURNING COMMENTER section gated on comment_count >= 2, warmth calibrated: loyal regular (>=4) vs subtle nod (2-3), last_comment_text NOT quoted to avoid privacy/injection risk
+- [Phase 03-memory-variety-in-prompt]: POST TYPE section present whenever postCaption is non-empty — AI classifies from keywords in prompt, no pre-parsing in JS; RECENT REPLIES slice(0,5) guard prevents prompt bloat
+- [Phase 03-memory-variety-in-prompt]: All new prompt sections placed only in else branch (global rules path) — postAiInstructions per-post override path unaffected
 
 ### Pending Todos
 
@@ -91,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T11:18:48.151Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-memory-variety-in-prompt/03-CONTEXT.md
+Last session: 2026-03-10T11:38:36.101Z
+Stopped at: Completed 03-memory-variety-in-prompt/03-01-PLAN.md
+Resume file: None
