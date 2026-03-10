@@ -10,6 +10,7 @@ const CRON_SECRET = process.env.CRON_SECRET;
 const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
 const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME;
 
+
 /**
  * Convert 24h hours:minutes to Uzbek spoken time format.
  * Examples: 15:00 → "uchda", 22:30 → "o'n yarimda", 14:45 → "ikkiyu qirq beshda"
