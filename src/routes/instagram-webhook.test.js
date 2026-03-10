@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { buildSystemPrompt, getCommenterHistory, getPostReplies } from './instagram-webhook.js';
+import { buildSystemPrompt, getCommenterHistory, getPostReplies, updateCommenterHistory, updatePostReplies } from './instagram-webhook.js';
 
 // ─── buildSystemPrompt unit tests ────────────────────────────────────────────
 
@@ -488,6 +488,10 @@ describe('SPAM routing and default examples', () => {
 // Tests configure this to control per-doc .get() results
 const docSnapOverrides = {};
 
+// setCalls: records all .set() calls made against the mock db
+// Each entry: { path: string, data: object, options: object }
+const setCalls = [];
+
 vi.mock('../db/db.js', () => {
     const makeSnap = (docs) => ({
         empty: docs.length === 0,
@@ -529,6 +533,14 @@ vi.mock('../db/db.js', () => {
                             if (override !== undefined) return override;
                             // Default: not exists
                             return { exists: false, data: () => undefined };
+                        },
+                        set: async (data, options) => {
+                            const path = `${colName}/${docId}/${subCol}/${subDocId}`;
+                            // Check for error override keyed with "set:" prefix
+                            const setKey = `set:${path}`;
+                            const override = docSnapOverrides[setKey];
+                            if (override instanceof Error) throw override;
+                            setCalls.push({ path, data, options });
                         },
                     }),
                 }),
@@ -1200,5 +1212,204 @@ describe('QUAL-03 + QUAL-04: post type classification and tone adaptation', () =
             postAiInstructions: 'Custom instructions for this post',
         });
         expect(prompt).not.toContain('POST TYPE');
+    });
+});
+
+// ─── Firestore write functions mock setup ────────────────────────────────────
+
+// Mock @google-cloud/firestore to provide FieldValue and Timestamp sentinels
+// that tests can assert against without touching real Firestore.
+vi.mock('@google-cloud/firestore', () => {
+    return {
+        FieldValue: {
+            increment: (n) => ({ __type: 'increment', value: n }),
+        },
+        Timestamp: {
+            now: () => ({ __type: 'timestamp_now' }),
+            fromDate: (d) => ({ __type: 'timestamp', date: d }),
+        },
+        Firestore: class {},
+    };
+});
+
+// ─── PERS-02: updateCommenterHistory unit tests ───────────────────────────────
+
+describe('updateCommenterHistory', () => {
+    beforeEach(() => {
+        // Clear setCalls and all docSnapOverrides before each test
+        setCalls.length = 0;
+        for (const key of Object.keys(docSnapOverrides)) delete docSnapOverrides[key];
+    });
+
+    it('calls set on the correct Firestore path (businesses/{businessId}/commenters/{igCommenterId})', async () => {
+        await updateCommenterHistory('biz1', 'user123', 'testuser', 'Nice work!');
+        expect(setCalls.length).toBe(1);
+        expect(setCalls[0].path).toBe('businesses/biz1/commenters/user123');
+    });
+
+    it('payload includes comment_count with FieldValue.increment(1) sentinel', async () => {
+        await updateCommenterHistory('biz1', 'user123', 'testuser', 'Nice work!');
+        expect(setCalls[0].data.comment_count).toEqual({ __type: 'increment', value: 1 });
+    });
+
+    it('payload includes username field', async () => {
+        await updateCommenterHistory('biz1', 'user123', 'myusername', 'Great!');
+        expect(setCalls[0].data.username).toBe('myusername');
+    });
+
+    it('payload includes last_comment_text field', async () => {
+        await updateCommenterHistory('biz1', 'user123', 'testuser', 'Love the service!');
+        expect(setCalls[0].data.last_comment_text).toBe('Love the service!');
+    });
+
+    it('payload includes last_seen_at with Timestamp.now() sentinel', async () => {
+        await updateCommenterHistory('biz1', 'user123', 'testuser', 'Nice!');
+        expect(setCalls[0].data.last_seen_at).toEqual({ __type: 'timestamp_now' });
+    });
+
+    it('payload includes first_seen_at with Timestamp.now() sentinel', async () => {
+        await updateCommenterHistory('biz1', 'user123', 'testuser', 'Nice!');
+        expect(setCalls[0].data.first_seen_at).toEqual({ __type: 'timestamp_now' });
+    });
+
+    it('payload includes expires_at as Timestamp.fromDate ~90 days in the future', async () => {
+        const before = Date.now();
+        await updateCommenterHistory('biz1', 'user123', 'testuser', 'Nice!');
+        const after = Date.now();
+        const expiresAt = setCalls[0].data.expires_at;
+        expect(expiresAt.__type).toBe('timestamp');
+        const expiresMs = expiresAt.date.getTime();
+        const expectedMs90 = 90 * 24 * 60 * 60 * 1000;
+        expect(expiresMs).toBeGreaterThanOrEqual(before + expectedMs90 - 1000);
+        expect(expiresMs).toBeLessThanOrEqual(after + expectedMs90 + 1000);
+    });
+
+    it('second argument to set() is { merge: true }', async () => {
+        await updateCommenterHistory('biz1', 'user123', 'testuser', 'Nice!');
+        expect(setCalls[0].options).toEqual({ merge: true });
+    });
+
+    it('coerces numeric igCommenterId to String (type safety — matches read-side pattern)', async () => {
+        await updateCommenterHistory('biz1', 12345, 'testuser', 'Nice!');
+        expect(setCalls[0].path).toBe('businesses/biz1/commenters/12345');
+    });
+
+    it('does not throw when Firestore set() throws — logs console.warn', async () => {
+        docSnapOverrides['set:businesses/biz1/commenters/user_err'] = new Error('Firestore write failed');
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await expect(updateCommenterHistory('biz1', 'user_err', 'testuser', 'Nice!')).resolves.toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringMatching(/updateCommenterHistory.*user_err/),
+            expect.any(String),
+        );
+        warnSpy.mockRestore();
+    });
+});
+
+// ─── PERS-02: updatePostReplies unit tests ────────────────────────────────────
+
+describe('updatePostReplies', () => {
+    beforeEach(() => {
+        // Clear setCalls and all docSnapOverrides before each test
+        setCalls.length = 0;
+        for (const key of Object.keys(docSnapOverrides)) delete docSnapOverrides[key];
+    });
+
+    it('calls set on the correct Firestore path (businesses/{businessId}/instagram_post_replies/{mediaId})', async () => {
+        await updatePostReplies('biz1', 'media123', 'Great reply!');
+        expect(setCalls.length).toBe(1);
+        expect(setCalls[0].path).toBe('businesses/biz1/instagram_post_replies/media123');
+    });
+
+    it('when no existing doc, creates array with single entry containing { text, at }', async () => {
+        // Default mock returns { exists: false } — no override needed
+        await updatePostReplies('biz1', 'media123', 'First reply!');
+        const { data } = setCalls[0];
+        expect(Array.isArray(data.recent_replies)).toBe(true);
+        expect(data.recent_replies.length).toBe(1);
+        expect(data.recent_replies[0].text).toBe('First reply!');
+        expect(data.recent_replies[0].at).toEqual({ __type: 'timestamp_now' });
+    });
+
+    it('when existing doc has replies, appends the new reply', async () => {
+        const futureDate = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
+        docSnapOverrides['businesses/biz1/instagram_post_replies/media456'] = {
+            exists: true,
+            data: () => ({
+                recent_replies: [
+                    { text: 'Existing reply 1', at: { __type: 'timestamp_now' } },
+                    { text: 'Existing reply 2', at: { __type: 'timestamp_now' } },
+                ],
+                expires_at: futureDate,
+            }),
+        };
+        await updatePostReplies('biz1', 'media456', 'New reply!');
+        const { data } = setCalls[0];
+        expect(data.recent_replies.length).toBe(3);
+        expect(data.recent_replies[2].text).toBe('New reply!');
+    });
+
+    it('when existing doc has 8 replies, result is still 8 entries (oldest dropped via slice(-8))', async () => {
+        const eightReplies = Array.from({ length: 8 }, (_, i) => ({
+            text: `Reply ${i + 1}`,
+            at: { __type: 'timestamp_now' },
+        }));
+        docSnapOverrides['businesses/biz1/instagram_post_replies/media789'] = {
+            exists: true,
+            data: () => ({
+                recent_replies: eightReplies,
+                expires_at: new Date(Date.now() + 1e9),
+            }),
+        };
+        await updatePostReplies('biz1', 'media789', 'New ninth reply!');
+        const { data } = setCalls[0];
+        expect(data.recent_replies.length).toBe(8);
+        // First entry should have been dropped (Reply 1), last should be the new reply
+        expect(data.recent_replies[0].text).toBe('Reply 2');
+        expect(data.recent_replies[7].text).toBe('New ninth reply!');
+    });
+
+    it('expires_at is ~30 days from now', async () => {
+        const before = Date.now();
+        await updatePostReplies('biz1', 'media123', 'A reply');
+        const after = Date.now();
+        const expiresAt = setCalls[0].data.expires_at;
+        expect(expiresAt.__type).toBe('timestamp');
+        const expiresMs = expiresAt.date.getTime();
+        const expectedMs30 = 30 * 24 * 60 * 60 * 1000;
+        expect(expiresMs).toBeGreaterThanOrEqual(before + expectedMs30 - 1000);
+        expect(expiresMs).toBeLessThanOrEqual(after + expectedMs30 + 1000);
+    });
+
+    it('second argument to set() is { merge: true }', async () => {
+        await updatePostReplies('biz1', 'media123', 'A reply');
+        expect(setCalls[0].options).toEqual({ merge: true });
+    });
+
+    it('coerces numeric mediaId to String (type safety)', async () => {
+        await updatePostReplies('biz1', 99999, 'A reply');
+        expect(setCalls[0].path).toBe('businesses/biz1/instagram_post_replies/99999');
+    });
+
+    it('does not throw when Firestore throws during get() — logs console.warn', async () => {
+        docSnapOverrides['businesses/biz1/instagram_post_replies/media_err'] = new Error('Firestore read failed');
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await expect(updatePostReplies('biz1', 'media_err', 'A reply')).resolves.toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringMatching(/updatePostReplies.*media_err/),
+            expect.any(String),
+        );
+        warnSpy.mockRestore();
+    });
+
+    it('does not throw when Firestore throws during set() — logs console.warn', async () => {
+        docSnapOverrides['set:businesses/biz1/instagram_post_replies/media_set_err'] = new Error('Set failed');
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await expect(updatePostReplies('biz1', 'media_set_err', 'A reply')).resolves.toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringMatching(/updatePostReplies.*media_set_err/),
+            expect.any(String),
+        );
+        warnSpy.mockRestore();
     });
 });
