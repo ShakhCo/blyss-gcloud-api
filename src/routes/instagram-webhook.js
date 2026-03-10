@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import OpenAI from 'openai';
+import { FieldValue, Timestamp } from '@google-cloud/firestore';
 import { db } from '../db/db.js';
 import {
     verifyWebhookSignature,
@@ -323,6 +324,60 @@ export async function getPostReplies(businessId, mediaId) {
 }
 
 /**
+ * Write/update commenter history in Firestore after a reply is sent.
+ * Uses merge: true so first_seen_at is preserved on subsequent writes.
+ * Fire-and-forget safe — catches all errors and logs a warning.
+ *
+ * @param {string} businessId
+ * @param {string|number} igCommenterId
+ * @param {string} username
+ * @param {string} commentText
+ */
+export async function updateCommenterHistory(businessId, igCommenterId, username, commentText) {
+    try {
+        await db
+            .collection('businesses').doc(businessId)
+            .collection('commenters').doc(String(igCommenterId))
+            .set({
+                username,
+                comment_count: FieldValue.increment(1),
+                last_seen_at: Timestamp.now(),
+                last_comment_text: commentText,
+                first_seen_at: Timestamp.now(),
+                expires_at: Timestamp.fromDate(new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)),
+            }, { merge: true });
+    } catch (e) {
+        console.warn(`Instagram webhook: updateCommenterHistory failed for ${igCommenterId}:`, e.message);
+    }
+}
+
+/**
+ * Append a reply to the post's recent_replies log in Firestore.
+ * Caps at 8 entries (oldest dropped). Sets a 30-day TTL.
+ * Fire-and-forget safe — catches all errors and logs a warning.
+ *
+ * @param {string} businessId
+ * @param {string|number} mediaId
+ * @param {string} replyText
+ */
+export async function updatePostReplies(businessId, mediaId, replyText) {
+    try {
+        const ref = db
+            .collection('businesses').doc(businessId)
+            .collection('instagram_post_replies').doc(String(mediaId));
+        const snap = await ref.get();
+        const existing = snap.exists ? (snap.data().recent_replies || []) : [];
+        const updated = [...existing, { text: replyText, at: Timestamp.now() }].slice(-8);
+        await ref.set({
+            recent_replies: updated,
+            expires_at: Timestamp.fromDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
+        }, { merge: true });
+    } catch (e) {
+        console.warn(`Instagram webhook: updatePostReplies failed for ${mediaId}:`, e.message);
+    }
+}
+
+/**
  * Handle an incoming Instagram comment event.
  * Auto-replies with the configured template if all conditions are met.
  *
@@ -436,13 +491,17 @@ async function handleCommentEvent(igUserId, commentData) {
         const tenantUrl = businessDoc.exists ? businessDoc.data().tenant_url : null;
         const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
 
+        // Extract commenter identifiers before mode branch — needed by both AI and static paths
+        // for history writes after replyToComment() succeeds.
+        const igCommenterId = commentData.from?.id || '';
+        const username = commentData.from?.username || '';
+        const commentText = commentData.text || '';
+
         let replyMessage;
 
         if (replyMode === 'ai') {
             // AI-generated reply — build detailed business context
-            const commentText = commentData.text || '';
             const businessData = businessDoc.exists ? businessDoc.data() : {};
-            const igCommenterId = commentData.from?.id || '';
             const [businessInfo, commenterHistory, postReplies] = await Promise.all([
                 buildBusinessInfo(businessId, businessData, bookingLink),
                 igCommenterId ? getCommenterHistory(businessId, igCommenterId) : Promise.resolve(null),
@@ -468,7 +527,6 @@ async function handleCommentEvent(igUserId, commentData) {
             const now = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
             const isSolo = businessData.is_solo === true;
-            const username = commentData.from?.username || '';
             const systemPrompt = buildSystemPrompt({
                 businessInfo,
                 isSolo,
@@ -513,10 +571,17 @@ async function handleCommentEvent(igUserId, commentData) {
         await replyToComment(commentId, replyMessage, accessToken);
         console.log(`Instagram webhook: replied to comment ${commentId} for business ${businessId} (mode: ${replyMode}, post-settings: ${usingPostSettings})`);
 
+        // History writes — fire-and-forget, must not delay webhook response
+        if (igCommenterId) {
+            Promise.all([
+                updateCommenterHistory(businessId, igCommenterId, username, commentText),
+                updatePostReplies(businessId, mediaId, replyMessage),
+            ]).catch(e => console.warn('History write failed:', e.message));
+        }
+
         // 10. Notify admin group
         if (ADMIN_GROUP_ID) {
             const commenter = commentData.from?.username || commentData.from?.id || 'unknown';
-            const commentText = commentData.text || '';
             const modeLabel = replyMode === 'ai' ? 'AI' : 'Template';
             const adminMsg =
                 `📸 <b>Instagram auto-reply (${modeLabel})</b>\n\n` +
