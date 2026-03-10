@@ -71,7 +71,10 @@ Plans:
   2. After a reply is posted, the post's recent_replies array in Firestore is updated and capped at 8 entries
   3. Writes happen fire-and-forget after replyToComment() succeeds and do not delay the webhook response
   4. Commenter history persists correctly after a Cloud Run instance restart (i.e., the in-memory Map fallback is replaced by durable Firestore state)
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 04-01-PLAN.md — TDD: implement updateCommenterHistory, updatePostReplies, and wire fire-and-forget call site
 
 ## Progress
 
@@ -83,4 +86,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Prompt Architecture & Model Switch | 2/2 | Complete   | 2026-03-10 |
 | 2. Commenter History Infrastructure | 1/1 | Complete   | 2026-03-10 |
 | 3. Memory & Variety in Prompt | 1/1 | Complete   | 2026-03-10 |
-| 4. History Writes & Persistence Loop | 0/? | Not started | - |
+| 4. History Writes & Persistence Loop | 0/1 | Planning complete | - |
