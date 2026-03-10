@@ -237,6 +237,18 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "commenters",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "instagram_post_replies",
+      "fieldPath": "expires_at",
+      "ttl": true,
+      "indexes": []
     }
   ]
 }

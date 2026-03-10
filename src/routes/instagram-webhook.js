@@ -115,6 +115,8 @@ export function buildSystemPrompt({
     aiInstructions,
     aiExampleReplies,
     now,
+    commenterHistory,  // null | { username, comment_count, first_seen_at, last_seen_at, last_comment_text } — used in Phase 3
+    postReplies,       // null | { recent_replies: [{ text, at }] } — used in Phase 3
 }) {
     // ── Section 1: Identity / Role (TONE-01) ─────────────────────────────────
     const voiceSingular = 'first person singular — "I", "men", "ya"';
@@ -248,6 +250,56 @@ Russian:
 }
 
 /**
+ * Fetch commenter history from Firestore.
+ * Returns null if no document exists, the document is expired, or Firestore fails.
+ * Graceful degradation — never throws.
+ *
+ * @param {string} businessId
+ * @param {string|number} igUserId
+ * @returns {Promise<object|null>}
+ */
+export async function getCommenterHistory(businessId, igUserId) {
+    try {
+        const snap = await db
+            .collection('businesses').doc(businessId)
+            .collection('commenters').doc(String(igUserId))
+            .get();
+        if (!snap.exists) return null;
+        const data = snap.data();
+        if (data.expires_at && data.expires_at.toDate() < new Date()) return null;
+        return data;
+    } catch (e) {
+        console.warn(`Instagram webhook: getCommenterHistory failed for ${igUserId}:`, e.message);
+        return null;
+    }
+}
+
+/**
+ * Fetch post reply log from Firestore.
+ * Returns null if no document exists, the document is expired, or Firestore fails.
+ * Graceful degradation — never throws.
+ *
+ * @param {string} businessId
+ * @param {string|number} mediaId
+ * @returns {Promise<object|null>}
+ */
+export async function getPostReplies(businessId, mediaId) {
+    try {
+        const snap = await db
+            .collection('businesses').doc(businessId)
+            .collection('instagram_post_replies').doc(String(mediaId))
+            .get();
+        if (!snap.exists) return null;
+        const data = snap.data();
+        if (data.expires_at && data.expires_at.toDate() < new Date()) return null;
+        return data;
+    } catch (e) {
+        console.warn(`Instagram webhook: getPostReplies failed for ${mediaId}:`, e.message);
+        return null;
+    }
+}
+
+/**
  * Handle an incoming Instagram comment event.
  * Auto-replies with the configured template if all conditions are met.
  *
@@ -367,7 +419,12 @@ async function handleCommentEvent(igUserId, commentData) {
             // AI-generated reply — build detailed business context
             const commentText = commentData.text || '';
             const businessData = businessDoc.exists ? businessDoc.data() : {};
-            const businessInfo = await buildBusinessInfo(businessId, businessData, bookingLink);
+            const igCommenterId = commentData.from?.id || '';
+            const [businessInfo, commenterHistory, postReplies] = await Promise.all([
+                buildBusinessInfo(businessId, businessData, bookingLink),
+                igCommenterId ? getCommenterHistory(businessId, igCommenterId) : Promise.resolve(null),
+                getPostReplies(businessId, mediaId),
+            ]);
 
             // Fetch post caption and timestamp for context
             let postCaption = '';
@@ -400,6 +457,8 @@ async function handleCommentEvent(igUserId, commentData) {
                 aiInstructions: connection.ai_instructions || '',
                 aiExampleReplies: connection.ai_example_replies || '',
                 now,
+                commenterHistory,
+                postReplies,
             });
 
             const aiResponse = await openai.chat.completions.create({
