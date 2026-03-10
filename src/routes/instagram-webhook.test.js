@@ -119,6 +119,199 @@ describe('buildSystemPrompt', () => {
     });
 });
 
+// ─── Task 1A: RED tests for Sections 1-3 rewrite ─────────────────────────────
+
+describe('TONE-01: persona voice — warm and human identity', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: 'testuser',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('TONE-01: prompt contains first-person-singular voice marker when isSolo=true', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, isSolo: true });
+        // Must contain explicit "first person singular" or "I"/"men"/"ya" voice instruction
+        expect(prompt).toMatch(/first person singular|singular.*I|"I"|"men"|"ya"/i);
+    });
+
+    it('TONE-01: prompt contains first-person-plural voice marker when isSolo=false', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, isSolo: false });
+        // Must contain explicit "first person plural" or "we"/"biz"/"my" voice instruction
+        expect(prompt).toMatch(/first person plural|plural.*we|"we"|"biz"|"my"/i);
+    });
+
+    it('TONE-01: prompt contains warm and human tone instruction (not corporate, not bot)', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/warm|human/i);
+        expect(prompt).not.toMatch(/corporate/i);
+    });
+
+    it('TONE-01: prompt explicitly says "Not a bot" or equivalent anti-bot framing', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/not.*bot|not a bot/i);
+    });
+
+    it('TONE-01: solo prompt contains Uzbek first-person singular example ("Sizni kutaman")', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, isSolo: true });
+        expect(prompt).toMatch(/Sizni kutaman|kutaman|men|ya vas/i);
+    });
+
+    it('TONE-01: team prompt contains Uzbek first-person plural example ("Sizni kutamiz")', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, isSolo: false });
+        expect(prompt).toMatch(/Sizni kutamiz|kutamiz|biz bilan/i);
+    });
+});
+
+describe('TONE-05: reply length proportionality rules', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: '',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('TONE-05: prompt contains reply length rule for short comments (1-3 words or emoji-only)', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/1-3 words|emoji.only|1\s*sentence/i);
+    });
+
+    it('TONE-05: prompt contains reply length rule mapping comment length to reply length', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        // Should have some mention of proportional length rules
+        expect(prompt).toMatch(/REPLY LENGTH|reply.*length|comment.*length/i);
+    });
+
+    it('TONE-05: prompt states maximum sentence limit (3 sentences max)', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/3 sentences|three sentences|never exceed 3/i);
+    });
+});
+
+describe('TONE-06: emoji mirroring rules with 2-cap', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: '',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('TONE-06: prompt contains emoji mirroring/mirror rule', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/EMOJI|emoji.*mirror|mirror.*emoji|emoji.*energy/i);
+    });
+
+    it('TONE-06: prompt caps emoji usage at 2', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/Cap.*2|2.*cap|never more than 2|max.*2.*emoji/i);
+    });
+
+    it('TONE-06: prompt instructs not to lead with emoji as first character', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/never lead|first character|not.*lead.*emoji/i);
+    });
+});
+
+describe('PERS-01: @username natural placement', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: 'cool_client',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('PERS-01: prompt contains @username with natural placement instruction when username is provided', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, username: 'cool_client' });
+        expect(prompt).toContain('@cool_client');
+        expect(prompt).toMatch(/natural|naturally|once only|placed where/i);
+    });
+
+    it('PERS-01: prompt instructs to use @username only once', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, username: 'cool_client' });
+        expect(prompt).toMatch(/once only|use.*once|only once/i);
+    });
+
+    it('PERS-01: prompt omits @username section entirely when username is empty string', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, username: '' });
+        // With no username, the @USERNAME PLACEMENT section should not appear
+        expect(prompt).not.toMatch(/@USERNAME PLACEMENT|commenter.*username.*@/i);
+    });
+
+    it('PERS-01: prompt omits @username section when username is null/undefined', () => {
+        const prompt = buildSystemPrompt({ ...baseArgs, username: null });
+        expect(prompt).not.toMatch(/USERNAME PLACEMENT/i);
+    });
+});
+
+describe('Script matching and time-relative word warning', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: '',
+        postCaption: '',
+        postTime: '',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('prompt contains script matching instruction (Cyrillic/Latin)', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/Cyrillic|script.*match|match.*script|Latin.*Uzbek/i);
+    });
+
+    it('prompt preserves time-relative word warning (ertaga/bugun/zavtra)', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/ertaga|bugun|завтра|zavtra|time.relative|Post published/i);
+    });
+
+    it('prompt preserves "never invent promotions" rule', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/never invent|do not invent|no.*promotion|invent.*discount/i);
+    });
+
+    it('prompt preserves "no hashtags" rule', () => {
+        const prompt = buildSystemPrompt(baseArgs);
+        expect(prompt).toMatch(/no hashtag|hashtag/i);
+    });
+
+    it('per-post override path still works (postAiInstructions skips global rules)', () => {
+        const prompt = buildSystemPrompt({
+            ...baseArgs,
+            postAiInstructions: 'Custom per-post instructions here',
+        });
+        expect(prompt).toContain('Custom per-post instructions here');
+        // Global TONE/voice rules section should be skipped
+        expect(prompt).not.toMatch(/BOOKING-INTENT|REPLY LENGTH|EMOJI USAGE/i);
+    });
+});
+
 // ─── buildBusinessInfo + API call tests ─────────────────────────────────────
 
 // Mock the db module so tests don't touch real Firestore
