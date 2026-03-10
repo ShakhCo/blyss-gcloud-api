@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { buildSystemPrompt } from './instagram-webhook.js';
+import { buildSystemPrompt, getCommenterHistory, getPostReplies } from './instagram-webhook.js';
 
 // ─── buildSystemPrompt unit tests ────────────────────────────────────────────
 
@@ -484,6 +484,10 @@ describe('SPAM routing and default examples', () => {
 // ─── buildBusinessInfo + API call tests ─────────────────────────────────────
 
 // Mock the db module so tests don't touch real Firestore
+// docSnapOverrides: map of "col/docId/subCol/subDocId" -> snapshot or Error
+// Tests configure this to control per-doc .get() results
+const docSnapOverrides = {};
+
 vi.mock('../db/db.js', () => {
     const makeSnap = (docs) => ({
         empty: docs.length === 0,
@@ -517,7 +521,24 @@ vi.mock('../db/db.js', () => {
                             return makeSnap([]);
                         },
                     }),
+                    doc: (subDocId) => ({
+                        get: async () => {
+                            const key = `${colName}/${docId}/${subCol}/${subDocId}`;
+                            const override = docSnapOverrides[key];
+                            if (override instanceof Error) throw override;
+                            if (override !== undefined) return override;
+                            // Default: not exists
+                            return { exists: false, data: () => undefined };
+                        },
+                    }),
                 }),
+                get: async () => {
+                    const key = `${colName}/${docId}`;
+                    const override = docSnapOverrides[key];
+                    if (override instanceof Error) throw override;
+                    if (override !== undefined) return override;
+                    return { exists: false, data: () => undefined };
+                },
             }),
         }),
         collectionGroup: () => ({
@@ -673,5 +694,221 @@ describe('handleCommentEvent — API call verification', () => {
         const replyMessage = '';
         const shouldSkip = !replyMessage || replyMessage === '__SKIP__' || replyMessage.includes('__SKIP__');
         expect(shouldSkip).toBe(true);
+    });
+});
+
+// ─── PERS-02: getCommenterHistory unit tests ──────────────────────────────────
+
+// Helper to build a Timestamp-like mock
+function makeTimestamp(date) {
+    return { toDate: () => date };
+}
+
+describe('getCommenterHistory', () => {
+    beforeEach(() => {
+        // Clear all overrides before each test
+        for (const key of Object.keys(docSnapOverrides)) delete docSnapOverrides[key];
+    });
+
+    it('returns null when no document exists for the commenter', async () => {
+        // No override set — fakeDb returns { exists: false }
+        const result = await getCommenterHistory('biz1', 'user1');
+        expect(result).toBeNull();
+    });
+
+    it('returns null when document exists but expires_at is in the past (TTL lag guard)', async () => {
+        const pastDate = new Date(Date.now() - 1000 * 60 * 60); // 1 hour ago
+        docSnapOverrides['businesses/biz1/commenters/user2'] = {
+            exists: true,
+            data: () => ({
+                username: 'test_user',
+                comment_count: 3,
+                first_seen_at: makeTimestamp(new Date('2026-01-01')),
+                last_seen_at: makeTimestamp(new Date('2026-02-01')),
+                last_comment_text: 'Nice!',
+                expires_at: makeTimestamp(pastDate),
+            }),
+        };
+        const result = await getCommenterHistory('biz1', 'user2');
+        expect(result).toBeNull();
+    });
+
+    it('returns document data when document exists and is not expired', async () => {
+        const futureDate = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30); // 30 days from now
+        const firstSeen = new Date('2026-01-01');
+        const lastSeen = new Date('2026-03-01');
+        const expectedData = {
+            username: 'happy_client',
+            comment_count: 5,
+            first_seen_at: makeTimestamp(firstSeen),
+            last_seen_at: makeTimestamp(lastSeen),
+            last_comment_text: 'Great service!',
+            expires_at: makeTimestamp(futureDate),
+        };
+        docSnapOverrides['businesses/biz2/commenters/user3'] = {
+            exists: true,
+            data: () => expectedData,
+        };
+        const result = await getCommenterHistory('biz2', 'user3');
+        expect(result).not.toBeNull();
+        expect(result.username).toBe('happy_client');
+        expect(result.comment_count).toBe(5);
+        expect(result.last_comment_text).toBe('Great service!');
+    });
+
+    it('returns null when Firestore throws (graceful degradation)', async () => {
+        docSnapOverrides['businesses/biz3/commenters/user4'] = new Error('Firestore unavailable');
+        const result = await getCommenterHistory('biz3', 'user4');
+        expect(result).toBeNull();
+    });
+
+    it('converts igUserId to String for the doc path (type safety)', async () => {
+        const futureDate = new Date(Date.now() + 1000 * 60 * 60 * 24);
+        docSnapOverrides['businesses/biz4/commenters/12345'] = {
+            exists: true,
+            data: () => ({
+                username: 'numeric_user',
+                comment_count: 1,
+                first_seen_at: makeTimestamp(new Date()),
+                last_seen_at: makeTimestamp(new Date()),
+                last_comment_text: 'Hello',
+                expires_at: makeTimestamp(futureDate),
+            }),
+        };
+        // Pass a numeric ID — should be coerced to String('12345')
+        const result = await getCommenterHistory('biz4', 12345);
+        expect(result).not.toBeNull();
+        expect(result.username).toBe('numeric_user');
+    });
+});
+
+// ─── PERS-02: getPostReplies unit tests ───────────────────────────────────────
+
+describe('getPostReplies', () => {
+    beforeEach(() => {
+        for (const key of Object.keys(docSnapOverrides)) delete docSnapOverrides[key];
+    });
+
+    it('returns null when no document exists for the media', async () => {
+        const result = await getPostReplies('biz1', 'media1');
+        expect(result).toBeNull();
+    });
+
+    it('returns null when document exists but expires_at is in the past', async () => {
+        const pastDate = new Date(Date.now() - 1000);
+        docSnapOverrides['businesses/biz1/instagram_post_replies/media2'] = {
+            exists: true,
+            data: () => ({
+                recent_replies: [{ text: 'Hello!', at: makeTimestamp(new Date()) }],
+                expires_at: makeTimestamp(pastDate),
+            }),
+        };
+        const result = await getPostReplies('biz1', 'media2');
+        expect(result).toBeNull();
+    });
+
+    it('returns document data with recent_replies when document exists and is not expired', async () => {
+        const futureDate = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
+        const replyAt = new Date('2026-03-10');
+        docSnapOverrides['businesses/biz2/instagram_post_replies/media3'] = {
+            exists: true,
+            data: () => ({
+                recent_replies: [
+                    { text: 'Thank you!', at: makeTimestamp(replyAt) },
+                    { text: 'Glad you liked it!', at: makeTimestamp(replyAt) },
+                ],
+                expires_at: makeTimestamp(futureDate),
+            }),
+        };
+        const result = await getPostReplies('biz2', 'media3');
+        expect(result).not.toBeNull();
+        expect(Array.isArray(result.recent_replies)).toBe(true);
+        expect(result.recent_replies.length).toBe(2);
+        expect(result.recent_replies[0].text).toBe('Thank you!');
+    });
+
+    it('returns null when Firestore throws (graceful degradation)', async () => {
+        docSnapOverrides['businesses/biz3/instagram_post_replies/media4'] = new Error('Network error');
+        const result = await getPostReplies('biz3', 'media4');
+        expect(result).toBeNull();
+    });
+
+    it('converts mediaId to String for the doc path (type safety)', async () => {
+        const futureDate = new Date(Date.now() + 1000 * 60 * 60 * 24);
+        docSnapOverrides['businesses/biz4/instagram_post_replies/99999'] = {
+            exists: true,
+            data: () => ({
+                recent_replies: [{ text: 'Nice!', at: makeTimestamp(new Date()) }],
+                expires_at: makeTimestamp(futureDate),
+            }),
+        };
+        // Pass a numeric mediaId — should be coerced to String
+        const result = await getPostReplies('biz4', 99999);
+        expect(result).not.toBeNull();
+        expect(result.recent_replies[0].text).toBe('Nice!');
+    });
+});
+
+// ─── PERS-02: buildSystemPrompt extended signature tests ──────────────────────
+
+describe('buildSystemPrompt — extended signature with commenterHistory and postReplies', () => {
+    const baseArgs = {
+        businessInfo: 'Business: Test Salon\nServices:\n  - Haircut: 50000 som, 30 min',
+        isSolo: false,
+        bookingLink: 'https://testsalon.blyss.uz',
+        username: 'testuser',
+        postCaption: 'New styles!',
+        postTime: 'Mon, 2026-03-10 10:00',
+        postAiInstructions: '',
+        aiInstructions: '',
+        aiExampleReplies: '',
+        now: 'Tuesday, 2026-03-10 09:00',
+    };
+
+    it('output is identical when commenterHistory and postReplies are null vs omitted', () => {
+        const promptWithoutParams = buildSystemPrompt(baseArgs);
+        const promptWithNulls = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: null,
+            postReplies: null,
+        });
+        expect(promptWithNulls).toBe(promptWithoutParams);
+    });
+
+    it('output is identical when commenterHistory and postReplies have data (params ignored in Phase 2)', () => {
+        const promptWithoutParams = buildSystemPrompt(baseArgs);
+        const promptWithData = buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: {
+                username: 'repeat_client',
+                comment_count: 7,
+                first_seen_at: makeTimestamp(new Date('2026-01-01')),
+                last_seen_at: makeTimestamp(new Date('2026-03-01')),
+                last_comment_text: 'Love this place!',
+                expires_at: makeTimestamp(new Date(Date.now() + 1e9)),
+            },
+            postReplies: {
+                recent_replies: [
+                    { text: 'Thank you so much!', at: makeTimestamp(new Date()) },
+                ],
+                expires_at: makeTimestamp(new Date(Date.now() + 1e9)),
+            },
+        });
+        // In Phase 2 the params are accepted but not used — output must be identical
+        expect(promptWithData).toBe(promptWithoutParams);
+    });
+
+    it('does not throw when commenterHistory is provided with data', () => {
+        expect(() => buildSystemPrompt({
+            ...baseArgs,
+            commenterHistory: { username: 'x', comment_count: 1, last_comment_text: 'hi' },
+        })).not.toThrow();
+    });
+
+    it('does not throw when postReplies is provided with data', () => {
+        expect(() => buildSystemPrompt({
+            ...baseArgs,
+            postReplies: { recent_replies: [{ text: 'reply', at: null }] },
+        })).not.toThrow();
     });
 });
