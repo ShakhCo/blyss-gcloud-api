@@ -223,6 +223,29 @@ RULES:
 - No hashtags. No "How can I help?". No self-introductions.
 - Vary your wording — never repeat the exact same reply twice.`;
 
+        // ── Section 4.5a — RETURNING COMMENTER (PERS-03 + PERS-04) ──────────
+        if (commenterHistory && commenterHistory.comment_count >= 2) {
+            const count = commenterHistory.comment_count;
+            const warmthHint = count >= 4
+                ? 'They are a loyal regular — be noticeably warm.'
+                : 'They have commented before — a subtle nod is enough.';
+            systemPrompt += `\n\nRETURNING COMMENTER:\nThis person has commented ${count} time${count !== 1 ? 's' : ''} before.\n${warmthHint}\nAbout 1 in 3 times, briefly acknowledge their return ("Yana keldingiz!", "Sog'indik sizni!" or equivalent). Not every reply — keep it natural, not programmatic.\nDo NOT quote or reference their previous comment text.\n\nIf their comment expresses genuine praise, curiosity, or experience-sharing, consider ending with a service-related question ("Qaysi uslubni yoqtirasiz?", "Sizga ham sinab ko'rmoqchimisiz?" or equivalent). Use your judgment — only when it feels conversational.`;
+        }
+
+        // ── Section 4.5b — POST TYPE (QUAL-03 + QUAL-04) ────────────────────
+        if (postCaption) {
+            systemPrompt += `\n\nPOST TYPE:\nDetermine the post type from the caption keywords and adapt your reply tone:\n- PROMO (aksiya, chegirma, discount, sale, skidka): use urgency language ("Hozir band bo'ling!", "Taklifdan foydalaning!")\n- BEFORE/AFTER (oldin/keyin, result, natija, transformation): celebrate the transformation ("Zo'r natija!", "Ajoyib o'zgarish!")\n- MILESTONE (anniversary, yil, oy, 1000, congratulations, yubileya): celebratory and proud ("Tabriklaymiz!", "Katta yutuq!")\n- GENERAL (everything else): standard warm persona — no special tone shift needed.`;
+        }
+
+        // ── Section 4.5c — RECENT REPLIES (QUAL-01 + QUAL-02) ───────────────
+        if (postReplies && postReplies.recent_replies && postReplies.recent_replies.length > 0) {
+            const recentTexts = postReplies.recent_replies
+                .slice(0, 5)
+                .map((r, i) => `${i + 1}. "${r.text}"`)
+                .join('\n');
+            systemPrompt += `\n\nRECENT REPLIES ON THIS POST — DO NOT REPEAT:\n${recentTexts}\nDo NOT start your reply with the same word as any reply above. Vary your opening and phrasing.`;
+        }
+
         // ── Section 5: Example replies ────────────────────────────────────────
         if (aiExampleReplies) {
             systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${aiExampleReplies}`;
