@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 1 context gathered
-last_updated: "2026-03-10T09:05:25.980Z"
+stopped_at: Completed 01-prompt-architecture-model-switch/01-01-PLAN.md
+last_updated: "2026-03-10T09:35:30.347Z"
 last_activity: 2026-03-10 — Roadmap created
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
   percent: 0
 ---
 
@@ -50,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01-prompt-architecture-model-switch P01 | 6min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -61,6 +62,9 @@ Recent decisions affecting current work:
 - [Pre-Phase 1]: Switch AI model from o4-mini (reasoning) to gpt-4.1-mini (chat completions) — balance cost vs quality; verify pricing at platform.openai.com before implementation
 - [Pre-Phase 1]: Track commenter history in Firestore (single document per commenter per business, not one per comment) — TTL: delete records older than 90 days
 - [Pre-Phase 1]: Personality via prompt engineering first — improve prompts before changing architecture
+- [Phase 01-prompt-architecture-model-switch]: buildSystemPrompt() is a named export pure function — enables unit testing without mocks, extracted from inline construction in handleCommentEvent
+- [Phase 01-prompt-architecture-model-switch]: Switched OpenAI API from responses.create(o4-mini) to chat.completions.create(gpt-4.1-mini, temperature=0.9) — balances cost vs quality
+- [Phase 01-prompt-architecture-model-switch]: bookingLink conditionally included in prompt — only in booking-intent rules sections, not unconditionally
 
 ### Pending Todos
 
@@ -74,6 +78,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T09:05:25.978Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-prompt-architecture-model-switch/01-CONTEXT.md
+Last session: 2026-03-10T09:35:30.345Z
+Stopped at: Completed 01-prompt-architecture-model-switch/01-01-PLAN.md
+Resume file: None

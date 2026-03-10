@@ -32,9 +32,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFR-01**: AI model switched from o4-mini (reasoning) to gpt-4.1-mini (chat completions) with temperature 0.9
-- [ ] **INFR-02**: Prompt construction extracted into a dedicated `buildSystemPrompt()` function with layered sections
-- [ ] **INFR-03**: `buildBusinessInfo()` Firestore reads parallelized with Promise.all instead of sequential awaits
+- [x] **INFR-01**: AI model switched from o4-mini (reasoning) to gpt-4.1-mini (chat completions) with temperature 0.9
+- [x] **INFR-02**: Prompt construction extracted into a dedicated `buildSystemPrompt()` function with layered sections
+- [x] **INFR-03**: `buildBusinessInfo()` Firestore reads parallelized with Promise.all instead of sequential awaits
 
 ## v2 Requirements
 
@@ -83,9 +83,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-02 | Phase 3 | Pending |
 | QUAL-03 | Phase 3 | Pending |
 | QUAL-04 | Phase 3 | Pending |
-| INFR-01 | Phase 1 | Pending |
-| INFR-02 | Phase 1 | Pending |
-| INFR-03 | Phase 1 | Pending |
+| INFR-01 | Phase 1 | Complete |
+| INFR-02 | Phase 1 | Complete |
+| INFR-03 | Phase 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 17 total

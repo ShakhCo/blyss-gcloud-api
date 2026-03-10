@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. @username appears naturally in replies — once, placed where a human would put it
   4. A reply to a 2-word comment is one sentence; a reply to a paragraph-length comment is proportionally longer
   5. No two consecutive replies on a fresh test post start with the same opener word
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 01-01-PLAN.md — Extract buildSystemPrompt(), parallelize buildBusinessInfo(), switch to gpt-4.1-mini
@@ -74,7 +74,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Prompt Architecture & Model Switch | 0/2 | Planning complete | - |
+| 1. Prompt Architecture & Model Switch | 1/2 | In Progress|  |
 | 2. Commenter History Infrastructure | 0/? | Not started | - |
 | 3. Memory & Variety in Prompt | 0/? | Not started | - |
 | 4. History Writes & Persistence Loop | 0/? | Not started | - |
