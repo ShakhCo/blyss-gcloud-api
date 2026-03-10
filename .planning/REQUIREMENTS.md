@@ -69,29 +69,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TONE-01 | — | Pending |
-| TONE-02 | — | Pending |
-| TONE-03 | — | Pending |
-| TONE-04 | — | Pending |
-| TONE-05 | — | Pending |
-| TONE-06 | — | Pending |
-| PERS-01 | — | Pending |
-| PERS-02 | — | Pending |
-| PERS-03 | — | Pending |
-| PERS-04 | — | Pending |
-| QUAL-01 | — | Pending |
-| QUAL-02 | — | Pending |
-| QUAL-03 | — | Pending |
-| QUAL-04 | — | Pending |
-| INFR-01 | — | Pending |
-| INFR-02 | — | Pending |
-| INFR-03 | — | Pending |
+| TONE-01 | Phase 1 | Pending |
+| TONE-02 | Phase 1 | Pending |
+| TONE-03 | Phase 1 | Pending |
+| TONE-04 | Phase 1 | Pending |
+| TONE-05 | Phase 1 | Pending |
+| TONE-06 | Phase 1 | Pending |
+| PERS-01 | Phase 1 | Pending |
+| PERS-02 | Phase 2 | Pending |
+| PERS-03 | Phase 3 | Pending |
+| PERS-04 | Phase 3 | Pending |
+| QUAL-01 | Phase 3 | Pending |
+| QUAL-02 | Phase 3 | Pending |
+| QUAL-03 | Phase 3 | Pending |
+| QUAL-04 | Phase 3 | Pending |
+| INFR-01 | Phase 1 | Pending |
+| INFR-02 | Phase 1 | Pending |
+| INFR-03 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 17 total
-- Mapped to phases: 0
-- Unmapped: 17 ⚠️
+- Mapped to phases: 17
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-10*
-*Last updated: 2026-03-10 after initial definition*
+*Last updated: 2026-03-10 after roadmap creation*
