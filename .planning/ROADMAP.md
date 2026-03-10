@@ -32,8 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 01-01-PLAN.md — Extract buildSystemPrompt(), parallelize buildBusinessInfo(), switch to gpt-4.1-mini
-- [ ] 01-02-PLAN.md — Rewrite AI persona prompt with all TONE and PERS requirements + human verification
+- [x] 01-01-PLAN.md — Extract buildSystemPrompt(), parallelize buildBusinessInfo(), switch to gpt-4.1-mini
+- [x] 01-02-PLAN.md — Rewrite AI persona prompt with all TONE and PERS requirements + human verification
 
 ### Phase 2: Commenter History Infrastructure
 **Goal**: Firestore subcollections for commenter memory and post reply log exist with correct schema, parallel reads are wired into the pipeline, and reply behavior is unchanged (reads fetched but not yet used in prompt)
@@ -43,7 +43,10 @@ Plans:
   1. A commenter's username, comment_count, first_seen_at, last_seen_at, and last_comment_text are readable from Firestore after their first comment is processed (once writes are added in Phase 4 — this phase validates schema correctness)
   2. The two new Firestore reads execute in parallel with existing buildBusinessInfo() reads and do not increase webhook response time by more than 200ms
   3. Reply content is identical to Phase 1 output — reads are fetched but not yet injected into the prompt
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md — TDD: implement getCommenterHistory, getPostReplies, wire parallel reads, configure TTL
 
 ### Phase 3: Memory & Variety in Prompt
 **Goal**: Replies acknowledge returning commenters differently from first-timers, avoid repeating recent openers on the same post, and adapt tone to post type (promo, before/after, milestone, general)
@@ -75,6 +78,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Prompt Architecture & Model Switch | 2/2 | Complete   | 2026-03-10 |
-| 2. Commenter History Infrastructure | 0/? | Not started | - |
+| 2. Commenter History Infrastructure | 0/1 | In progress | - |
 | 3. Memory & Variety in Prompt | 0/? | Not started | - |
 | 4. History Writes & Persistence Loop | 0/? | Not started | - |
