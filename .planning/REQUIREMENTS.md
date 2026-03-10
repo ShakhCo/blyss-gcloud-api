@@ -19,7 +19,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Personalization
 
 - [x] **PERS-01**: AI uses @username naturally in replies — once, where a human would place it
-- [ ] **PERS-02**: System tracks returning commenters per business in Firestore (username, comment_count, last_seen)
+- [x] **PERS-02**: System tracks returning commenters per business in Firestore (username, comment_count, last_seen)
 - [ ] **PERS-03**: AI acknowledges returning commenters differently from first-timers ("Glad you're back!" vs generic)
 - [ ] **PERS-04**: AI asks engaging follow-up questions on genuine praise and curiosity comments to spark conversation
 
@@ -76,7 +76,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TONE-05 | Phase 1 | Complete |
 | TONE-06 | Phase 1 | Complete |
 | PERS-01 | Phase 1 | Complete |
-| PERS-02 | Phase 2 | Pending |
+| PERS-02 | Phase 2 | Complete |
 | PERS-03 | Phase 3 | Pending |
 | PERS-04 | Phase 3 | Pending |
 | QUAL-01 | Phase 3 | Pending |

@@ -13,7 +13,7 @@ Transform the existing Instagram auto-reply system from a detectable booking bot
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Prompt Architecture & Model Switch** - Rewrite the AI persona, switch to gpt-4.1-mini, extract buildSystemPrompt(), and fix infrastructure prerequisites (completed 2026-03-10)
-- [ ] **Phase 2: Commenter History Infrastructure** - Design and implement Firestore subcollections for commenter memory and post reply log; wire reads into the pipeline
+- [x] **Phase 2: Commenter History Infrastructure** - Design and implement Firestore subcollections for commenter memory and post reply log; wire reads into the pipeline (completed 2026-03-10)
 - [ ] **Phase 3: Memory & Variety in Prompt** - Inject commenter history and post reply data into the prompt; add post type classification and engagement questions
 - [ ] **Phase 4: History Writes & Persistence Loop** - Add fire-and-forget Firestore writes after each reply to close the memory loop
 
@@ -43,7 +43,7 @@ Plans:
   1. A commenter's username, comment_count, first_seen_at, last_seen_at, and last_comment_text are readable from Firestore after their first comment is processed (once writes are added in Phase 4 — this phase validates schema correctness)
   2. The two new Firestore reads execute in parallel with existing buildBusinessInfo() reads and do not increase webhook response time by more than 200ms
   3. Reply content is identical to Phase 1 output — reads are fetched but not yet injected into the prompt
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 02-01-PLAN.md — TDD: implement getCommenterHistory, getPostReplies, wire parallel reads, configure TTL
@@ -78,6 +78,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Prompt Architecture & Model Switch | 2/2 | Complete   | 2026-03-10 |
-| 2. Commenter History Infrastructure | 0/1 | In progress | - |
+| 2. Commenter History Infrastructure | 1/1 | Complete   | 2026-03-10 |
 | 3. Memory & Variety in Prompt | 0/? | Not started | - |
 | 4. History Writes & Persistence Loop | 0/? | Not started | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 2 context gathered
-last_updated: "2026-03-10T10:14:14.991Z"
+stopped_at: Completed 02-commenter-history-infrastructure/02-01-PLAN.md
+last_updated: "2026-03-10T10:57:31.476Z"
 last_activity: 2026-03-10 — Roadmap created
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 2
+  total_plans: 3
+  completed_plans: 3
   percent: 0
 ---
 
@@ -53,6 +53,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-prompt-architecture-model-switch P01 | 6min | 2 tasks | 2 files |
 | Phase 01-prompt-architecture-model-switch P02 | 15min | 2 tasks | 2 files |
 | Phase 01-prompt-architecture-model-switch P02 | 20min | 3 tasks | 2 files |
+| Phase 02-commenter-history-infrastructure P01 | 7min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,10 @@ Recent decisions affecting current work:
 - [Phase 01-prompt-architecture-model-switch]: Booking link appears ONLY in BOOKING-INTENT section — removed from REACTIONS and NEGATIVE routing entirely
 - [Phase 01-prompt-architecture-model-switch]: NEGATIVE comments get empathy + DM invite (DMga yozing, hal qilamiz) with no booking link — respects human frustration, builds trust
 - [Phase 01-prompt-architecture-model-switch]: Default examples use real Uzbek (Rahmat! Har doim xush kelibsiz) and Russian (Спасибо! Всегда рады видеть вас) — warm & balanced tone with script-matching demonstration
+- [Phase 02-commenter-history-infrastructure]: getCommenterHistory and getPostReplies are named exports — testable in isolation without mocking handleCommentEvent
+- [Phase 02-commenter-history-infrastructure]: igCommenterId guard: getCommenterHistory only called when commentData.from?.id is truthy — avoids unnecessary reads for anonymous comments
+- [Phase 02-commenter-history-infrastructure]: TTL fieldOverrides configured in firestore.indexes.json with ttl: true and indexes: [] — relies on Firestore auto-delete, not manual cleanup
+- [Phase 02-commenter-history-infrastructure]: commenterHistory and postReplies passed through buildSystemPrompt call site but NOT used in body — clean Phase 2/3 boundary
 
 ### Pending Todos
 
@@ -86,6 +91,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-10T10:14:14.989Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-commenter-history-infrastructure/02-CONTEXT.md
+Last session: 2026-03-10T10:57:31.474Z
+Stopped at: Completed 02-commenter-history-infrastructure/02-01-PLAN.md
+Resume file: None
