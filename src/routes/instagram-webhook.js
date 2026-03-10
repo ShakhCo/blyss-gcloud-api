@@ -88,6 +88,117 @@ router.post('/', async (req, res) => {
 });
 
 /**
+ * Build the system prompt for AI comment replies.
+ * Pure function — no side effects, no DB calls. Fully testable.
+ *
+ * @param {object} opts
+ * @param {string} opts.businessInfo      - Formatted business context from buildBusinessInfo()
+ * @param {boolean} opts.isSolo           - true = solo owner voice ("I"), false = team voice ("We")
+ * @param {string} opts.bookingLink       - Booking URL; empty string = omit booking sections
+ * @param {string} opts.username          - Commenter's @username (may be empty)
+ * @param {string} opts.postCaption       - Instagram post caption
+ * @param {string} opts.postTime          - Post publish time (formatted string)
+ * @param {string} opts.postAiInstructions - Per-post override instructions; empty = use global rules
+ * @param {string} opts.aiInstructions    - Global owner instructions (appended to global path)
+ * @param {string} opts.aiExampleReplies  - Owner-provided example replies; empty = use defaults
+ * @param {string} opts.now               - Current Tashkent time (formatted string)
+ * @returns {string} Complete system prompt
+ */
+export function buildSystemPrompt({
+    businessInfo,
+    isSolo,
+    bookingLink,
+    username,
+    postCaption,
+    postTime,
+    postAiInstructions,
+    aiInstructions,
+    aiExampleReplies,
+    now,
+}) {
+    const voiceNote = isSolo
+        ? 'You are the owner — speak as "I" (first person singular).'
+        : 'You represent the business team — speak as "We" (first person plural).';
+
+    let systemPrompt = `You are replying to Instagram post comments on behalf of a business.\nThis is a PUBLIC COMMENT SECTION — not a DM or chat.\n${voiceNote}`;
+    systemPrompt += `\nToday: ${now} (Tashkent, UTC+5)`;
+    if (username) {
+        systemPrompt += `\nCommenter: @${username}`;
+    }
+    systemPrompt += `\n\n${businessInfo}`;
+    if (postCaption || postTime) {
+        systemPrompt += `\nPost caption: "${postCaption}"`;
+        if (postTime) systemPrompt += `\nPost published: ${postTime}`;
+    }
+
+    if (postAiInstructions) {
+        // Per-post custom AI instructions — follow these instead of global rules
+        systemPrompt += `\n\nINSTRUCTIONS FOR REPLYING TO COMMENTS ON THIS POST:\n${postAiInstructions}`;
+        systemPrompt += `
+
+RULES:
+- Max 2 sentences. No exceptions.
+- Match the comment's language (uz/ru/en).
+- 1-2 emojis max, naturally placed.
+- Vary your wording — never repeat the exact same reply twice.
+- No hashtags. No self-introductions. No "DM us".
+- Sound like a friendly business owner, not a bot or support agent.
+- SPAM / IRRELEVANT ("Follow me", "Check my page"): Do not reply. Return exactly: __SKIP__`;
+    } else {
+        // Global default rules — drive bookings
+        systemPrompt += `
+
+GOAL: Drive bookings. Every reply should feel human and naturally push toward the booking link.
+
+REPLY BY COMMENT TYPE:
+
+QUESTIONS (price, hours, location, booking):
+- Answer in 1-2 sentences with specific info from business data above.
+- Always include booking link. For location questions, include map link.
+${bookingLink ? `- Add urgency naturally: "Joylar tez band bo'ladi, yozilib qo'ying: ${bookingLink}"` : ''}
+
+REACTIONS / EMOJIS / GREETINGS (🔥 ❤️ "Zo'r" "Salom" "Kelaman" "Wow"):
+- Thank warmly${bookingLink ? ' + booking link. Always.' : '.'}
+${bookingLink ? `- "Raxmat! 😍 Sizni kutamiz: ${bookingLink}"\n- "Спасибо! 🤍 Записывайтесь: ${bookingLink}"` : '- "Raxmat! 😍 Sizni kutamiz"\n- "Спасибо! 🤍"'}
+
+NEGATIVE COMMENTS ("Qimmat", "Yomon xizmat"):
+- Stay polite and brief. Don't argue. Invite them to try.
+${bookingLink ? `- "Bir tashrif buyurib ko'ring, albatta yoqadi 😊 ${bookingLink}"` : `- "Bir tashrif buyurib ko'ring, albatta yoqadi 😊"`}
+
+SPAM / IRRELEVANT ("Follow me", "Check my page"):
+- Ignore. Do not reply. Return exactly: __SKIP__
+
+RULES:
+- Max 2 sentences. No exceptions.
+- Match the comment's language (uz/ru/en).
+- 1-2 emojis max, naturally placed.
+- IMPORTANT: The post caption may contain time-relative words like "ertaga", "bugun", "завтра". These were relative to when the post was PUBLISHED, NOT today. Compare "Post published" date with "Today" date. If the post is old, do NOT repeat those time references — they are outdated. Instead, just promote the business normally${bookingLink ? ' with the booking link' : ''}.
+- Vary your wording — never repeat the exact same reply twice.
+- No hashtags. No "How can I help?". No self-introductions. No "DM us".
+- Never invent promotions, discounts, or events that are not currently happening.
+- Sound like a friendly business owner, not a bot or support agent.`;
+
+        if (aiInstructions) {
+            systemPrompt += `\n\nADDITIONAL OWNER INSTRUCTIONS:\n${aiInstructions}`;
+        }
+
+        if (aiExampleReplies) {
+            systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${aiExampleReplies}`;
+        } else {
+            systemPrompt += `
+
+EXAMPLE REPLIES (match this style and tone):
+uz: "Raxmat! 😊 Sizni kutamiz!"
+uz: "Zo'r, tez orada tashrif buyuring!"
+ru: "Спасибо! 🤍 Ждём вас!"
+ru: "Отличный выбор! Записывайтесь к нам 😊"`;
+        }
+    }
+
+    return systemPrompt;
+}
+
+/**
  * Handle an incoming Instagram comment event.
  * Auto-replies with the configured template if all conditions are met.
  *
@@ -227,82 +338,33 @@ async function handleCommentEvent(igUserId, commentData) {
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const now = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
-            let systemPrompt = `You are replying to Instagram post comments on behalf of a business.\nThis is a PUBLIC COMMENT SECTION — not a DM or chat.`;
-            systemPrompt += `\nToday: ${now} (Tashkent, UTC+5)`;
-            systemPrompt += `\n\n${businessInfo}`;
-            if (postCaption || postTime) {
-                systemPrompt += `\nPost caption: "${postCaption}"`;
-                if (postTime) systemPrompt += `\nPost published: ${postTime}`;
-            }
+            const isSolo = businessData.is_solo === true;
+            const username = commentData.from?.username || '';
+            const systemPrompt = buildSystemPrompt({
+                businessInfo,
+                isSolo,
+                bookingLink,
+                username,
+                postCaption,
+                postTime,
+                postAiInstructions: usingPostSettings ? postAiInstructions : '',
+                aiInstructions: connection.ai_instructions || '',
+                aiExampleReplies: connection.ai_example_replies || '',
+                now,
+            });
 
-            if (usingPostSettings && postAiInstructions) {
-                // Per-post custom AI instructions — follow these instead of global rules
-                systemPrompt += `\n\nINSTRUCTIONS FOR REPLYING TO COMMENTS ON THIS POST:\n${postAiInstructions}`;
-                systemPrompt += `
-
-RULES:
-- Max 2 sentences. No exceptions.
-- Match the comment's language (uz/ru/en).
-- 1-2 emojis max, naturally placed.
-- Vary your wording — never repeat the exact same reply twice.
-- No hashtags. No self-introductions. No "DM us".
-- Sound like a friendly business owner, not a bot or support agent.
-- SPAM / IRRELEVANT ("Follow me", "Check my page"): Do not reply. Return exactly: __SKIP__`;
-            } else {
-                // Global default rules — drive bookings
-                systemPrompt += `
-
-GOAL: Drive bookings. Every reply should feel human and naturally push toward the booking link.
-
-REPLY BY COMMENT TYPE:
-
-QUESTIONS (price, hours, location, booking):
-- Answer in 1-2 sentences with specific info from business data above.
-- Always include booking link. For location questions, include map link.
-- Add urgency naturally: "Joylar tez band bo'ladi, yozilib qo'ying: ${bookingLink}"
-
-REACTIONS / EMOJIS / GREETINGS (🔥 ❤️ "Zo'r" "Salom" "Kelaman" "Wow"):
-- Thank warmly + booking link. Always.
-- "Raxmat! 😍 Sizni kutamiz: ${bookingLink}"
-- "Спасибо! 🤍 Записывайтесь: ${bookingLink}"
-
-NEGATIVE COMMENTS ("Qimmat", "Yomon xizmat"):
-- Stay polite and brief. Don't argue. Invite them to try.
-- "Bir tashrif buyurib ko'ring, albatta yoqadi 😊 ${bookingLink}"
-
-SPAM / IRRELEVANT ("Follow me", "Check my page"):
-- Ignore. Do not reply. Return exactly: __SKIP__
-
-RULES:
-- Max 2 sentences. No exceptions.
-- Match the comment's language (uz/ru/en).
-- 1-2 emojis max, naturally placed.
-- IMPORTANT: The post caption may contain time-relative words like "ertaga", "bugun", "завтра". These were relative to when the post was PUBLISHED, NOT today. Compare "Post published" date with "Today" date. If the post is old, do NOT repeat those time references — they are outdated. Instead, just promote the business normally with the booking link.
-- Vary your wording — never repeat the exact same reply twice.
-- No hashtags. No "How can I help?". No self-introductions. No "DM us".
-- Never invent promotions, discounts, or events that are not currently happening.
-- Sound like a friendly business owner, not a bot or support agent.`;
-
-                if (connection.ai_instructions) {
-                    systemPrompt += `\n\nADDITIONAL OWNER INSTRUCTIONS:\n${connection.ai_instructions}`;
-                }
-                if (connection.ai_example_replies) {
-                    systemPrompt += `\n\nEXAMPLE REPLIES (match this style):\n${connection.ai_example_replies}`;
-                }
-            }
-
-            const aiResponse = await openai.responses.create({
-                model: 'o4-mini',
-                reasoning: { effort: 'low' },
-                input: [
-                    { role: 'developer', content: systemPrompt },
+            const aiResponse = await openai.chat.completions.create({
+                model: 'gpt-4.1-mini',
+                temperature: 0.9,
+                messages: [
+                    { role: 'system', content: systemPrompt },
                     { role: 'user', content: commentText },
                 ],
             });
-            replyMessage = (aiResponse.output_text || '').trim();
+            replyMessage = (aiResponse.choices[0]?.message?.content || '').trim();
 
             // Skip spam/irrelevant comments or empty responses
-            if (!replyMessage || replyMessage === '__SKIP__') {
+            if (!replyMessage || replyMessage === '__SKIP__' || replyMessage.includes('__SKIP__')) {
                 console.log(`Instagram webhook: AI skipped comment ${commentId} (empty or spam)`);
                 return;
             }
@@ -341,6 +403,7 @@ RULES:
 
 /**
  * Build detailed business info string for AI system prompt.
+ * Parallelizes Firestore reads for services and employees.
  */
 async function buildBusinessInfo(businessId, businessData, bookingLink) {
     const lines = [];
@@ -377,9 +440,14 @@ async function buildBusinessInfo(businessId, businessData, bookingLink) {
         }
     }
 
-    // 5. Services
-    const servicesSnap = await db.collection('businesses').doc(businessId)
-        .collection('services').where('is_active', '==', true).get();
+    // 5 & 6. Services and employees — parallel reads (2 round trips instead of sequential)
+    const [servicesSnap, employeesSnap] = await Promise.all([
+        db.collection('businesses').doc(businessId)
+            .collection('services').where('is_active', '==', true).get(),
+        db.collection('businesses').doc(businessId)
+            .collection('employees').where('is_accepted', '==', true).get(),
+    ]);
+
     if (!servicesSnap.empty) {
         const serviceLines = [];
         for (const doc of servicesSnap.docs) {
@@ -390,21 +458,24 @@ async function buildBusinessInfo(businessId, businessData, bookingLink) {
         lines.push(`Services:\n${serviceLines.join('\n')}`);
     }
 
-    // 6. Employees with their services
-    const employeesSnap = await db.collection('businesses').doc(businessId)
-        .collection('employees').where('is_accepted', '==', true).get();
     if (!employeesSnap.empty) {
+        // Fetch all employee services in parallel
+        const empServiceSnaps = await Promise.all(
+            employeesSnap.docs.map(empDoc =>
+                db.collection('businesses').doc(businessId)
+                    .collection('employees').doc(empDoc.id)
+                    .collection('employeeServices').where('is_active', '==', true).get()
+            )
+        );
+
         const empLines = [];
-        for (const empDoc of employeesSnap.docs) {
+        employeesSnap.docs.forEach((empDoc, i) => {
             const emp = empDoc.data();
             const empName = emp.phone_number || 'Employee';
             const position = emp.position || '';
             let line = `  - ${position}${empName !== 'Employee' ? ` (${empName})` : ''}`;
 
-            // Get employee's services
-            const empServicesSnap = await db.collection('businesses').doc(businessId)
-                .collection('employees').doc(empDoc.id)
-                .collection('employeeServices').where('is_active', '==', true).get();
+            const empServicesSnap = empServiceSnaps[i];
             if (!empServicesSnap.empty) {
                 const svcNames = [];
                 for (const esDoc of empServicesSnap.docs) {
@@ -417,7 +488,7 @@ async function buildBusinessInfo(businessId, businessData, bookingLink) {
                 line += `: ${svcNames.join(', ')}`;
             }
             empLines.push(line);
-        }
+        });
         lines.push(`Team:\n${empLines.join('\n')}`);
     }
 
