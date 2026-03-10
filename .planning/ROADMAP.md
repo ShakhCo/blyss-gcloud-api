@@ -46,7 +46,7 @@ Plans:
 **Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 02-01-PLAN.md — TDD: implement getCommenterHistory, getPostReplies, wire parallel reads, configure TTL
+- [x] 02-01-PLAN.md — TDD: implement getCommenterHistory, getPostReplies, wire parallel reads, configure TTL
 
 ### Phase 3: Memory & Variety in Prompt
 **Goal**: Replies acknowledge returning commenters differently from first-timers, avoid repeating recent openers on the same post, and adapt tone to post type (promo, before/after, milestone, general)
@@ -57,7 +57,10 @@ Plans:
   2. The 4th reply on a single post does not start with the same word as any of the previous 3 replies on that post
   3. A before/after post generates a reply celebrating transformation; a promo post generates a reply with urgency language; a milestone post generates a celebratory reply
   4. A genuine praise or curiosity comment receives a reply that ends with a follow-up question rather than a booking link
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 03-01-PLAN.md — TDD: inject commenter history, post type, and reply deduplication into buildSystemPrompt()
 
 ### Phase 4: History Writes & Persistence Loop
 **Goal**: Commenter memory and post reply log accumulate persistently across all sessions and instance restarts, closing the feedback loop that Phases 2-3 read from
@@ -79,5 +82,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Prompt Architecture & Model Switch | 2/2 | Complete   | 2026-03-10 |
 | 2. Commenter History Infrastructure | 1/1 | Complete   | 2026-03-10 |
-| 3. Memory & Variety in Prompt | 0/? | Not started | - |
+| 3. Memory & Variety in Prompt | 0/1 | Not started | - |
 | 4. History Writes & Persistence Loop | 0/? | Not started | - |
