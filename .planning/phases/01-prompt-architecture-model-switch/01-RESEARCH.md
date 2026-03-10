@@ -485,7 +485,7 @@ Today: ${now} (Tashkent, UTC+5)`;
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `src/routes/__tests__/instagram-webhook.test.js` — covers all above req IDs; needs Firestore and OpenAI mocks
+- [ ] `src/routes/instagram-webhook.test.js` — covers all above req IDs; needs Firestore and OpenAI mocks
 - [ ] Vitest config and mock setup if not already present in project
 
 ## Sources
