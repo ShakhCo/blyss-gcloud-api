@@ -705,7 +705,14 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
 
         if (functionCalls.length > 0) {
             // Add AI output (function calls) to input for next iteration
-            input.push(...response.output);
+            // Strip parsed_arguments added by responses.parse() — API rejects unknown fields
+            input.push(...response.output.map(item => {
+                if (item.type === 'function_call') {
+                    const { id, type, call_id, name, arguments: args } = item;
+                    return { id, type, call_id, name, arguments: args };
+                }
+                return item;
+            }));
 
             for (const fc of functionCalls) {
                 let args = {};
