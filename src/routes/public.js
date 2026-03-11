@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import OpenAI from 'openai';
 import { db } from '../db/db.js';
 import { authenticate, verifySignature } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
@@ -15,6 +16,11 @@ import { sendBookingCancellationNotification, sendTelegramMessage } from '../uti
 import { resolveDiscount } from '../utils/discountResolver.js';
 const router = Router();
 const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
+
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI();
+}
 
 /**
  * Apply rate limiting to all public routes
@@ -2754,6 +2760,7 @@ router.post('/businesses/:businessId/chat', verifySignature, chatLimiter, async 
             return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
         }
 
+        const businessData = businessDoc.data();
         const now = new Date();
         const conversationId = `web_${visitor_id}`;
         const conversationRef = db
@@ -2779,6 +2786,7 @@ router.post('/businesses/:businessId/chat', verifySignature, chatLimiter, async 
             await conversationRef.update(update);
         }
 
+        // Save user message
         const messageRef = await conversationRef.collection('messages').add({
             sender_type: 'user',
             sender_id: null,
@@ -2787,10 +2795,104 @@ router.post('/businesses/:businessId/chat', verifySignature, chatLimiter, async 
             created_at: now
         });
 
+        // Generate AI reply if OpenAI is configured
+        let aiReply = null;
+        if (openai) {
+            try {
+                // Fetch conversation history for context (last 20 messages)
+                const historySnapshot = await conversationRef
+                    .collection('messages')
+                    .orderBy('created_at', 'desc')
+                    .limit(20)
+                    .get();
+
+                const history = historySnapshot.docs.reverse().map(doc => {
+                    const d = doc.data();
+                    return {
+                        role: d.sender_type === 'user' ? 'user' : 'assistant',
+                        content: d.text
+                    };
+                });
+
+                // Build business context
+                const businessInfo = await buildWebChatBusinessInfo(businessId, businessData);
+                const tenantUrl = businessData.tenant_url || '';
+                const bookingLink = tenantUrl ? `https://${tenantUrl}` : '';
+
+                const tashkentNow = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent' });
+                const d = new Date(tashkentNow);
+                const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                const nowStr = `${days[d.getDay()]}, ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+                const isSolo = businessData.is_solo === true;
+                const voice = isSolo
+                    ? 'first person singular — "I", "men", "ya"'
+                    : 'first person plural — "we", "biz", "my"';
+
+                const systemPrompt = `You are a helpful chat assistant on the website of a business. You help visitors with questions about services, prices, booking, working hours, and location.
+
+Voice: ${voice}
+Tone: warm, helpful, and professional. Not a bot. Be concise.
+Today: ${nowStr} (Tashkent, UTC+5)
+
+${businessInfo}
+${bookingLink ? `Online booking: ${bookingLink}` : ''}
+
+RULES:
+- Match the visitor's language (Uzbek/Russian/English).
+- Match the visitor's script: Cyrillic Uzbek → Cyrillic reply, Latin Uzbek → Latin reply.
+- Keep replies concise — 1-3 sentences max for simple questions.
+- Answer with specific info from business data when possible.
+- For booking questions, provide the booking link: ${bookingLink || 'not available'}
+- For location questions, provide the map link from business data.
+- If you don't know the answer, say so honestly and suggest contacting the business directly.
+- Do NOT invent information not in the business data.
+- Use 0-1 emoji per message. Natural placement only.
+- Be conversational, like a real person chatting — not a formal support bot.`;
+
+                const messages = [
+                    { role: 'system', content: systemPrompt },
+                    ...history
+                ];
+
+                const aiResponse = await openai.chat.completions.create({
+                    model: 'gpt-4.1-mini',
+                    temperature: 0.7,
+                    max_tokens: 300,
+                    messages
+                });
+
+                const aiText = (aiResponse.choices[0]?.message?.content || '').trim();
+
+                if (aiText) {
+                    const aiNow = new Date();
+                    await conversationRef.update({ last_message_at: aiNow });
+                    const aiMsgRef = await conversationRef.collection('messages').add({
+                        sender_type: 'ai',
+                        sender_id: null,
+                        sender_name: 'AI Assistant',
+                        text: aiText,
+                        created_at: aiNow
+                    });
+                    aiReply = {
+                        id: aiMsgRef.id,
+                        sender_type: 'ai',
+                        sender_name: 'AI Assistant',
+                        text: aiText,
+                        created_at: aiNow.toISOString()
+                    };
+                }
+            } catch (aiError) {
+                console.error('Web chat AI reply error:', aiError.message);
+                // Non-fatal — user message was already saved
+            }
+        }
+
         res.status(201).json({
             conversation_id: conversationId,
             message_id: messageRef.id,
-            created_at: now.toISOString()
+            created_at: now.toISOString(),
+            ai_reply: aiReply
         });
     } catch (error) {
         console.error('Error in POST /public/businesses/:businessId/chat:', error);
@@ -2842,5 +2944,61 @@ router.get('/businesses/:businessId/chat/:visitorId/messages', verifySignature, 
         res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
     }
 });
+
+/**
+ * Build business context string for web chat AI system prompt.
+ * Similar to Instagram buildBusinessInfo but lighter weight.
+ */
+async function buildWebChatBusinessInfo(businessId, businessData) {
+    const lines = [];
+
+    lines.push(`Business: ${businessData.business_name || 'Unknown'}`);
+    if (businessData.bio) lines.push(`About: ${businessData.bio}`);
+
+    if (businessData.business_phone_number) {
+        lines.push(`Phone: ${businessData.business_phone_number}`);
+    }
+
+    if (businessData.location) {
+        const { lat, lng, display_address, street_name, city } = businessData.location;
+        const addr = display_address || street_name || city || '';
+        if (addr) lines.push(`Address: ${addr}`);
+        if (lat && lng) {
+            lines.push(`Map: https://www.google.com/maps?q=${lat},${lng}`);
+        }
+    }
+
+    if (businessData.working_hours) {
+        const dayNames = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        const hourLines = [];
+        for (const day of dayNames) {
+            const h = businessData.working_hours[day];
+            if (!h) continue;
+            if (!h.is_open) {
+                hourLines.push(`  ${day}: closed`);
+            } else {
+                const start = `${String(Math.floor(h.start / 3600)).padStart(2, '0')}:${String(Math.floor((h.start % 3600) / 60)).padStart(2, '0')}`;
+                const end = `${String(Math.floor(h.end / 3600)).padStart(2, '0')}:${String(Math.floor((h.end % 3600) / 60)).padStart(2, '0')}`;
+                hourLines.push(`  ${day}: ${start} - ${end}`);
+            }
+        }
+        if (hourLines.length) lines.push(`Working hours:\n${hourLines.join('\n')}`);
+    }
+
+    // Fetch services
+    const servicesSnap = await db.collection('businesses').doc(businessId)
+        .collection('services').where('is_active', '==', true).get();
+
+    if (!servicesSnap.empty) {
+        const serviceLines = servicesSnap.docs.map(doc => {
+            const s = doc.data();
+            const name = s.name?.uz || s.name?.ru || 'Service';
+            return `  - ${name}: ${s.price} so'm, ${s.duration_minutes} min`;
+        });
+        lines.push(`Services:\n${serviceLines.join('\n')}`);
+    }
+
+    return lines.join('\n');
+}
 
 export default router;
