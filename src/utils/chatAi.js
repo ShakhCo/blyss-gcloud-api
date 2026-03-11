@@ -81,11 +81,11 @@ const TOOLS = [
     {
         type: 'function',
         name: 'send_verification_code',
-        description: 'Send SMS verification code to phone number. Call when user provides their phone number for booking.',
+        description: 'Send SMS verification code to phone number. ONLY call this AFTER the user has explicitly typed their phone number in the chat. NEVER call this with a made-up or guessed number. You MUST first ask the user for their phone number and wait for their reply.',
         parameters: {
             type: 'object',
             properties: {
-                phone_number: { type: 'string', description: 'Phone number like +998901234567' },
+                phone_number: { type: 'string', description: 'Phone number like +998901234567 — must come from user input, never guess' },
             },
             required: ['phone_number'],
         },
@@ -612,11 +612,13 @@ Tabiiy suhbat orqali booking qilishga olib bor:
 1. Mijoz xizmat so'rasa → qaysi xizmat ekanini aniqla (agar noaniq bo'lsa get_services chaqir va tugmalar ko'rsat, aks holda to'g'ridan-to'g'ri kunni so'ra)
 2. Kun so'ra → get_available_dates chaqir, ochiq kunlarni ko'rsat
 3. Vaqt so'ra → get_available_slots chaqir, vaqtlarni ko'rsat
-4. Vaqt tanlangach → telefon raqam so'ra (agar auth yo'q bo'lsa)
-5. Telefon kelgach → send_verification_code
+4. Vaqt tanlangach → agar auth yo'q bo'lsa, AVVAL telefon raqam SO'RA. Masalan: "Yaxshi! Telefon raqamingizni yuboring, band qilib qo'yay". KEYIN KUTIB TUR — faqat mijoz raqamini yozgandan keyin keyingi qadamga o't.
+5. Mijoz telefon raqamini YOZGANDAN KEYIN → send_verification_code chaqir. HECH QACHON raqamni o'ylab topma yoki taxmin qilma.
 6. Kod kelgach → verify_code
 7. Yangi foydalanuvchi bo'lsa → ism so'ra, register_user
 8. Hammasi tayyor → create_booking
+
+MUHIM: Har bir qadamda FAQAT BITTA narsa so'ra. Telefon raqam so'ragandan keyin, mijoz javob berguncha hech narsa qilma. send_verification_code ni FAQAT mijoz raqamini yozganda chaqir.
 
 ═══ BUTTONS (buttons array) ═══
 
