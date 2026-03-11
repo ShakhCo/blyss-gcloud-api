@@ -652,8 +652,15 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
     const history = historySnap.docs.reverse().map(doc => {
         const d = doc.data();
         if (d.sender_type === 'user') return { role: 'user', content: d.text };
-        // For AI messages, include the raw text (might be JSON)
-        return { role: 'assistant', content: d.text };
+        // For AI messages, ensure we pass clean text (not raw JSON)
+        let aiText = d.text;
+        if (typeof aiText === 'string' && aiText.trim().startsWith('{')) {
+            try {
+                const p = JSON.parse(aiText);
+                if (p.message) aiText = p.message;
+            } catch { /* keep as-is */ }
+        }
+        return { role: 'assistant', content: aiText };
     });
 
     const systemPrompt = buildChatSystemPrompt(businessData, businessId, session);
@@ -703,8 +710,30 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
         let parsed;
         try {
             parsed = JSON.parse(content);
+            // Safety: if message itself is JSON, parse it again
+            if (typeof parsed.message === 'string' && parsed.message.trim().startsWith('{')) {
+                try {
+                    const inner = JSON.parse(parsed.message);
+                    if (inner.message) parsed = inner;
+                } catch { /* not nested JSON, keep as-is */ }
+            }
         } catch {
             parsed = { message: content, buttons: [], input_type: null };
+        }
+
+        const finalMessage = parsed.message || content;
+        // Last resort: if the message still looks like raw JSON, extract just the message field
+        if (finalMessage.includes('"buttons"') && finalMessage.includes('"message"')) {
+            try {
+                const extracted = JSON.parse(finalMessage);
+                if (extracted.message) {
+                    parsed = {
+                        message: extracted.message,
+                        buttons: extracted.buttons || parsed.buttons || [],
+                        input_type: extracted.input_type ?? parsed.input_type ?? null,
+                    };
+                }
+            } catch { /* keep as-is */ }
         }
 
         // Save updated session
