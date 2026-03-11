@@ -604,7 +604,7 @@ Always respond in valid JSON:
 BUTTON RULES:
 - Include buttons ONLY when presenting specific choices (services, dates, times).
 - CRITICAL: "value" MUST ALWAYS equal "label" exactly. Never use IDs, raw dates, or numbers as value. The value is shown as the user's chat message.
-- For services: label = service name only, NO price (e.g. {"label": "Soch olish", "value": "Soch olish"}). Mention the price only AFTER the user selects.
+- For services: label = service name only, NO price (e.g. {"label": "Soch olish", "value": "Soch olish"}). Do NOT list prices in the message text either — only tell the user the price and duration AFTER they select a specific service.
 - For dates: label = "day_name, date" (e.g. {"label": "Dushanba, 2026-03-12", "value": "Dushanba, 2026-03-12"}).
 - For time slots: show up to 12 slots (e.g. {"label": "14:00", "value": "14:00"}).
 - NEVER include buttons when asking for free-form input (phone, name, OTP).
