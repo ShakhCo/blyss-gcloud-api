@@ -49,98 +49,84 @@ function localeName(nameObj, lang = 'uz') {
 const TOOLS = [
     {
         type: 'function',
-        function: {
-            name: 'get_services',
-            description: 'Get list of available services with prices and durations. Call ONLY when: (1) user asks "what services do you have?", (2) you need to look up a service ID for a service the user mentioned by name, or (3) user is unsure what they want. Do NOT show service buttons if user already told you what they want — just use this to find the service_id internally, then proceed to dates.',
-            parameters: { type: 'object', properties: {} },
+        name: 'get_services',
+        description: 'Get list of available services with prices and durations. Call ONLY when: (1) user asks "what services do you have?", (2) you need to look up a service ID for a service the user mentioned by name, or (3) user is unsure what they want. Do NOT show service buttons if user already told you what they want — just use this to find the service_id internally, then proceed to dates.',
+        parameters: { type: 'object', properties: {} },
+    },
+    {
+        type: 'function',
+        name: 'get_available_dates',
+        description: 'Get available dates for booking in the next 7 days. Returns which days the business is open.',
+        parameters: {
+            type: 'object',
+            properties: {
+                service_id: { type: 'string', description: 'Service ID to check availability for' },
+            },
+            required: ['service_id'],
         },
     },
     {
         type: 'function',
-        function: {
-            name: 'get_available_dates',
-            description: 'Get available dates for booking in the next 7 days. Returns which days the business is open.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    service_id: { type: 'string', description: 'Service ID to check availability for' },
-                },
-                required: ['service_id'],
+        name: 'get_available_slots',
+        description: 'Get available time slots for a specific date and service.',
+        parameters: {
+            type: 'object',
+            properties: {
+                date: { type: 'string', description: 'YYYY-MM-DD' },
+                service_id: { type: 'string', description: 'Service ID' },
             },
+            required: ['date', 'service_id'],
         },
     },
     {
         type: 'function',
-        function: {
-            name: 'get_available_slots',
-            description: 'Get available time slots for a specific date and service.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    date: { type: 'string', description: 'YYYY-MM-DD' },
-                    service_id: { type: 'string', description: 'Service ID' },
-                },
-                required: ['date', 'service_id'],
+        name: 'send_verification_code',
+        description: 'Send SMS verification code to phone number. Call when user provides their phone number for booking.',
+        parameters: {
+            type: 'object',
+            properties: {
+                phone_number: { type: 'string', description: 'Phone number like +998901234567' },
             },
+            required: ['phone_number'],
         },
     },
     {
         type: 'function',
-        function: {
-            name: 'send_verification_code',
-            description: 'Send SMS verification code to phone number. Call when user provides their phone number for booking.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    phone_number: { type: 'string', description: 'Phone number like +998901234567' },
-                },
-                required: ['phone_number'],
+        name: 'verify_code',
+        description: 'Verify the OTP code entered by user.',
+        parameters: {
+            type: 'object',
+            properties: {
+                code: { type: 'string', description: '5-digit code' },
             },
+            required: ['code'],
         },
     },
     {
         type: 'function',
-        function: {
-            name: 'verify_code',
-            description: 'Verify the OTP code entered by user.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    code: { type: 'string', description: '5-digit code' },
-                },
-                required: ['code'],
+        name: 'register_user',
+        description: 'Register a new user with their first name after OTP verification.',
+        parameters: {
+            type: 'object',
+            properties: {
+                first_name: { type: 'string', description: 'User first name' },
             },
+            required: ['first_name'],
         },
     },
     {
         type: 'function',
-        function: {
-            name: 'register_user',
-            description: 'Register a new user with their first name after OTP verification.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    first_name: { type: 'string', description: 'User first name' },
-                },
-                required: ['first_name'],
+        name: 'create_booking',
+        description: 'Create a booking. User must be authenticated first. Uses pending booking info from session.',
+        parameters: {
+            type: 'object',
+            properties: {
+                date: { type: 'string', description: 'YYYY-MM-DD' },
+                start_time: { type: 'number', description: 'Seconds from midnight' },
+                service_id: { type: 'string', description: 'Service ID' },
+                employee_id: { type: 'string', description: 'Employee ID (optional, auto-assign if omitted)' },
             },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'create_booking',
-            description: 'Create a booking. User must be authenticated first. Uses pending booking info from session.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    date: { type: 'string', description: 'YYYY-MM-DD' },
-                    start_time: { type: 'number', description: 'Seconds from midnight' },
-                    service_id: { type: 'string', description: 'Service ID' },
-                    employee_id: { type: 'string', description: 'Employee ID (optional, auto-assign if omitted)' },
-                },
-                required: ['date', 'start_time', 'service_id'],
-            },
+            required: ['date', 'start_time', 'service_id'],
         },
     },
 ];
