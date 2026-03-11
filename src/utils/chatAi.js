@@ -643,6 +643,9 @@ TIL:
 - 0-1 emoji`;
 }
 
+// ─── Test exports (for unit testing only) ───
+export { buildChatSystemPrompt as _buildChatSystemPrompt };
+
 // ─── Main function ───
 
 /**
