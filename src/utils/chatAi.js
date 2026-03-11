@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { zodTextFormat } from 'openai/helpers/zod';
+import { z } from 'zod';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { db } from '../db/db.js';
@@ -7,6 +9,17 @@ import { generateTokenPair } from './jwt.js';
 import { resolveDiscount } from './discountResolver.js';
 
 const openai = process.env.OPENAI_API_KEY ? new OpenAI() : null;
+
+// ─── Structured output schema ───
+
+const ChatResponseSchema = z.object({
+    message: z.string().describe('Your reply text to the user'),
+    buttons: z.array(z.object({
+        label: z.string().describe('Button label shown to user'),
+        value: z.string().describe('Value sent when button clicked — must equal label'),
+    })).describe('Quick reply buttons. Empty array if no choices needed.'),
+    input_type: z.enum(['phone', 'otp', 'name']).nullable().describe('Set to phone/otp/name when asking for that input, null otherwise'),
+});
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DAY_LABELS = { uz: ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'], ru: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'] };
 
@@ -619,24 +632,18 @@ Tabiiy suhbat orqali booking qilishga olib bor:
 7. Yangi foydalanuvchi bo'lsa → ism so'ra, register_user
 8. Hammasi tayyor → create_booking
 
-═══ RESPONSE FORMAT ═══
+═══ BUTTONS (buttons array) ═══
 
-Har doim JSON:
-{
-  "message": "matn",
-  "buttons": [],
-  "input_type": null
-}
-
-BUTTONS:
 - FAQAT aniq tanlov kerak bo'lganda (xizmatlar ro'yxati, kunlar, vaqtlar)
 - "value" DOIM "label" bilan bir xil bo'lsin
-- Xizmatlar: faqat nom, narx yo'q ({"label": "Soch olish", "value": "Soch olish"})
-- Kunlar: {"label": "Dushanba, 2026-03-12", "value": "Dushanba, 2026-03-12"}
-- Vaqtlar: max 12 ta ({"label": "14:00", "value": "14:00"})
+- Xizmatlar: faqat nom, narx yo'q (label: "Soch olish", value: "Soch olish")
+- Kunlar: label: "Dushanba, 2026-03-12", value: "Dushanba, 2026-03-12"
+- Vaqtlar: max 12 ta (label: "14:00", value: "14:00")
 - Telefon/ism/kod so'raganda HECH QACHON button qo'yma
+- Agar tanlov kerak bo'lmasa — bo'sh array []
 
-INPUT_TYPE:
+═══ INPUT_TYPE ═══
+
 - "phone" — telefon raqam so'raganda
 - "otp" — tasdiqlash kodi so'raganda
 - "name" — ism so'raganda
@@ -677,7 +684,7 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
     const history = historySnap.docs.reverse().map(doc => {
         const d = doc.data();
         if (d.sender_type === 'user') return { role: 'user', content: d.text };
-        // For AI messages, ensure we pass clean text (not raw JSON)
+        // For AI messages, pass clean text (strip any legacy raw JSON)
         let aiText = d.text;
         if (typeof aiText === 'string' && aiText.trim().startsWith('{')) {
             try {
@@ -690,88 +697,76 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
 
     const systemPrompt = buildChatSystemPrompt(businessData, businessId, session);
 
-    // Build messages for OpenAI
-    let messages = [
+    // Build input for Responses API
+    let input = [
         { role: 'system', content: systemPrompt },
         ...history,
     ];
 
     // Run tool-calling loop (max 6 iterations)
-    let lastToolResults = [];
     for (let i = 0; i < 6; i++) {
-        const response = await openai.chat.completions.create({
+        const response = await openai.responses.parse({
             model: 'gpt-4.1-mini',
             temperature: 0.7,
-            max_tokens: 500,
-            messages,
+            max_output_tokens: 500,
+            input,
             tools: TOOLS,
-            response_format: { type: 'json_object' },
+            text: { format: zodTextFormat(ChatResponseSchema, 'chat_response') },
         });
 
-        const choice = response.choices[0];
+        // Check for function/tool calls
+        const functionCalls = response.output.filter(item => item.type === 'function_call');
 
-        if (choice.finish_reason === 'tool_calls' || choice.message.tool_calls?.length) {
-            // Execute tool calls
-            messages.push(choice.message);
-            lastToolResults = [];
+        if (functionCalls.length > 0) {
+            // Add AI output (function calls) to input for next iteration
+            input.push(...response.output);
 
-            for (const tc of choice.message.tool_calls) {
+            for (const fc of functionCalls) {
                 let args = {};
-                try { args = JSON.parse(tc.function.arguments); } catch { }
-                console.log(`Chat AI tool call: ${tc.function.name}(${JSON.stringify(args)})`);
+                try { args = JSON.parse(fc.arguments); } catch { }
+                console.log(`Chat AI tool call: ${fc.name}(${JSON.stringify(args)})`);
 
-                const result = await executeTool(tc.function.name, args, businessId, session);
+                const result = await executeTool(fc.name, args, businessId, session);
                 const resultStr = JSON.stringify(result);
                 console.log(`Chat AI tool result: ${resultStr.slice(0, 200)}`);
 
-                messages.push({ role: 'tool', tool_call_id: tc.id, content: resultStr });
-                lastToolResults.push({ name: tc.function.name, args, result });
+                input.push({
+                    type: 'function_call_output',
+                    call_id: fc.call_id,
+                    output: resultStr,
+                });
             }
             continue;
         }
 
-        // Final text response
-        const content = choice.message.content || '';
-        let parsed;
-        try {
-            parsed = JSON.parse(content);
-            // Safety: if message itself is JSON, parse it again
-            if (typeof parsed.message === 'string' && parsed.message.trim().startsWith('{')) {
-                try {
-                    const inner = JSON.parse(parsed.message);
-                    if (inner.message) parsed = inner;
-                } catch { /* not nested JSON, keep as-is */ }
-            }
-        } catch {
-            parsed = { message: content, buttons: [], input_type: null };
-        }
-
-        const finalMessage = parsed.message || content;
-        // Last resort: if the message still looks like raw JSON, extract just the message field
-        if (finalMessage.includes('"buttons"') && finalMessage.includes('"message"')) {
-            try {
-                const extracted = JSON.parse(finalMessage);
-                if (extracted.message) {
-                    parsed = {
-                        message: extracted.message,
-                        buttons: extracted.buttons || parsed.buttons || [],
-                        input_type: extracted.input_type ?? parsed.input_type ?? null,
-                    };
-                }
-            } catch { /* keep as-is */ }
-        }
-
-        // Save updated session
+        // Structured text response — guaranteed valid by zodTextFormat
         await conversationRef.update({ session });
 
-        return {
-            message: parsed.message || content,
-            buttons: Array.isArray(parsed.buttons) ? parsed.buttons : [],
-            input_type: parsed.input_type || null,
-        };
+        if (response.output_parsed) {
+            return {
+                message: response.output_parsed.message,
+                buttons: response.output_parsed.buttons || [],
+                input_type: response.output_parsed.input_type || null,
+            };
+        }
+
+        // Fallback: extract from raw text output if parse missed
+        const textItem = response.output.find(item => item.type === 'message' || item.type === 'text');
+        if (textItem) {
+            try {
+                const parsed = JSON.parse(typeof textItem.content === 'string' ? textItem.content : JSON.stringify(textItem.content));
+                return {
+                    message: parsed.message || '',
+                    buttons: Array.isArray(parsed.buttons) ? parsed.buttons : [],
+                    input_type: parsed.input_type || null,
+                };
+            } catch { /* fall through */ }
+        }
+
+        return { message: 'Iltimos, qayta yozing.', buttons: [], input_type: null };
     }
 
     // Fallback if loop exhausted
     await conversationRef.update({ session });
-    return { message: 'Please try again.', buttons: [], input_type: null };
+    return { message: 'Iltimos, qayta yozing.', buttons: [], input_type: null };
 }
