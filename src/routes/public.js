@@ -2712,4 +2712,135 @@ router.post('/reviews/:token', validate(submitReviewSchema), async (req, res) =>
     }
 });
 
+// ─── Public Chat Endpoints (anonymous visitors) ───
+
+const chatLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many messages, please slow down', error_code: 'RATE_LIMITED' },
+    validate: { trustProxy: false }
+});
+
+/**
+ * POST /public/businesses/:businessId/chat
+ * Send a message from an anonymous visitor.
+ * Body: { visitor_id, visitor_name?, message_text }
+ * Creates conversation doc if it doesn't exist.
+ */
+router.post('/businesses/:businessId/chat', verifySignature, chatLimiter, async (req, res) => {
+    try {
+        const { businessId } = req.params;
+        const { visitor_id, visitor_name, message_text } = req.body;
+
+        if (!visitor_id || !message_text) {
+            return res.status(400).json({
+                error: 'visitor_id and message_text are required',
+                error_code: 'VALIDATION_ERROR'
+            });
+        }
+
+        if (typeof visitor_id !== 'string' || visitor_id.length > 64) {
+            return res.status(400).json({ error: 'Invalid visitor_id', error_code: 'VALIDATION_ERROR' });
+        }
+        if (typeof message_text !== 'string' || message_text.trim().length === 0 || message_text.length > 2000) {
+            return res.status(400).json({ error: 'message_text must be 1-2000 characters', error_code: 'VALIDATION_ERROR' });
+        }
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(businessId).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        const now = new Date();
+        const conversationId = `web_${visitor_id}`;
+        const conversationRef = db
+            .collection('businesses')
+            .doc(businessId)
+            .collection('customer_conversations')
+            .doc(conversationId);
+
+        const conversationDoc = await conversationRef.get();
+
+        if (!conversationDoc.exists) {
+            await conversationRef.set({
+                visitor_id,
+                source: 'web',
+                first_name: visitor_name || null,
+                last_name: null,
+                created_at: now,
+                last_message_at: now
+            });
+        } else {
+            const update = { last_message_at: now };
+            if (visitor_name) update.first_name = visitor_name;
+            await conversationRef.update(update);
+        }
+
+        const messageRef = await conversationRef.collection('messages').add({
+            sender_type: 'user',
+            sender_id: null,
+            sender_name: visitor_name || 'Visitor',
+            text: message_text.trim(),
+            created_at: now
+        });
+
+        res.status(201).json({
+            conversation_id: conversationId,
+            message_id: messageRef.id,
+            created_at: now.toISOString()
+        });
+    } catch (error) {
+        console.error('Error in POST /public/businesses/:businessId/chat:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * GET /public/businesses/:businessId/chat/:visitorId/messages
+ * Get message history for an anonymous visitor.
+ */
+router.get('/businesses/:businessId/chat/:visitorId/messages', verifySignature, async (req, res) => {
+    try {
+        const { businessId, visitorId } = req.params;
+        const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+
+        const conversationId = `web_${visitorId}`;
+        const conversationRef = db
+            .collection('businesses')
+            .doc(businessId)
+            .collection('customer_conversations')
+            .doc(conversationId);
+
+        const conversationDoc = await conversationRef.get();
+        if (!conversationDoc.exists) {
+            return res.json({ messages: [] });
+        }
+
+        const messagesSnapshot = await conversationRef
+            .collection('messages')
+            .orderBy('created_at', 'asc')
+            .limit(limit)
+            .get();
+
+        const messages = messagesSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                sender_type: data.sender_type,
+                sender_name: data.sender_name,
+                text: data.text,
+                created_at: data.created_at?.toDate?.().toISOString() || data.created_at
+            };
+        });
+
+        res.json({ messages });
+    } catch (error) {
+        console.error('Error in GET /public/businesses/:businessId/chat/:visitorId/messages:', error);
+        res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 export default router;
