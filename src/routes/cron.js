@@ -589,7 +589,7 @@ router.post('/send-review-requests', async (req, res) => {
 
             // Send bilingual SMS
             const link = `${reviewBaseUrl}/rate?token=${token}`;
-            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing: ${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке: ${link}\n\n${reviewBaseUrl}`;
+            const smsMessage = `${group.business_name} ga tashrifingiz uchun rahmat! Fikringiz biz uchun muhim — iltimos, xizmatimizni baholang: ${link}\n✨ Keyingi safar tez va oson onlayn yoziling: ${reviewBaseUrl}\nYana kutib qolamiz!\n---\nСпасибо за визит в ${group.business_name}! Ваше мнение важно — пожалуйста, оцените наш сервис: ${link}\n✨ Быстрая онлайн-запись: ${reviewBaseUrl}\nБудем рады видеть вас снова!`;
 
             try {
                 await sendSms(group.customer_phone, smsMessage);
@@ -742,7 +742,7 @@ router.post('/test-review-requests', async (req, res) => {
             }
 
             const link = `${reviewBaseUrl}/rate?token=${token}`;
-            const smsMessage = `${group.business_name}ga tashrif buyurganingiz uchun rahmat! Iltimos, xizmatlarimizni baholash uchun quyidagi havolani bosing: ${link}\n\nСпасибо за визит в ${group.business_name}! Пожалуйста, оцените наши услуги по ссылке: ${link}\n\n${reviewBaseUrl}`;
+            const smsMessage = `${group.business_name} ga tashrifingiz uchun rahmat! Fikringiz biz uchun muhim — iltimos, xizmatimizni baholang: ${link}\n✨ Keyingi safar tez va oson onlayn yoziling: ${reviewBaseUrl}\nYana kutib qolamiz!\n---\nСпасибо за визит в ${group.business_name}! Ваше мнение важно — пожалуйста, оцените наш сервис: ${link}\n✨ Быстрая онлайн-запись: ${reviewBaseUrl}\nБудем рады видеть вас снова!`;
 
             try {
                 await sendSms(group.customer_phone, smsMessage);
