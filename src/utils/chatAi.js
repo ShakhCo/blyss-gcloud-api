@@ -22,6 +22,7 @@ const ChatResponseSchema = z.object({
 });
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DAY_LABELS = { uz: ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'], ru: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'] };
+const MONTH_LABELS = { uz: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'], ru: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'] };
 
 // ─── Helpers ───
 
@@ -56,7 +57,7 @@ const TOOLS = [
     {
         type: 'function',
         name: 'get_available_dates',
-        description: 'Get available dates for booking in the next 7 days. Returns which days the business is open.',
+        description: 'Get up to 3 nearest available dates for booking. Returns only days with free slots, with human-friendly labels (Bugun, Ertaga, 14-mart). Use label_uz/label_ru for buttons.',
         parameters: {
             type: 'object',
             properties: {
@@ -154,26 +155,55 @@ async function execGetServices(businessId) {
 async function execGetAvailableDates(businessId, serviceId) {
     const businessDoc = await db.collection('businesses').doc(businessId).get();
     if (!businessDoc.exists) return { error: 'Business not found' };
-    const wh = businessDoc.data().working_hours || {};
+    const businessData = businessDoc.data();
+    const wh = businessData.working_hours || {};
     const today = uzbekToday();
-    const dates = [];
+    const tomorrowDate = new Date(uzbekNow());
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowStr = tomorrowDate.toISOString().split('T')[0];
+
+    // Collect open days
+    const openDates = [];
     for (let i = 0; i < 7; i++) {
         const d = new Date(uzbekNow());
         d.setDate(d.getDate() + i);
         const dateStr = d.toISOString().split('T')[0];
         const dayName = DAY_NAMES[d.getDay()];
         const hours = wh[dayName];
-        const isOpen = hours?.is_open === true;
+        if (!hours?.is_open) continue;
+        openDates.push({ d, dateStr, hours });
+        if (openDates.length >= 3) break;
+    }
+
+    // Check each date has available slots
+    const dates = [];
+    for (const { d, dateStr, hours } of openDates) {
+        const slotsResult = await execGetAvailableSlots(businessId, dateStr, serviceId);
+        if (!slotsResult.slots || slotsResult.slots.length === 0) continue;
+
+        let label_uz, label_ru;
+        if (dateStr === today) {
+            label_uz = 'Bugun';
+            label_ru = 'Сегодня';
+        } else if (dateStr === tomorrowStr) {
+            label_uz = 'Ertaga';
+            label_ru = 'Завтра';
+        } else {
+            label_uz = `${d.getDate()}-${MONTH_LABELS.uz[d.getMonth()]} (${DAY_LABELS.uz[d.getDay()]})`;
+            label_ru = `${d.getDate()} ${MONTH_LABELS.ru[d.getMonth()]} (${DAY_LABELS.ru[d.getDay()]})`;
+        }
+
         dates.push({
             date: dateStr,
-            day_uz: DAY_LABELS.uz[d.getDay()],
-            day_ru: DAY_LABELS.ru[d.getDay()],
-            is_open: isOpen,
-            hours: isOpen ? `${secsToHHMM(hours.start)} - ${secsToHHMM(hours.end)}` : 'closed',
-            is_today: dateStr === today,
+            label_uz,
+            label_ru,
+            hours: `${secsToHHMM(hours.start)} - ${secsToHHMM(hours.end)}`,
+            available_slots: slotsResult.total,
         });
     }
-    return { dates: dates.filter(d => d.is_open) };
+
+    if (dates.length === 0) return { dates: [], note: 'Yaqin kunlarda bo\'sh joy yo\'q.' };
+    return { dates };
 }
 
 async function execGetAvailableSlots(businessId, date, serviceId) {
@@ -652,7 +682,7 @@ NUDGE (matn, button emas): "Yozdiraysizmi?" / "Band qilaylikmi?" / "Yozilmoqchim
 
 Tabiiy suhbat orqali booking qilishga olib bor:
 1. Xizmat → get_services (agar noaniq), qaysi kunga so'ra
-2. Kun → get_available_dates, ochiq kunlarni ko'rsat
+2. Kun → get_available_dates (max 3 kun qaytadi, faqat bo'sh joylar bor kunlar). Buttonlarda label_uz/label_ru ishlatib ko'rsat ("Bugun", "Ertaga", "14-mart (Juma)"). RAW sana (2026-03-12) ko'rsatMA.
 3. Vaqt → get_available_slots, vaqtlarni ko'rsat
 4. Mijoz vaqt tanlasa → TASDIQLASH bosqichiga o't (pastga qara)
 5. Mijoz tasdiqlasa VA auth yo'q bo'lsa → telefon raqam SO'RA: "Telefon raqamingizni yuboring" (input_type: "phone", buttons: [])
