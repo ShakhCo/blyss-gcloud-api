@@ -664,7 +664,8 @@ YOMON:
 
 - Ish vaqti → ish vaqti ma'lumotlaridan javob ber, keyin NUDGE (yengil)
 - Narx → get_services chaqir, natijani tabiiy ayt, keyin NUDGE (kuchliroq)
-- Manzil → manzil ma'lumotidan javob ber, keyin NUDGE (yengil)
+- Manzil → manzil ma'lumotidan javob ber, keyin NUDGE (yengil). Agar manzil bo'sh bo'lsa → "${phone} ga qo'ng'iroq qilib so'rang"
+- "Manzil va ish vaqti" → IKKISINI HAM ko'rsat: avval manzil (agar bor bo'lsa), keyin ish vaqti. NUDGE (yengil)
 - To'lov → to'lov ma'lumotidan javob ber, keyin NUDGE (yengil)
 - Walk-in → "Band qilib kelgan ma'qul", keyin NUDGE
 - Bekor qilish → telefon raqamga (${phone}) yo'naltir, keyin NUDGE
