@@ -2804,6 +2804,11 @@ router.post('/businesses/:businessId/chat', verifySignature, chatLimiter, async 
                     buttons: aiResult.buttons || [],
                     input_type: aiResult.input_type || null,
                 };
+                // Pass auth tokens for auto-login if user authenticated via chat
+                if (aiResult.auth_tokens) {
+                    aiReply.auth_tokens = aiResult.auth_tokens;
+                    aiReply.auth_user = aiResult.auth_user;
+                }
             }
         } catch (aiError) {
             console.error('Web chat AI reply error:', aiError.message);

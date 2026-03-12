@@ -130,6 +130,24 @@ const TOOLS = [
             required: ['date', 'start_time', 'service_id'],
         },
     },
+    {
+        type: 'function',
+        name: 'get_my_bookings',
+        description: 'Get the authenticated user\'s upcoming bookings. User must be logged in (session.user_id). Returns list of upcoming bookings with id, service, date, time, status.',
+        parameters: { type: 'object', properties: {} },
+    },
+    {
+        type: 'function',
+        name: 'cancel_booking',
+        description: 'Cancel a specific booking by ID. User must be authenticated and own the booking. Always confirm with user before calling this.',
+        parameters: {
+            type: 'object',
+            properties: {
+                booking_id: { type: 'string', description: 'Booking ID to cancel' },
+            },
+            required: ['booking_id'],
+        },
+    },
 ];
 
 // ─── Tool executors ───
@@ -366,13 +384,17 @@ async function execVerifyOtp(code, session) {
     const userData = usersSnap.docs[0].data();
     session.user_id = usersSnap.docs[0].id;
     session.first_name = userData.first_name || '';
+    // Generate auth tokens for auto-login
+    const tokens = generateTokenPair({ user_id: session.user_id, user_type: 'user' });
+    session.auth_tokens = tokens;
+    session.auth_user = { phone: session.phone_number, first_name: session.first_name, last_name: userData.last_name || '' };
     return {
         success: true,
         needs_registration: false,
         user_id: session.user_id,
         first_name: session.first_name,
         message: `User verified: ${session.first_name}`,
-        next_step: 'IMMEDIATELY call create_booking now. Do NOT say booking is confirmed until create_booking returns success.',
+        next_step: 'User is now authenticated. If they were booking, IMMEDIATELY call create_booking. If they were cancelling, call get_my_bookings. Do NOT say booking is confirmed until create_booking returns success.',
     };
 }
 
@@ -399,7 +421,11 @@ async function execRegisterUser(firstName, session) {
     session.user_id = userRef.id;
     session.first_name = firstName;
     session.needs_registration = false;
-    return { success: true, user_id: userRef.id, first_name: firstName, next_step: 'IMMEDIATELY call create_booking now. Do NOT say booking is confirmed until create_booking returns success.' };
+    // Generate auth tokens for auto-login
+    const tokensReg = generateTokenPair({ user_id: userRef.id, user_type: 'user' });
+    session.auth_tokens = tokensReg;
+    session.auth_user = { phone: session.phone_number, first_name: firstName, last_name: '' };
+    return { success: true, user_id: userRef.id, first_name: firstName, next_step: 'User is now authenticated. If they were booking, IMMEDIATELY call create_booking. If they were cancelling, call get_my_bookings. Do NOT say booking is confirmed until create_booking returns success.' };
 }
 
 async function execCreateBooking(businessId, session, { date, start_time, service_id, employee_id }) {
@@ -566,6 +592,64 @@ async function execCreateBooking(businessId, session, { date, start_time, servic
     };
 }
 
+async function execGetMyBookings(session) {
+    if (!session.user_id) {
+        return { error: 'User must be authenticated. Ask for phone number and verify OTP first.' };
+    }
+    const today = uzbekToday();
+    const snap = await db.collection('bookings')
+        .where('user_id', '==', session.user_id)
+        .where('booking_date', '>=', today)
+        .where('status', 'in', ['pending', 'confirmed'])
+        .orderBy('booking_date', 'asc')
+        .limit(10).get();
+
+    if (snap.empty) return { bookings: [], note: 'No upcoming bookings found.' };
+
+    return {
+        bookings: snap.docs.map(d => {
+            const b = d.data();
+            const item = b.items?.[0] || {};
+            return {
+                booking_id: d.id,
+                service_name: item.service_name || {},
+                employee_name: item.employee_name || '',
+                date: b.booking_date,
+                time: item.start_time ? item.start_time.split('T')[1]?.slice(0, 5) : '',
+                status: b.status,
+            };
+        }),
+    };
+}
+
+async function execCancelBooking(bookingId, session) {
+    if (!session.user_id) {
+        return { error: 'User must be authenticated. Ask for phone number and verify OTP first.' };
+    }
+    const bookingDoc = await db.collection('bookings').doc(bookingId).get();
+    if (!bookingDoc.exists) return { error: 'Booking not found.' };
+
+    const booking = bookingDoc.data();
+    if (booking.user_id !== session.user_id) {
+        return { error: 'This booking does not belong to you.' };
+    }
+    if (booking.status === 'cancelled') {
+        return { error: 'This booking is already cancelled.' };
+    }
+    if (booking.status === 'completed') {
+        return { error: 'Cannot cancel a completed booking.' };
+    }
+
+    const updatedItems = (booking.items || []).map(item => ({ ...item, status: 'cancelled' }));
+    await bookingDoc.ref.update({
+        status: 'cancelled',
+        items: updatedItems,
+        updated_at: new Date(),
+    });
+
+    return { success: true, booking_id: bookingId, message: 'Booking cancelled successfully.' };
+}
+
 // ─── Tool dispatcher ───
 
 async function executeTool(name, args, businessId, session) {
@@ -577,6 +661,8 @@ async function executeTool(name, args, businessId, session) {
         case 'verify_code': return execVerifyOtp(args.code, session);
         case 'register_user': return execRegisterUser(args.first_name, session);
         case 'create_booking': return execCreateBooking(businessId, session, args);
+        case 'get_my_bookings': return execGetMyBookings(session);
+        case 'cancel_booking': return execCancelBooking(args.booking_id, session);
         default: return { error: `Unknown tool: ${name}` };
     }
 }
@@ -674,7 +760,7 @@ After answering a question, add a gentle NUDGE toward booking (except where note
 - "Manzil va ish vaqti" (address + hours) → show BOTH: address first (if available), then working hours. NUDGE (light)
 - Payment → answer from payment data, then NUDGE (light)
 - Walk-in → "Band qilib kelgan ma'qul", then NUDGE
-- Cancel booking → redirect to phone (${phone}), then NUDGE
+- Cancel booking → start CANCELLATION FLOW (authenticate if needed, show bookings, confirm, cancel)
 - Late arrival ("kechikaman" / "I will be late") → "Mayli, kutib turamiz. Iloji boricha tezroq keling."
 - Change appointment → "Mayli! Qaysi vaqtga o'zgartirmoqchisiz?", then NUDGE
 - Recommendation ("qanday soch turmagini tavsiya qilasiz?") → redirect to barber: "Ustamiz yuz shaklingizga qarab yaxshi variant tavsiya qiladi"
@@ -720,6 +806,18 @@ DO NOT SKIP this step. Do not ask "Shu vaqtga yozaymi?" — show the SUMMARY + B
 Confirmed = button clicked OR user writes "ha", "ok", "да", "хорошо", "yaxshi" → proceed to next step (check auth).
 Unclear answer → ask again, show the same buttons.
 NEVER call create_booking before confirmation.
+
+═══ CANCELLATION FLOW ═══
+
+When customer wants to cancel a booking:
+1. Check if authenticated (session has user_id). If not → ask for phone + OTP first (same as booking flow steps 5-8)
+2. Call get_my_bookings to see their upcoming bookings
+3. If no bookings → tell them "Sizda hozirda faol yozuvlar yo'q"
+4. If bookings found → show them as numbered list with service name, date, time
+5. Customer picks one → confirm: "Shu yozuvni bekor qilamizmi?" with buttons ["Ha, bekor qiling", "Yo'q"]
+6. Customer confirms → call cancel_booking with the booking_id
+7. ONLY say "Bekor qilindi" after cancel_booking returns success
+NEVER cancel without explicit confirmation from the customer.
 
 ═══ BUTTONS ═══
 
@@ -840,11 +938,18 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
         await conversationRef.update({ session });
 
         if (response.output_parsed) {
-            return {
+            const result = {
                 message: response.output_parsed.message,
                 buttons: response.output_parsed.buttons || [],
                 input_type: response.output_parsed.input_type || null,
             };
+            if (session.auth_tokens) {
+                result.auth_tokens = session.auth_tokens;
+                result.auth_user = session.auth_user;
+                delete session.auth_tokens;
+                delete session.auth_user;
+            }
+            return result;
         }
 
         // Fallback: extract from raw text output if parse missed
@@ -852,18 +957,39 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
         if (textItem) {
             try {
                 const parsed = JSON.parse(typeof textItem.content === 'string' ? textItem.content : JSON.stringify(textItem.content));
-                return {
+                const result = {
                     message: parsed.message || '',
                     buttons: Array.isArray(parsed.buttons) ? parsed.buttons : [],
                     input_type: parsed.input_type || null,
                 };
+                if (session.auth_tokens) {
+                    result.auth_tokens = session.auth_tokens;
+                    result.auth_user = session.auth_user;
+                    delete session.auth_tokens;
+                    delete session.auth_user;
+                }
+                return result;
             } catch { /* fall through */ }
         }
 
-        return { message: 'Iltimos, qayta yozing.', buttons: [], input_type: null };
+        const innerFallback = { message: 'Iltimos, qayta yozing.', buttons: [], input_type: null };
+        if (session.auth_tokens) {
+            innerFallback.auth_tokens = session.auth_tokens;
+            innerFallback.auth_user = session.auth_user;
+            delete session.auth_tokens;
+            delete session.auth_user;
+        }
+        return innerFallback;
     }
 
     // Fallback if loop exhausted
     await conversationRef.update({ session });
-    return { message: 'Iltimos, qayta yozing.', buttons: [], input_type: null };
+    const fallback = { message: 'Iltimos, qayta yozing.', buttons: [], input_type: null };
+    if (session.auth_tokens) {
+        fallback.auth_tokens = session.auth_tokens;
+        fallback.auth_user = session.auth_user;
+        delete session.auth_tokens;
+        delete session.auth_user;
+    }
+    return fallback;
 }
