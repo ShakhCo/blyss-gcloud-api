@@ -372,6 +372,7 @@ async function execVerifyOtp(code, session) {
         user_id: session.user_id,
         first_name: session.first_name,
         message: `User verified: ${session.first_name}`,
+        next_step: 'IMMEDIATELY call create_booking now. Do NOT say booking is confirmed until create_booking returns success.',
     };
 }
 
@@ -398,7 +399,7 @@ async function execRegisterUser(firstName, session) {
     session.user_id = userRef.id;
     session.first_name = firstName;
     session.needs_registration = false;
-    return { success: true, user_id: userRef.id, first_name: firstName };
+    return { success: true, user_id: userRef.id, first_name: firstName, next_step: 'IMMEDIATELY call create_booking now. Do NOT say booking is confirmed until create_booking returns success.' };
 }
 
 async function execCreateBooking(businessId, session, { date, start_time, service_id, employee_id }) {
