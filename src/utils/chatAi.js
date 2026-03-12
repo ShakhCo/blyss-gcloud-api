@@ -914,7 +914,7 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
     ];
 
     // Run tool-calling loop (max 6 iterations)
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 12; i++) {
         const response = await openai.responses.parse({
             model: 'gpt-5.3-chat-latest',
 
