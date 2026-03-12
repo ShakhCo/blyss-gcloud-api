@@ -913,7 +913,10 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
         ...history,
     ];
 
-    // Run tool-calling loop (max 6 iterations)
+    // Track whether create_booking was actually called and succeeded
+    let bookingCreated = false;
+
+    // Run tool-calling loop (max 12 iterations)
     for (let i = 0; i < 12; i++) {
         const response = await openai.responses.parse({
             model: 'gpt-5.3-chat-latest',
@@ -945,6 +948,7 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
                 console.log(`Chat AI tool call: ${fc.name}(${JSON.stringify(args)})`);
 
                 const result = await executeTool(fc.name, args, businessId, session);
+                if (fc.name === 'create_booking' && result.success) bookingCreated = true;
                 const resultStr = JSON.stringify(result);
                 console.log(`Chat AI tool result: ${resultStr.slice(0, 200)}`);
 
@@ -961,8 +965,15 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
         await conversationRef.update({ session });
 
         if (response.output_parsed) {
+            let msg = response.output_parsed.message;
+            // Guard: if AI claims booking is confirmed but create_booking was never called, override
+            const claimsBooked = /tasdiqlandi|yozib.*(qo['']?y|oldik)|kutib\s*olamiz.*✂|booked|confirmed|записан/i.test(msg);
+            if (claimsBooked && !bookingCreated) {
+                console.warn('Chat AI claimed booking confirmed without create_booking — overriding');
+                msg = 'Kechirasiz, yozuvni yaratishda xatolik yuz berdi. Iltimos, qayta urinib ko\'ring yoki telefon orqali bog\'laning.';
+            }
             const result = {
-                message: response.output_parsed.message,
+                message: msg,
                 buttons: response.output_parsed.buttons || [],
                 input_type: response.output_parsed.input_type || null,
             };
