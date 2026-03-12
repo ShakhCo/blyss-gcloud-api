@@ -7,6 +7,7 @@ import { db } from '../db/db.js';
 import { sendOtpSms } from './eskiz.js';
 import { generateTokenPair } from './jwt.js';
 import { resolveDiscount } from './discountResolver.js';
+import { sendBookingCancellationNotification } from './telegram.js';
 
 const openai = process.env.OPENAI_API_KEY ? new OpenAI() : null;
 
@@ -646,6 +647,28 @@ async function execCancelBooking(bookingId, session) {
         items: updatedItems,
         updated_at: new Date(),
     });
+
+    // Send Telegram notification to business
+    try {
+        const businessDoc = await db.collection('businesses').doc(booking.business_id).get();
+        if (businessDoc.exists) {
+            const businessData = businessDoc.data();
+            if (businessData.telegram_bot?.is_active && businessData.telegram_bot?.chat_id) {
+                const firstItem = booking.items?.[0];
+                const serviceName = typeof firstItem?.service_name === 'object'
+                    ? firstItem.service_name.uz || firstItem.service_name.ru
+                    : firstItem?.service_name || 'Service';
+                await sendBookingCancellationNotification(businessData.telegram_bot.chat_id, {
+                    serviceName,
+                    customerName: booking.customer_name,
+                    date: booking.booking_date,
+                    time: firstItem?.start_time?.split('T')[1] || '',
+                });
+            }
+        }
+    } catch (e) {
+        console.error('Failed to send cancellation notification:', e);
+    }
 
     return { success: true, booking_id: bookingId, message: 'Booking cancelled successfully.' };
 }
