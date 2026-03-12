@@ -795,7 +795,6 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
     for (let i = 0; i < 6; i++) {
         const response = await openai.responses.parse({
             model: 'gpt-5.3-chat-latest',
-            temperature: 0.7,
             max_output_tokens: 500,
             input,
             tools: TOOLS,
