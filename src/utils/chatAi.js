@@ -689,6 +689,7 @@ NUDGE phrases (text only, never as button): "Yozdiraysizmi?" / "Band qilaylikmi?
 Guide the customer through booking via natural conversation:
 1. Service → call get_services (if unclear what they want), then ask which day
 2. Day → call get_available_dates (returns max 3 days with available slots). Show buttons using label_uz/label_ru ("Bugun", "Ertaga", "14-mart (Juma)"). NEVER show raw dates like 2026-03-12.
+   IMPORTANT: If the customer already mentioned a day in their message (e.g. "bugun", "today", "ertaga", "tomorrow", "сегодня", "завтра"), do NOT ask which day again — skip directly to step 3 (time slots) for that day.
 3. Time → call get_available_slots, show time options as buttons
 4. Customer picks time → go to CONFIRMATION step (see below)
 5. Customer confirms AND not authenticated → ask for phone: "Telefon raqamingizni yuboring" (input_type: "phone", buttons: [])
@@ -793,7 +794,7 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
     // Run tool-calling loop (max 6 iterations)
     for (let i = 0; i < 6; i++) {
         const response = await openai.responses.parse({
-            model: 'gpt-4.1-mini',
+            model: 'gpt-5.3-chat-latest',
             temperature: 0.7,
             max_output_tokens: 500,
             input,
