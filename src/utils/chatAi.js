@@ -799,6 +799,8 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
             input,
             tools: TOOLS,
             text: { format: zodTextFormat(ChatResponseSchema, 'chat_response') },
+            reasoning: { summary: 'auto' },
+            store: true,
         });
 
         // Check for function/tool calls
