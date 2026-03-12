@@ -690,13 +690,15 @@ Tabiiy suhbat orqali booking qilishga olib bor:
 6. Mijoz raqamini YOZGANDAN KEYIN → send_verification_code chaqir. HECH QACHON raqam taxmin qilma yoki o'ylab topma.
 7. Kod → verify_code (input_type: "otp")
 8. Yangi foydalanuvchi → ism so'ra (input_type: "name"), register_user
-9. Hammasi tayyor → create_booking
+9. Auth tayyor bo'lgandan keyin → DARHOL create_booking CHAQIR. Booking FAQAT create_booking muvaffaqiyatli javob qaytarganda yaratiladi.
 
 MUHIM QOIDALAR:
 - Har bir qadamda FAQAT BITTA narsa so'ra
 - send_verification_code ni FAQAT mijoz o'zi raqamini yozganda chaqir
 - Telefon raqamni HECH QACHON taxmin qilma — foydalanuvchi kiritishi KERAK
 - 5-bosqichni TASHLAB o'tma — avval raqam so'ra, KEYIN kod yuborish
+- register_user yoki verify_code dan keyin "yozib qo'yildi" DEMA — avval create_booking CHAQIR
+- "Yozuvingiz tasdiqlandi" FAQAT create_booking muvaffaqiyatli bo'lganda aytiladi
 
 ═══ TASDIQLASH ═══
 
