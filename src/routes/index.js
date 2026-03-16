@@ -19,6 +19,7 @@ import cronRouter from './cron.js';
 import discountsRouter from './discounts.js';
 import instagramRouter from './instagram.js';
 import instagramWebhookRouter from './instagram-webhook.js';
+import adminRouter from './admin.js';
 
 const router = Router();
 
@@ -56,5 +57,8 @@ router.use('/businesses/:businessId/conversations', verifySignature, conversatio
 
 // Instagram routes (mixed auth — POST /auth is public for OAuth callback, rest need signature + JWT)
 router.use('/instagram', instagramRouter);
+
+// Admin routes (HMAC signature + JWT + admin phone guard)
+router.use('/admin', verifySignature, adminRouter);
 
 export default router;

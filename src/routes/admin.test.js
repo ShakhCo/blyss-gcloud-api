@@ -511,13 +511,28 @@ describe('Admin routes (02-01)', () => {
       const token = makeAccessToken()
       const hmac = makeHmacHeaders('')
 
-      // Override bookings.doc to return non-existent doc
-      mockCollection.mockImplementationOnce((collectionName) => {
+      // Override bookings collection so doc().get() returns non-existent doc
+      mockCollection.mockImplementation((collectionName) => {
         if (collectionName === 'business_owners') {
           return {
             doc: vi.fn().mockReturnValue({
               get: vi.fn().mockResolvedValue(mockAdminUserDoc),
             }),
+            where: vi.fn().mockReturnThis(),
+            orderBy: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            get: vi.fn().mockResolvedValue({ docs: [], empty: true, size: 0 }),
+          }
+        }
+        if (collectionName === 'bookings') {
+          return {
+            doc: vi.fn().mockReturnValue({
+              get: vi.fn().mockResolvedValue({ exists: false }),
+            }),
+            where: vi.fn().mockReturnThis(),
+            orderBy: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            get: vi.fn().mockResolvedValue({ docs: [], empty: true }),
           }
         }
         return {
