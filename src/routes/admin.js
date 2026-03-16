@@ -318,6 +318,7 @@ router.get('/bookings', async (req, res) => {
     const page = parseInt(req.query.page) || 1
     const pageSize = parseInt(req.query.page_size) || 20
     const businessId = req.query.business_id || ''
+    const search = req.query.search || ''
     const status = req.query.status || ''
     const dateFrom = req.query.date_from || ''
     const dateTo = req.query.date_to || ''
@@ -345,6 +346,10 @@ router.get('/bookings', async (req, res) => {
     }
     if (status) {
       docs = docs.filter((d) => d.status === status)
+    }
+    if (search) {
+      const lower = search.toLowerCase()
+      docs = docs.filter((d) => d.business_name && d.business_name.toLowerCase().includes(lower))
     }
 
     const total = docs.length
