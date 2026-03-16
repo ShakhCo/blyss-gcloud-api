@@ -966,16 +966,24 @@ export async function getChatAiReply(businessId, conversationRef, conversationDa
 
         if (response.output_parsed) {
             let msg = response.output_parsed.message;
+            let overrideButtons = null;
+            let overrideInputType = null;
             // Guard: if AI claims booking is confirmed but create_booking was never called, override
             const claimsBooked = /tasdiqlandi|yozib.*(qo['']?y|oldik)|kutib\s*olamiz.*✂|booked|confirmed|записан/i.test(msg);
             if (claimsBooked && !bookingCreated) {
                 console.warn('Chat AI claimed booking confirmed without create_booking — overriding');
-                msg = 'Kechirasiz, yozuvni yaratishda xatolik yuz berdi. Iltimos, qayta urinib ko\'ring yoki telefon orqali bog\'laning.';
+                if (!session.user_id) {
+                    msg = 'Yozilish uchun avval telefon raqamingizni yuboring 📱';
+                    overrideButtons = [];
+                    overrideInputType = 'phone';
+                } else {
+                    msg = 'Kechirasiz, yozuvni yaratishda xatolik yuz berdi. Iltimos, qayta urinib ko\'ring.';
+                }
             }
             const result = {
                 message: msg,
-                buttons: response.output_parsed.buttons || [],
-                input_type: response.output_parsed.input_type || null,
+                buttons: overrideButtons !== null ? overrideButtons : (response.output_parsed.buttons || []),
+                input_type: overrideInputType !== null ? overrideInputType : (response.output_parsed.input_type || null),
             };
             if (session.auth_tokens) {
                 result.auth_tokens = session.auth_tokens;
