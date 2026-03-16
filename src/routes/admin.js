@@ -352,6 +352,9 @@ router.get('/bookings', async (req, res) => {
       docs = docs.filter((d) => d.business_name && d.business_name.toLowerCase().includes(lower))
     }
 
+    // Sort by most recent first
+    docs.sort((a, b) => (b.booking_date || '').localeCompare(a.booking_date || ''))
+
     const total = docs.length
     const start = (page - 1) * pageSize
     const pageData = docs.slice(start, start + pageSize).map((d) => ({
