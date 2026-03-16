@@ -448,6 +448,20 @@ router.post('/refresh', async (req, res) => {
             });
         }
 
+        // Check revocation BEFORE verifying JWT signature — use decodeToken (no throw on invalid)
+        const tokenPayloadForRevocation = decodeToken(refreshToken);
+        if (tokenPayloadForRevocation && tokenPayloadForRevocation.user_id && tokenPayloadForRevocation.iat) {
+            const docId = `${tokenPayloadForRevocation.user_id}_${tokenPayloadForRevocation.iat}`;
+            const revokedDoc = await db.collection('revoked_tokens').doc(docId).get();
+            if (revokedDoc.exists) {
+                clearAuthCookies(res);
+                return res.status(401).json({
+                    error: 'Token has been revoked',
+                    error_code: 'TOKEN_REVOKED'
+                });
+            }
+        }
+
         // Verify refresh token
         const decoded = verifyRefreshToken(refreshToken);
         if (!decoded) {
@@ -500,6 +514,27 @@ router.post('/refresh', async (req, res) => {
 // POST /auth/logout
 router.post('/logout', authenticate, async (req, res) => {
     try {
+        // Revoke refresh token if present — write to Firestore revoked_tokens
+        const refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
+        if (refreshToken) {
+            try {
+                const decoded = decodeToken(refreshToken);
+                if (decoded && decoded.user_id && decoded.iat) {
+                    const docId = `${decoded.user_id}_${decoded.iat}`;
+                    // expiresAt matches the token's own expiry (for future TTL-based cleanup)
+                    const expiresAt = decoded.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+                    await db.collection('revoked_tokens').doc(docId).set({
+                        revokedAt: new Date(),
+                        userId: decoded.user_id,
+                        expiresAt
+                    });
+                }
+            } catch (revocationError) {
+                // Revocation failure must never block logout — log and continue
+                console.error('Failed to revoke refresh token:', revocationError);
+            }
+        }
+
         // Clear cookies
         clearAuthCookies(res);
 
