@@ -14,8 +14,10 @@ import { checkUserBookingLimit } from '../utils/bookingLimits.js';
 import { sendBookingCancellationNotification, sendTelegramMessage } from '../utils/telegram.js';
 import { resolveDiscount } from '../utils/discountResolver.js';
 import { getChatAiReply } from '../utils/chatAi.js';
+import { dnsRecordExists, getCloudflareConfig } from '../utils/cloudflare.js';
 const router = Router();
 const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID;
+const RESERVED_SUBDOMAINS = ['www', 'app', 'admin', 'api', 'cdn', 'static', 'mail'];
 
 /**
  * Apply rate limiting to all public routes
@@ -30,6 +32,79 @@ const limiter = rateLimit({
 });
 
 router.use(limiter);
+
+/**
+ * Check if a subdomain is available
+ * Returns DNS existence, business usage, and reservation status
+ */
+router.get('/check-subdomain', async (req, res) => {
+    try {
+        const { subdomain } = req.query;
+
+        if (!subdomain || typeof subdomain !== 'string') {
+            return res.status(400).json({
+                error: 'Missing or invalid subdomain parameter',
+                error_code: 'INVALID_SUBDOMAIN'
+            });
+        }
+
+        const normalized = subdomain.toLowerCase().trim();
+
+        if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(normalized) || normalized.length > 63) {
+            return res.status(400).json({
+                error: 'Subdomain must be lowercase alphanumeric with hyphens, 1-63 characters, and cannot start/end with a hyphen',
+                error_code: 'INVALID_FORMAT'
+            });
+        }
+
+        // Check reserved subdomains
+        if (RESERVED_SUBDOMAINS.includes(normalized)) {
+            return res.status(200).json({
+                subdomain: normalized,
+                available: false,
+                dns_exists: false,
+                used_by_business: false,
+                reserved: true
+            });
+        }
+
+        const config = getCloudflareConfig();
+        const zoneDomain = config.zoneDomain;
+
+        // Check DNS and Firestore in parallel
+        const [dnsExists, businessSnapshot] = await Promise.all([
+            dnsRecordExists(normalized, config),
+            db.collection('businesses')
+                .where('tenant_url', '==', `${normalized}.${zoneDomain}`)
+                .limit(1)
+                .get()
+        ]);
+
+        const usedByBusiness = !businessSnapshot.empty;
+        const available = !dnsExists && !usedByBusiness;
+
+        const response = {
+            subdomain: normalized,
+            available,
+            dns_exists: dnsExists,
+            used_by_business: usedByBusiness,
+            reserved: false
+        };
+
+        if (usedByBusiness) {
+            const business = businessSnapshot.docs[0].data();
+            response.business_name = business.business_name;
+        }
+
+        return res.status(200).json(response);
+    } catch (error) {
+        console.error('Error checking subdomain:', error);
+        return res.status(500).json({
+            error: 'Failed to check subdomain availability',
+            error_code: 'INTERNAL_ERROR'
+        });
+    }
+});
 
 /**
  * Get business by tenant URL (subdomain)
