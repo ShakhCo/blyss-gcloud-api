@@ -556,6 +556,78 @@ router.post('/logout-all', authenticate, async (req, res) => {
     }
 });
 
+// GET /auth/dev-businesses — list all businesses for dev login picker
+router.get('/dev-businesses', async (req, res) => {
+    try {
+        const snapshot = await db.collection('businesses').get();
+        const businesses = await Promise.all(snapshot.docs.map(async (doc) => {
+            const data = doc.data();
+            let ownerName = null;
+            if (data.business_owner_id) {
+                const ownerDoc = await db.collection('business_owners').doc(data.business_owner_id).get();
+                if (ownerDoc.exists) {
+                    const owner = ownerDoc.data();
+                    ownerName = `${owner.first_name} ${owner.last_name || ''}`.trim();
+                }
+            }
+            return {
+                id: doc.id,
+                business_name: data.business_name || 'Unnamed',
+                avatar_url: data.avatar_url || null,
+                business_owner_id: data.business_owner_id || null,
+                owner_name: ownerName
+            };
+        }));
+        res.json({ businesses });
+    } catch (error) {
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+// POST /auth/dev-login — bypass OTP for development testing
+router.post('/dev-login', async (req, res) => {
+    try {
+        const { user_id, user_type = 'business_owner' } = req.body;
+
+        if (!user_id) {
+            return res.status(400).json({ error: 'user_id is required', error_code: 'MISSING_USER_ID' });
+        }
+
+        const collection = user_type === 'business_owner' ? 'business_owners' : 'users';
+        const userDoc = await db.collection(collection).doc(user_id).get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({ error: 'User not found', error_code: 'USER_NOT_FOUND' });
+        }
+
+        const userData = userDoc.data();
+        const { accessToken, refreshToken } = generateTokenPair({ user_id: userDoc.id, user_type });
+
+        setAuthCookies(res, accessToken, refreshToken);
+
+        const expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + 24);
+
+        res.json({
+            user: {
+                id: userDoc.id,
+                user_type,
+                first_name: userData.first_name,
+                last_name: userData.last_name || '',
+                phone_number: userData.phone_number,
+                telegram_id: userData.telegram_id || null,
+                is_verified: userData.is_verified || false,
+                created_at: userData.created_at?.toDate?.().toISOString() || userData.date_created?.toDate?.().toISOString()
+            },
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            expires_at: expiresAt.toISOString()
+        });
+    } catch (error) {
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
 // GET /auth/me
 router.get('/me', authenticate, async (req, res) => {
     try {
