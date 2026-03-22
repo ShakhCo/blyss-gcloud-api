@@ -1,180 +1,185 @@
 # Project Research Summary
 
-**Project:** BLYSS Instagram AI Auto-Reply — Personality & History Milestone
-**Domain:** AI-powered Instagram comment engagement for barbershop/salon businesses
-**Researched:** 2026-03-10
+**Project:** BLYSS Instagram DM Booking Automation (v2.0)
+**Domain:** Conversational booking automation via Instagram Messaging API
+**Researched:** 2026-03-22
 **Confidence:** HIGH
 
 ## Executive Summary
 
-The current Instagram auto-reply system is technically functional but socially broken. It uses the wrong AI model (o4-mini, a reasoning model) for a task that requires conversational fluency, and its prompt frames every reply as a booking funnel step rather than a human conversation. The result is detectable bot behavior: every reply ends with the booking link, openers repeat across comments, and the system has no memory of returning commenters. The single highest-leverage fix is not a model upgrade or a database change — it is a persona-first prompt rewrite that changes the AI's self-conception from "reply machine" to "social media person."
+BLYSS v2.0 adds a complete booking flow inside Instagram DMs — no web redirect, no app download. A customer messages a barbershop, taps quick-reply buttons to select a service, date, time, and employee, verifies via OTP, and receives a confirmed booking without leaving Instagram. The existing codebase already handles the hardest parts: webhook ingress, HMAC verification, OTP/SMS via Eskiz, Firestore state, and booking creation. The implementation is an extension of the existing comment-reply system — same webhook URL, same handler file, same patterns — with zero new npm packages required.
 
-The recommended approach is a four-phase build that starts with the highest-impact, lowest-risk change (prompt architecture and model switch to gpt-4.1-mini) and defers infrastructure investment (commenter history, reply caching) until the personality foundation is proven. The architectural pattern is fully additive: all new capabilities slot into the existing `handleCommentEvent()` pipeline without restructuring it. Two new Firestore subcollections provide persistent commenter memory and per-post reply variety. A `buildSystemPrompt()` function extracted from inline code makes the prompt structure independently testable and maintainable.
+The single most critical external dependency is the Meta App Review for the `instagram_business_manage_messages` permission. This review takes 2–6 weeks and cannot be skipped. Development must start on day 1 with the OAuth scope update and review submission, otherwise the entire milestone can be blocked by a third-party queue. All other development can proceed in parallel using Meta test accounts while the review is pending. All existing connected businesses must re-authorize after the scope change — a re-auth prompt must be added to the business settings flow as part of Phase 1.
 
-The key risks are: (1) the booking-link-on-every-reply pattern is actively training commenters to ignore replies and may trigger Instagram's automated spam detection — this must be fixed in Phase 1; (2) Instagram OAuth tokens expire silently after ~60 days with no current alerting, which can kill auto-reply for an entire business without anyone knowing; (3) Firestore commenter history can grow unbounded without a TTL strategy — schema must cap this at design time, not as an afterthought.
-
----
+The recommended build order is three strict phases driven by hard dependencies: (1) infrastructure and permissions — OAuth scope, webhook subscriptions, Firestore data model, echo filter — because every subsequent line of code depends on these being correct from the start; (2) message construction and conversation state engine — the step-routing dispatcher, quick-reply builder with 20-char truncation and 13-button overflow handling, and TTL-enforced session management; (3) the booking flow itself — language selection through booking confirmation — built sequentially because each step can only be tested by completing the previous step in a real DM conversation. A fourth phase handles post-launch improvements once real usage signals justify them.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No new npm packages are required. The existing `openai@6.17.0` SDK supports both the current `openai.responses.create()` call (used for o4-mini) and the new `openai.chat.completions.create()` call (needed for gpt-4.1-mini) — the switch requires changing the call site, not the dependency. Similarly, `@google-cloud/firestore@8.0.0` fully supports the `set({ merge: true })` upsert pattern and `FieldValue.increment`/`FieldValue.arrayUnion` operations needed for the new collections.
+No new dependencies are needed. The existing stack — Express.js v5, Firestore, built-in crypto, Eskiz SMS, and the existing `fetch`-based Instagram Graph API client — handles everything the DM feature requires. The only stack changes are an OAuth scope addition and a new Firestore collection (`dm_conversations`).
 
 **Core technologies:**
-- **gpt-4.1-mini via Chat Completions API:** Primary AI model — optimized for fluency and instruction-following over reasoning; supports `temperature` parameter (critical for reply variety); ~60-80% cheaper than o4-mini per token; 128K context window
-- **Firestore subcollections:** Commenter history and post reply log — O(1) document ID lookups, no new composite indexes, `merge: true` upsert pattern, fire-and-forget writes to avoid webhook latency
-- **In-memory Map (module-level):** Per-post recent-replies cache — sufficient for Cloud Run single-instance behavior at barbershop comment volumes; avoids Firestore write cost for non-critical dedup
-
-**Critical version note:** Switching from `openai.responses.create()` to `openai.chat.completions.create()` is a code change, not a config change. The `reasoning: { effort: 'low' }` parameter must be removed; `temperature`, `max_tokens`, and `messages[]` replace the current parameters. Verify gpt-4.1-mini pricing at platform.openai.com before committing (MEDIUM confidence on pricing — model released April 2025).
+- **Express.js v5 + existing webhook handler** — DM events arrive at the same URL as comment events (`POST /instagram-webhook/`); add a second `entry.messaging` branch, not a second route
+- **Firestore `dm_conversations` collection** — conversation state per `{businessId}_{senderIgScopedId}` composite key with 30-minute TTL; same TTL pattern as the existing `commenters` collection
+- **Instagram Graph API v21.0 `/{igId}/messages`** — new endpoint for sending quick-reply messages and generic templates; uses existing page access token
+- **`instagram_business_manage_messages` OAuth scope** — the only new API permission; requires Meta Advanced Access review (2–6 weeks lead time)
+- **`src/utils/createBooking.js` + `src/utils/otpAuth.js` (extractions)** — booking logic extracted from `bot.js` and OTP logic standardized into shared utilities; reused by both `bot.js` and the DM handler
 
 ### Expected Features
 
-The FEATURES.md analysis is grounded in direct codebase inspection and has HIGH confidence throughout.
+**Must have (table stakes — v2.0 launch):**
+- Any message triggers the flow — no keyword required; bot responds to all incoming DMs
+- Language selection (Uzbek / Russian) as the first interaction — two quick-reply buttons
+- Main menu with Book, Location, Working Hours, Contact quick-reply buttons
+- Service selection as quick-reply buttons with automatic carousel fallback for businesses with 13+ services
+- Date selection showing next 7 days with day names in chosen language, not date strings
+- Time slot selection calling existing `/available-slots-v2` with total selected duration
+- Employee selection calling existing `/slot-employees` with "Any barber" fallback
+- Phone number collection with format validation before OTP send
+- OTP verification via existing Eskiz SMS infrastructure
+- Booking confirmation message including service, date, time, employee, and reference number
+- Info responses: location (Google Maps link), working hours by day, contact phone number
+- Per-business toggle (`dm_automation_enabled`) on `instagram_connection` document for safe rollout
 
-**Must have (table stakes):**
-- @username mention in replies — absence is the single strongest bot signal; data already available in `commentData.from.username`
-- No booking link on every reply — reserve for genuine intent signals ("how much?", "when are you open?"); current universal link drops engagement quality
-- Reply length proportional to comment length — one-word comment should get one-sentence reply; current 2-sentence max is correct but not enforced for short comments
-- Emoji that matches comment energy — mismatched emoji (commenter sends 🔥, reply sends 😍) signals automation; cap at 2 emojis; sometimes use zero
-- Language match — already implemented; keep
+**Should have (differentiators — add after v2.0 validation):**
+- Multiple service selection with accumulated duration before proceeding to date (upsell path)
+- Return user recognition — skip OTP for users previously verified in the same business
+- Language preference persistence across sessions — skip language prompt for returning users
+- Graceful out-of-slots handling — auto-suggest next available date instead of empty state
+- Admin Telegram notification on DM booking — reuse existing `sendTelegramMessage` utility
 
-**Should have (differentiators):**
-- Persona-first prompt architecture (D1) — replace "GOAL: Drive bookings" framing with a person-description; this single change has the highest downstream impact on all reply quality
-- Commenter history awareness (D3) — "glad you're back!" vs treating loyal fans as strangers; new Firestore subcollection per business
-- Post type classification (D4) — before/after posts warrant transformation celebration, not booking push; heuristic keyword matching on caption is sufficient (no AI sub-call needed)
-- Reply variety enforcement (D5) — in-memory per-post recent-replies list injected into prompt
-- Engagement-driving questions for praise/curiosity comments (D6) — drives algorithmic reach; prompt instruction only
-- Witty one-liners for emoji-only comments (D7) — highest-frequency comment type on barbershop posts; current handling is the worst offender
-
-**Defer (v2+):**
-- Full AI post classification (D4 extended) — heuristic keywords cover 90% of cases; AI sub-call adds latency and cost before base quality is proven
-- Redis or cross-instance reply dedup — only needed if Cloud Run scales to 10+ concurrent instances; not a realistic concern at barbershop comment volumes
+**Defer (v3+):**
+- Booking cancellation via DM — requires conversation lookup of existing bookings and cancellation logic; high error risk
+- Reschedule via DM — builds on cancellation; even more complex
+- Booking reminders — use Eskiz SMS, not DM (Instagram's 24-hour messaging window makes DM reminders technically non-compliant unless the customer messages first)
 
 ### Architecture Approach
 
-The architecture is purely additive. The existing `handleCommentEvent()` pipeline structure remains intact; new capabilities attach at specific points. Two parallel Firestore reads are inserted before the AI call, and two fire-and-forget writes follow the reply. The prompt construction is extracted from inline code into a pure `buildSystemPrompt(options)` function — zero async, zero Firestore access, fully testable. This extraction is a prerequisite for adding the personality, commenter context, and variety sections cleanly.
+The DM handler lives in the existing `src/routes/instagram-webhook.js` file alongside the comment handler. The POST webhook handler is extended with an `entry.messaging` branch that invokes `handleDmEvent()` — a pure addition that leaves `handleCommentEvent()` completely unchanged. Conversation state flows through a `routeDmStep()` function that returns `{ newState, messages }` without direct Firestore writes, enabling unit testing of each step in isolation. The orchestrator writes state and sends DM replies after receiving the step result.
 
 **Major components:**
-1. `handleCommentEvent()` in `instagram-webhook.js` — orchestration only; owns all Firestore I/O and API calls; calls `buildSystemPrompt()` with assembled data
-2. `buildSystemPrompt(options)` (new, extracted) — pure function; assembles 6-section structured prompt from provided data: [1] Role & Persona, [2] Business Context, [3] Post Context, [4] Commenter Memory, [5] Recent Replies, [6] Instructions
-3. `instagram_comment_history/{username}` Firestore subcollection (new) — one denormalized summary document per commenter per business; keyed by username for O(1) lookup; fields: `comment_count`, `first_seen_at`, `last_seen_at`, `last_comment_text`, `last_reply_text`
-4. `instagram_post_reply_log/{mediaId}` Firestore subcollection (new) — one document per post per business; `recent_replies` array capped at 8 entries; updated with `arrayUnion` fire-and-forget after each reply
+1. **`handleDmEvent()` in `instagram-webhook.js`** — DM orchestration: resolve business via `collectionGroup` query, check `dm_automation_enabled`, load conversation state, route step, write state, send replies; same never-throw error contract as comment handler
+2. **`routeDmStep()` + per-step handlers** — linear state machine (LANGUAGE_SELECT → MAIN_MENU → SERVICE_SELECT → DATE_SELECT → TIME_SELECT → EMPLOYEE_SELECT → AUTH_PHONE_REQUEST → AUTH_OTP_VERIFY → BOOKING_CONFIRM → DONE); each `handle*Step()` function returns `{ newState, messages }` with no side effects
+3. **`dm_conversations` Firestore collection** — document keyed by `{businessId}_{senderIgScopedId}`; 30-minute TTL via `expires_at` field with Firestore TTL policy; stores all accumulated booking data across multiple DM exchanges
+4. **`sendDmMessage()` in `src/utils/instagram.js`** — new export for POSTing to `/{igId}/messages` with quick-reply and generic template support; max 13 quick replies, 20-char titles
+5. **`src/utils/createBooking.js` + `src/utils/otpAuth.js`** — extracted shared utilities; enables both `bot.js` and the DM handler to create bookings and handle OTP without code duplication
 
 ### Critical Pitfalls
 
-1. **Booking link on every reply trains commenters to ignore replies** — categorize comment intent first; only include the link when the comment signals genuine booking intent; prompt must categorize, not mandate universally (Phase 1, highest priority)
-2. **Instagram OAuth token expiry silently kills auto-reply** — add cron job to refresh tokens 7-10 days before expiry; detect error code 190 from Instagram API and send Telegram alert to business owner and admin; address before or alongside Phase 1
-3. **Commenter history Firestore growth without TTL** — single document per commenter per business (not one doc per comment); cap `recent_replies` array at 5 entries; add `last_seen` timestamp and monthly cron to delete records older than 90 days; design schema before writing any code (Phase 2)
-4. **`buildBusinessInfo()` sequential Firestore reads cause webhook timeout risk** — parallelize with `Promise.all()` (services + employees simultaneously); cache business context in-memory for 60 seconds; fix before adding the two new history reads (all phases)
-5. **"Trying too hard to be human" overcorrection** — explicitly forbid filler phrases ("Ohh", "Haha", "Honestly", "Totally", "Absolutely", "We get it"); forbid openers like "Great!", "Amazing!"; anchor tone with 5-6 business-specific `ai_example_replies` (Phase 1)
+1. **Missing `instagram_business_manage_messages` permission blocks all DM features in production** — the app works with test accounts in dev mode but fails with `(#200) App does not have Advanced Access` for real businesses. Submit Meta App Review on day 1; add all team members as app testers for dev. The 2–6 week review is the milestone's single longest dependency.
 
----
+2. **`is_echo: true` events cause an infinite bot reply loop** — every message the bot sends is echoed back as a webhook `messages` event. Without filtering, the bot replies to its own messages, hits the 200 DMs/hour rate limit in seconds, and gets the Instagram account flagged. The very first check in every DM event handler must be: `if (event.message?.is_echo === true) return;`.
+
+3. **DM events are in `entry.messaging`, not `entry.changes` — same webhook URL, different payload shape** — the existing handler only reads `entry.changes`. DM events are silently ignored without the `entry.messaging` branch. Also requires subscribing to both `messages` AND `messaging_postbacks` in the Meta webhook dashboard — without `messaging_postbacks`, quick reply button taps never trigger server-side handling.
+
+4. **IGSID is scoped per business, not per user** — the same Instagram user has a different `sender.id` for every business they message. Conversation state keyed only on `sender.id` without `businessId` merges state across unrelated businesses. All `dm_conversations` paths must be `businesses/{businessId}/dm_conversations/{igsid}` or a composite top-level key `{businessId}_{igsid}`.
+
+5. **Slot race condition — two users confirm the same slot simultaneously** — the availability snapshot shown to the user is stale by the time they confirm. The booking confirmation step must re-verify slot availability inside a Firestore transaction and return `SLOT_TAKEN` on conflict, then immediately offer updated available slots.
+
+6. **Quick reply titles truncated at 20 characters; max 13 buttons per message** — service names longer than 20 characters display as garbled labels. Businesses with 14+ services cause API errors if sent as quick replies. Implement `truncateForQuickReply()` utility and automatic generic template (carousel) fallback before any step that shows variable-length lists.
 
 ## Implications for Roadmap
 
-Based on combined research, a 4-phase structure is recommended. The ordering follows the dependency graph from ARCHITECTURE.md and the MVP recommendation from FEATURES.md.
+The build has a clear hard dependency chain that drives phase structure. All infrastructure decisions (permissions, data model, echo filter, webhook payload handling) must be correct before any conversational logic can be tested. The Meta App Review timeline is the only external dependency and must be started immediately — it is the only thing that cannot be done in parallel with code writing.
 
-### Phase 1: Prompt Architecture & Model Switch
+### Phase 1: Infrastructure and Permissions
 
-**Rationale:** All robotic behavior downstream stems from two root causes: wrong AI model (o4-mini reasoning vs gpt-4.1-mini chat) and wrong prompt framing (goal-led vs persona-led). Fix these first. No new infrastructure needed. This phase has the highest ROI per line of code changed and establishes the quality baseline that later phases depend on.
+**Rationale:** Every subsequent phase depends on these decisions being correct from the start. Getting the Firestore path wrong (unscoped IGSID) requires a data migration later. Not submitting the Meta App Review now risks blocking the entire milestone for 2–6 weeks. The echo filter must be in place before the webhook receives any real DM events. All four actions in this phase must complete before Phase 2 code can be meaningfully tested.
 
-**Delivers:** Human-sounding replies with appropriate tone, emoji discipline, no universal booking link, @username personalization, reply length calibration, and structural variety (via temperature + few-shot examples).
+**Delivers:** A fully wired DM event pipeline that safely receives and routes DM events, filters echo events, and checks per-business feature flags — but sends no replies yet. Meta App Review submitted. Existing connected businesses notified to re-authorize via an updated re-auth flow in business settings.
 
-**Addresses from FEATURES.md:** Table stakes (all 5), D1 (persona), D2 (username), D7 (emoji one-liners), D8 (negative de-escalation), D9 (milestone awareness) — all are prompt-only changes.
+**Addresses:** OAuth scope upgrade (`instagram_business_manage_messages`), webhook `messages` and `messaging_postbacks` subscriptions, `dm_automation_enabled` toggle on `instagram_connection`, `dm_conversations` Firestore schema and TTL policy, `sendDmMessage()` utility stub.
 
-**Avoids from PITFALLS.md:** Pitfall 1 (booking link spam), Pitfall 5 (fake-casual overcorrection), Pitfall 9 (emoji signature), Pitfall 10 (mixed-language Uzbek handling).
+**Avoids:** Pitfall 1 (missing permission), Pitfall 2 (echo infinite loop), Pitfall 3 (wrong webhook payload branch), Pitfall 4 (unscoped IGSID), token expiry silent failure.
 
-**Also includes:** Parallelization of `buildBusinessInfo()` reads (Pitfall 4 prevention) and token expiry alerting (Pitfall 2 prevention) — infrastructure fixes with no user-facing changes.
+### Phase 2: Message Construction and Conversation State Engine
 
-### Phase 2: Firestore Schema & Data Reads
+**Rationale:** All step handlers in Phase 3 depend on the same message-building and routing infrastructure. Building `routeDmStep()`, the quick-reply builder with limit handling, and session timeout/reset before any step handler is written means Phase 3 steps slot in cleanly and the 13-button and 20-character constraints are solved once, not re-solved per step. This phase ends with a working language selection + main menu that can be tested end-to-end via a real DM.
 
-**Rationale:** Infrastructure prerequisite for commenter memory and reply variety. The two new Firestore collections must be designed correctly before any code is written — schema decisions here are hard to change later (Pitfall 3 TTL design, Pitfall 11 cross-business isolation). This phase adds the reads only; the prompt still does not use them yet. That allows independent validation that the reads work correctly and add acceptable latency.
+**Delivers:** Working `routeDmStep()` dispatcher with per-step function stubs; `sendDmMessage()` sending actual quick-reply messages; 24-hour window check before every outbound send; session timeout and clean restart on TTL expiry; `truncateForQuickReply()` and carousel fallback for 13+ buttons; language selection and main menu as the first fully functional user-visible steps.
 
-**Delivers:** Two new Firestore subcollections with correct schema, parallel reads wired into `handleCommentEvent()`, zero behavior change to reply quality (reads fetched but not yet injected into prompt).
+**Addresses:** Language selection, main menu, conversation state schema, session timeout, button/message construction utilities.
 
-**Uses from STACK.md:** Firestore `set({ merge: true })`, `FieldValue.increment`, document-ID lookup pattern (no new indexes).
+**Avoids:** Pitfall 5 (24-hour messaging window), Pitfall 7 (button text truncation), Pitfall 8 (13-button overflow to carousel), UX pitfall of no timeout recovery.
 
-**Avoids from PITFALLS.md:** Pitfall 3 (TTL and bounded document design), Pitfall 11 (business-scoped subcollection path ensures cross-business isolation), Pitfall 8 (post caption caching infrastructure established here).
+**Research flag:** Standard patterns — fully documented by Meta API docs and comparable to the existing Telegram bot inline keyboard patterns in `bot.js`. No additional phase research needed.
 
-### Phase 3: Commenter Memory & Reply Variety in Prompt
+### Phase 3: Booking Flow Steps
 
-**Rationale:** Depends on Phase 1 (buildSystemPrompt function extracted) and Phase 2 (history data available). This phase wires the fetched data into the prompt's Sections 4 and 5. Split from Phase 2 so prompt behavior changes can be tested independently from infrastructure changes.
+**Rationale:** Each step advances the conversation to the next step — you cannot test `handleTimeSelect` without having completed `handleServiceSelect` and `handleDateSelect` in the same DM conversation. Steps must be implemented in dependency order: service → date → time → employee → phone/OTP → confirm. Booking confirmation requires the `createBooking.js` utility to be extracted from `bot.js` first, and the slot re-check transaction must be implemented in the confirmation step (not deferred).
 
-**Delivers:** Replies that acknowledge returning commenters, avoid repeating recent openers on the same post, and use post type context (before/after, promo, milestone) to adjust tone.
+**Delivers:** The complete end-to-end booking flow: a customer can message any connected barbershop via Instagram DM and complete a full appointment booking without leaving the Instagram app.
 
-**Addresses from FEATURES.md:** D3 (comment history), D4 (post type classification via caption heuristics), D5 (reply variety enforcement), D6 (engagement questions).
+**Addresses:** All P1 features from FEATURES.md — service selection (with multi-service accumulation), date/time/employee selection, OTP auth, booking creation via `/bot/bookings`, booking confirmation message, location/hours/contact info responses.
 
-**Avoids from PITFALLS.md:** Pitfall 6 (@username surveillance feeling — use only on intent/return signals, not reactions), Pitfall 7 (synonym-swap variety — structural example replies + recent-replies negative context produces real variety).
+**Avoids:** Pitfall 6 (slot race condition via Firestore transaction at confirmation), OTP security pitfall (no OTP values in postback payloads), N+1 employee reads (use existing `/slot-employees` endpoint), duplicate booking logic (extract to `createBooking.js`).
 
-### Phase 4: History Writes & Persistence Loop
+**Research flag:** No additional research needed — all API endpoints (`/available-slots-v2`, `/slot-employees`, `/bot/bookings`) are existing and verified by direct codebase analysis. Booking logic extraction from `bot.js` is straightforward refactoring.
 
-**Rationale:** The fire-and-forget Firestore writes that close the memory loop are last because they do not affect reply quality — they feed future replies. Shipping writes before the read-to-prompt pipeline is validated would create stale data that has no consumer yet. Once Phases 1-3 are stable, the writes complete the system.
+### Phase 4: Post-Launch Improvements (v2.x)
 
-**Delivers:** Persistent commenter memory that accumulates across sessions; post reply log that survives instance restarts (unlike the in-memory Map from Phase 1 variety).
+**Rationale:** These features add meaningful UX value but none are blockers for launch. They are appropriately triggered by real usage signals: users complaining about re-entering their phone number on every booking (return user recognition), businesses requesting instant notifications (Telegram notify), or testing revealing dead-end states (out-of-slots handling). Shipping them before these signals appear would be premature optimization.
 
-**Uses from STACK.md:** `FieldValue.arrayUnion`, `merge: true` upsert, fire-and-forget `.catch(() => {})` pattern.
+**Delivers:** Return user recognition with OTP skip for previously verified users; language preference persistence across sessions; graceful out-of-slots handling with next-available-date suggestion; admin Telegram notification on DM booking creation via existing `sendTelegramMessage` utility.
 
-**Avoids from PITFALLS.md:** Pitfall 3 (writes use `merge: true`, not append-only), Anti-Pattern 2 from ARCHITECTURE.md (writes happen only after `replyToComment()` succeeds, never before).
-
----
+**Addresses:** All P2 features from FEATURES.md.
 
 ### Phase Ordering Rationale
 
-- Phase 1 before Phase 2: Prompt quality must be established before adding complexity. Adding commenter history to a prompt that still says "GOAL: Drive bookings" would waste the memory context.
-- Phase 2 before Phase 3: Can't inject data that hasn't been fetched. Schema decisions (TTL, business-scoped paths) must be locked before writing integration code.
-- Phase 3 before Phase 4: Writes should only begin populating data that the prompt is already consuming. Writing history before reading it in the prompt creates orphan data with no validation path.
-- Infrastructure fixes (token expiry alerting, `buildBusinessInfo()` parallelization) are in Phase 1 not because they're personality features, but because they must be resolved before adding more Firestore reads and potential failure points.
+- **Phase 1 before Phase 2:** The Firestore data model (IGSID scoping) and OAuth scope must be set correctly before any conversation state code is written. Changing the Firestore path after conversations exist requires a full data migration.
+- **Phase 2 before Phase 3:** All step handlers share the same message-building and routing infrastructure. Building the infrastructure first with a simple step (language selection) allows Phase 3 steps to slot in without re-solving the same constraints.
+- **Phase 3 in strict step order:** Each step is tested by completing the previous step in a real DM conversation — the dependency is inherent to how the state machine works, not just a convenience.
+- **Phase 4 after Phase 3 ships:** Trigger conditions for v2.x improvements (user feedback, business owner requests) are not observable until Phase 3 is in production.
+- **Meta App Review submitted in Phase 1:** The 2–6 week review is the only external timeline dependency. Delaying submission by even one sprint risks blocking all three implementation phases.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 1:** gpt-4.1-mini pricing should be verified at platform.openai.com before committing — MEDIUM confidence on cost estimate. Also verify that `temperature: 0.9` produces acceptable output quality vs `0.7` for Uzbek/Russian text (may need empirical testing).
-- **Phase 2:** Instagram API rate limits for `getMediaDetails()` endpoint should be confirmed against current documentation — MEDIUM confidence. The post caption caching strategy in Pitfall 8 depends on the actual rate limit behavior.
+- **Phase 1 — Meta App Review submission:** The review documentation is clear, but the specific submission checklist (video demo requirements, privacy policy format, data handling questionnaire for `instagram_business_manage_messages`) should be reviewed in detail before submission to avoid a rejection that adds another 2-week cycle.
 
 Phases with standard patterns (skip research-phase):
-- **Phase 3:** Firestore document ID lookups and `Promise.all()` parallelization are well-established patterns with HIGH confidence. No research needed.
-- **Phase 4:** Fire-and-forget Firestore writes with `merge: true` and `FieldValue` operations are standard; fully covered by existing codebase patterns.
-
----
+- **Phase 2:** Quick reply and carousel message construction is fully documented in Meta API docs and the patterns are comparable to the Telegram inline keyboard handling already in `bot.js`.
+- **Phase 3:** All API endpoints are existing and verified by direct code analysis. Booking and OTP extraction from `bot.js` is standard Node.js refactoring with no new patterns.
+- **Phase 4:** All v2.x features reuse existing infrastructure (Firestore lookups, `sendTelegramMessage` utility). No new patterns introduced.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | MEDIUM | gpt-4.1-mini model name and pricing from training data through Aug 2025 — verify at platform.openai.com before implementation. API call structure (Chat Completions) is HIGH confidence. No new dependencies needed is HIGH confidence. |
-| Features | HIGH | Grounded entirely in direct codebase inspection of `instagram-webhook.js`, `instagram.js`, `instagram.js` schema, and `firestore.indexes.json`. All feature recommendations are based on existing data fields and prompt analysis. |
-| Architecture | HIGH | Additive pattern to an existing well-understood pipeline. Firestore schema design follows established subcollection patterns already in the codebase. `buildSystemPrompt()` extraction is pure refactor. |
-| Pitfalls | HIGH | Critical pitfalls (token expiry, booking link spam, Firestore growth) are grounded in code analysis + well-documented Instagram Platform Policy behavior. AI persona pitfalls are well-documented production failure modes. |
+| Stack | HIGH | No new packages; all existing integrations verified against live codebase and official Meta API docs; Instagram Graph API v21.0 endpoints confirmed |
+| Features | HIGH | Feature set derived directly from `.planning/PROJECT.md` Active list + official Instagram API capability inventory; anti-features are reasoned against hard API constraints (24-hour window, no payment API) |
+| Architecture | HIGH | Based on direct source code analysis of `instagram-webhook.js`, `bot.js`, `utils/instagram.js` plus verified Meta webhook payload documentation; build order follows hard dependency chain |
+| Pitfalls | HIGH (critical), MEDIUM (rate limits, race conditions) | Permission, echo, webhook shape, IGSID scoping pitfalls verified against official Meta docs; 200 DMs/hour rate limit and race condition patterns from MEDIUM-confidence secondary sources |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **gpt-4.1-mini pricing and availability:** Training knowledge cutoff is Aug 2025; model was released April 2025. Confirm model is available in the current OpenAI account tier and that pricing supports the expected comment volume before Phase 1 implementation. Fallback: gpt-4o-mini is already in the codebase at `src/routes/ai.js` and would work.
-- **Instagram API rate limits for caption fetching:** The Pitfall 8 caching recommendation assumes the `getMediaDetails()` endpoint is rate-limited in a way that matters at viral post volumes. Verify against current Instagram Platform documentation. If rate limits are generous, caption caching (Phase 2) can be deferred.
-- **`ai_example_replies` population:** The effectiveness of Phase 1 persona work depends heavily on businesses having well-written example replies in their connection settings. Current adoption rate unknown. If most businesses have empty `ai_example_replies`, the few-shot examples section of the prompt will be absent and quality gains will be reduced. Consider providing default examples per language.
-- **Token expiry cron timing:** The `instagram_connection` documents store `expires_at`; a refresh cron needs to be scheduled. The cron infrastructure exists (`src/routes/cron.js`) but the token refresh endpoint and scheduling are not currently implemented. This is a prerequisite for the token alerting in Phase 1.
-
----
+- **Meta App Review timeline:** The 2–6 week range is cited from multiple sources but actual duration varies. If the review is rejected on the first submission, the retry cycle could extend the milestone significantly. Mitigation: submit with a complete video demo of the full flow, a clear privacy policy URL, and a thorough data handling questionnaire on the first attempt.
+- **Instagram rate limit (200 DMs/hour):** Cited in multiple secondary sources but not confirmed in a single primary Meta docs URL during this research session. At current BLYSS barbershop scale this limit is not a concern, but should be verified before any high-volume or enterprise business deployment.
+- **`messaging_postbacks` webhook field requirement:** Research confirms that quick reply button taps fire as `messaging_postbacks` events (not `messages`), requiring both fields to be subscribed in the Meta webhook dashboard. The exact field names should be verified against the current app configuration in the Meta Developer Console during Phase 1.
+- **OTP collection key for DM users:** The existing `bot_otps` collection uses `telegram_id` as the user key. DM users have no Telegram ID — a separate field (`ig_sender_id`) must be added to support DM-originated OTP requests without conflicting with the Telegram bot's OTP flow.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `src/routes/instagram-webhook.js` — full pipeline, prompt logic, error handling, AI call site
-- `src/utils/instagram.js` — token structure, reply API shape, available comment fields
-- `src/schemas/instagram.js` — data model constraints and validation
-- `firestore.indexes.json` — existing collection structure and index patterns
-- `.planning/PROJECT.md` — project goals and problem definition
-- `package.json` — dependency versions (openai@6.17.0, @google-cloud/firestore@8.0.0)
+- Codebase: `src/routes/instagram-webhook.js`, `src/routes/instagram.js`, `src/routes/bot.js`, `src/routes/public.js`, `src/utils/instagram.js`, `firestore.indexes.json`
+- `.planning/PROJECT.md` — milestone scope, active features list, existing infrastructure inventory
+- [Instagram Messaging API — Meta for Developers](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api/) — required permissions, message types, 24-hour window constraint
+- [Instagram Webhooks — Meta for Developers](https://developers.facebook.com/docs/instagram-platform/webhooks/) — `messages` subscription field, `entry.messaging` payload structure
+- [Instagram Generic Template Limits — Meta Docs](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api/generic-template/) — 10 elements max, 3 buttons per element, 80-char title
+- [Instagram Messaging Webhooks — Messenger Platform Docs](https://developers.facebook.com/docs/messenger-platform/instagram/features/webhook/) — `is_echo` field, postback events, `entry.messaging` payload
+- [Instagram App Review — Meta Docs](https://developers.facebook.com/docs/instagram-platform/app-review/) — Advanced Access requirements, review process
 
 ### Secondary (MEDIUM confidence)
-- OpenAI platform documentation (training knowledge through Aug 2025) — gpt-4.1-mini model characteristics, Chat Completions API parameters, pricing estimates
-- Instagram Graph API documentation (training knowledge) — token lifetime (~60 days), error code 190, webhook response timing requirements
-
-### Tertiary (LOW confidence)
-- Instagram API rate limits for comment/caption endpoints — verify against current developer documentation before Phase 2 implementation
+- [Quick Replies Guide — GoHighLevel](https://help.gohighlevel.com/support/solutions/articles/155000004035-guide-to-quick-replies-for-facebook-instagram) — 13 button limit, 20-character title limit (consistent with multiple sources)
+- [Instagram API Rate Limits — CreatorFlow 2026](https://creatorflow.so/blog/instagram-api-rate-limits-explained/) — 200 DMs/hour rate limit
+- [Race Conditions in Firestore — QuintoAndar Tech Blog](https://medium.com/quintoandar-tech-blog/race-conditions-in-firestore-how-to-solve-it-5d6ff9e69ba7) — transaction patterns for concurrent booking
+- [24-Hour Messaging Window — Manychat Help](https://help.manychat.com/hc/en-us/articles/14281199732892) — window behavior, expiry implications for multi-step flows
+- [IGSID Scoping — CM.com Instagram Messaging Docs](https://developers.cm.com/messaging/docs/instagram-messaging) — per-business IGSID scoping confirmed
+- [ManyChat Instagram Booking Flow — FletchApp](https://fletchapp.com/instagram-dm-automation-with-manychat-how-it-works/) — industry booking flow pattern reference
 
 ---
-*Research completed: 2026-03-10*
+*Research completed: 2026-03-22*
 *Ready for roadmap: yes*

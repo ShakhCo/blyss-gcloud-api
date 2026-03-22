@@ -1,440 +1,775 @@
-# Architecture Patterns
+# Architecture Research
 
-**Domain:** Instagram AI auto-reply — comment history, commenter memory, reply variety, prompt redesign
-**Researched:** 2026-03-10
-
----
-
-## Context: The Existing Flow
-
-The current `handleCommentEvent()` function in `src/routes/instagram-webhook.js` already runs a complete pipeline:
-
-```
-Webhook POST → signature verify → find business connection →
-  check per-post settings → dedup (hasExistingReply) →
-  buildBusinessInfo() → getMediaDetails() → AI generate →
-  replyToComment() → Telegram notify
-```
-
-Everything new must be **additive**. The pipeline structure stays intact. New capabilities slot in as additional reads/writes at specific points in that flow.
+**Domain:** Instagram DM booking automation — webhook event routing, conversation state, booking flow integration
+**Researched:** 2026-03-22
+**Confidence:** HIGH (based on direct source code analysis + verified Meta API docs)
 
 ---
 
-## Recommended Architecture
+## Standard Architecture
 
-### Component Map
+### System Overview
 
-| Component | File | Responsibility | New or Existing |
-|-----------|------|---------------|-----------------|
-| Webhook handler | `src/routes/instagram-webhook.js` | Entry point, orchestration | Existing — modify |
-| Comment history reader | inline in handler | Fetch commenter history before AI call | New — inline helper |
-| Comment history writer | inline in handler | Write interaction record after reply | New — inline helper |
-| Post reply tracker | inline in handler | Fetch recent replies on same post for variety | New — inline helper |
-| Prompt builder | `buildSystemPrompt()` (new fn) | Assemble structured system prompt | New — extract from inline |
-| Business info builder | `buildBusinessInfo()` | Fetch business data for prompt | Existing — unchanged |
-| AI caller | inline in handler | Call OpenAI | Existing — unchanged |
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                        Meta Instagram Platform                        │
+│   POST /instagram/webhook  (same URL for comments AND DMs)            │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               │ X-Hub-Signature-256 verified
+                               ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                     instagram-webhook.js (router)                     │
+│                                                                        │
+│   entry.changes[].field === 'comments'  ──► handleCommentEvent()      │
+│   entry.messaging[]                     ──► handleDmEvent()  [NEW]    │
+└──────────┬───────────────────────────────────────┬───────────────────┘
+           │                                       │
+           ▼                                       ▼
+┌──────────────────┐                  ┌────────────────────────────────┐
+│  Comment Handler  │                  │      DM Handler  [NEW]          │
+│  (existing, v1.0) │                  │                                │
+│                  │                  │  1. Resolve business by         │
+│  AI reply to     │                  │     sender.recipient.id         │
+│  public comments │                  │  2. Load conversation state     │
+└──────────────────┘                  │     from Firestore              │
+                                      │  3. Route to flow step          │
+                                      │  4. Send DM reply + buttons     │
+                                      │  5. Update conversation state   │
+                                      └──────────────┬─────────────────┘
+                                                     │
+                     ┌───────────────────────────────┼────────────────┐
+                     ▼                               ▼                ▼
+          ┌──────────────────┐           ┌──────────────────┐  ┌──────────────┐
+          │   Firestore       │           │  Instagram        │  │  Existing    │
+          │  dm_conversations │           │  Graph API v21.0  │  │  booking     │
+          │  (new collection) │           │  POST /{ig_id}/   │  │  endpoints   │
+          │                  │           │  messages         │  │  /public/*   │
+          └──────────────────┘           └──────────────────┘  │  /bot/*      │
+                                                                └──────────────┘
+```
 
-The current code has the prompt built inline inside `handleCommentEvent`. Extract it into `buildSystemPrompt(options)` to make the personality and context sections independently manageable. The handler calls it; nothing else changes structurally.
+### Component Responsibilities
+
+| Component | Responsibility | New or Existing |
+|-----------|----------------|-----------------|
+| `instagram-webhook.js` POST handler | Signature verify, route `messaging` vs `comments` events | Existing — modify (add DM branch) |
+| `handleCommentEvent()` | AI reply to public comments | Existing — unchanged |
+| `handleDmEvent()` | DM flow orchestration: load state → route step → send reply → save state | New — add to same file |
+| `dm_conversations` Firestore collection | Persist conversation state per (igUserId, senderId) | New collection |
+| `utils/instagram.js` `sendDmMessage()` | POST to `/{ig_id}/messages` Graph API | New utility function |
+| Existing `/public/businesses/:id/services` | Fetch services for DM flow step | Existing — reuse as-is |
+| Existing `/public/businesses/:id/available-slots-v2` | Fetch time slots for DM flow step | Existing — reuse as-is |
+| Existing `/bot/businesses/:id/bookings` | Create booking (HMAC auth, no JWT) | Existing — reuse as-is |
+| Existing `/bot/otp/send` + `/bot/otp/verify` | OTP auth within DM flow | Existing — reuse as-is |
 
 ---
 
-## Firestore Schema for Comment History
+## How DM Events Arrive
 
-### New Collection: `instagram_comment_history`
-
-Stored as a subcollection under each business:
+Instagram sends DM events to the SAME webhook URL as comment events. The disambiguation is at the entry level:
 
 ```
-businesses/{businessId}/instagram_comment_history/{commenterId}
+Comment event:
+  body.entry[].changes[].field === 'comments'
+
+DM event:
+  body.entry[].messaging[].message.text (plain text)
+  body.entry[].messaging[].message.quick_reply.payload (button tap)
 ```
 
-The document ID is the commenter's Instagram username (normalized lowercase). This gives O(1) lookup by username with no query needed — just a `doc.get()` call.
+**Full DM webhook payload:**
 
-```javascript
-// businesses/{businessId}/instagram_comment_history/{commenterUsername}
+```json
 {
-  username: "john_doe",                    // redundant, but useful for reads
-  first_seen_at: Timestamp,               // when they first commented
-  last_seen_at: Timestamp,                // most recent comment
-  comment_count: 3,                       // total comments across all posts
-  last_comment_text: "Zo'r !!",          // their most recent comment text
-  last_reply_text: "Raxmat, kelasiz?",   // last AI reply we sent them
-  last_media_id: "17846368219941196",     // post they last commented on
+  "object": "instagram",
+  "entry": [{
+    "id": "IGID",
+    "time": 1569262486134,
+    "messaging": [{
+      "sender": { "id": "IGSID" },
+      "recipient": { "id": "IGID" },
+      "timestamp": 1569262485349,
+      "message": {
+        "mid": "MESSAGE-ID",
+        "text": "MESSAGE-TEXT",
+        "quick_reply": {
+          "payload": "BUTTON_PAYLOAD_STRING"
+        }
+      }
+    }]
+  }]
 }
 ```
 
-**Why this schema:**
-- Doc ID = username means `.doc(username).get()` with no composite index needed
-- Denormalized `comment_count` and `first_seen_at` lets the prompt say "this is their 3rd comment" without aggregation
-- Storing `last_reply_text` lets the prompt avoid repeating the same reply to a repeat commenter
-- No subcollection of individual comments — the prompt only needs the summary, not a log
-- Firestore write is a single `set({ merge: true })` with `FieldValue.increment` for the counter
+**Where comment events have `entry[].changes[]`, DM events have `entry[].messaging[]`.** The existing webhook POST handler already iterates `entry.changes` — it must be extended to also check for `entry.messaging` on the same entry object.
 
-**Firestore index required:** None. Document reads by ID need no composite index. The collection group query on `instagram_connection` already exists. This new collection is read by ID only.
+**Required permission for DM events:** `instagram_business_manage_messages` — this is NOT currently in the OAuth scope. The scope must be updated from:
+```
+instagram_business_basic,instagram_business_manage_comments,instagram_business_manage_insights
+```
+to:
+```
+instagram_business_basic,instagram_business_manage_comments,instagram_business_manage_insights,instagram_business_manage_messages
+```
+
+**Required webhook subscription field:** `messages` — must be added to the app's webhook configuration in addition to the existing `comments` subscription.
 
 ---
 
-### New Collection: `instagram_post_reply_log`
+## Conversation State: Where It Lives
 
-Stored as a subcollection under each business, keyed by media ID:
+### Firestore Collection: `dm_conversations`
 
 ```
-businesses/{businessId}/instagram_post_reply_log/{mediaId}
+dm_conversations/{convId}
 ```
+
+The document ID is a composite string: `{businessId}_{senderIgScopedId}`.
+
+This gives O(1) lookup with a single `.doc(id).get()` — no query needed.
 
 ```javascript
-// businesses/{businessId}/instagram_post_reply_log/{mediaId}
+// dm_conversations/{businessId}_{senderIgScopedId}
 {
-  media_id: "17846368219941196",
-  reply_count: 12,                         // total replies sent on this post
-  recent_replies: [                        // last N reply texts (capped array)
-    "Raxmat! Sizni kutamiz 😊",
-    "Albatta keling, joylar bor!",
-    "Zo'r tanlov, yozilib qo'ying 🙌"
-  ],
+  business_id: "abc123",
+  ig_user_id: "17841401234567",       // business's IG account ID (recipient.id)
+  sender_id: "9876543210",            // customer's Instagram-scoped ID (sender.id)
+  language: "uz",                     // null until language step completes
+  step: "LANGUAGE_SELECT",            // current flow step (see state machine)
+  selected_services: [],              // accumulates service IDs during selection
+  selected_date: null,                // "2026-03-25"
+  selected_time: null,                // seconds from midnight (number)
+  selected_employee_id: null,
+  otp_id: null,                       // active OTP document ID from bot_otps
+  phone_number: null,                 // filled after OTP verify
+  user_id: null,                      // filled after OTP verify (users collection ID)
+  customer_name: null,
+  created_at: Timestamp,
   updated_at: Timestamp,
+  expires_at: Timestamp,              // TTL: 30 minutes from last update
 }
 ```
 
-**Why this schema:**
-- One document per post means one `.doc(mediaId).get()` — no query
-- `recent_replies` array capped at 5-8 entries; written with `arrayUnion` + post-write trim
-- The array is injected into the prompt as "recent replies on this post, do not repeat these"
-- Avoids the hallmark failure mode: bot replies "Raxmat! Sizni kutamiz 😊" to every single comment on the same photo
+**Why Firestore for state (not in-memory):**
+- Cloud Run instances scale to zero and restart between requests
+- Multiple Cloud Run instances can handle different webhook deliveries for the same conversation
+- Firestore is the only stateful store already in the project
+- Conversation documents are small (~500 bytes) and short-lived (30-minute TTL)
 
-**Cap enforcement:** After writing, if `recent_replies.length > 8`, trim via an update that slices the oldest. Do this as a second Firestore write — acceptable because it's non-critical and fire-and-forget.
+**TTL enforcement:** Set `expires_at` to `now + 30 minutes` on every state update. Add a Firestore TTL policy on `dm_conversations.expires_at` (same pattern as `commenters.expires_at` already in `firestore.indexes.json`). No cron job needed.
+
+**State machine steps:**
+
+```
+LANGUAGE_SELECT
+    ↓
+MAIN_MENU
+    ↓ (Book button)
+SERVICE_SELECT
+    ↓
+DATE_SELECT
+    ↓
+TIME_SELECT
+    ↓
+EMPLOYEE_SELECT
+    ↓
+AUTH_PHONE_REQUEST       ← skip if user already verified
+    ↓
+AUTH_OTP_VERIFY          ← skip if user already verified
+    ↓
+BOOKING_CONFIRM
+    ↓
+DONE (conversation ends, doc expires)
+```
+
+Info paths branch off `MAIN_MENU` and return to `MAIN_MENU` (not a booking path).
 
 ---
 
-## How History Integrates with `handleCommentEvent`
+## DM Handler Structure
 
-The integration is two new parallel reads before the AI call, and two new writes after the successful reply. The existing flow is not reorganized.
+### Where it lives: same file (`instagram-webhook.js`)
 
-### Modified Flow (AI mode only)
+The comment handler and DM handler are in the same file because:
+- They share the business connection lookup pattern (query `instagram_connection` by `ig_user_id`)
+- They share the `verifyWebhookSignature` and error-never-throw contract
+- Splitting into a second file adds an import without adding clarity
 
-```
-existing: dedup check (hasExistingReply)
-               ↓
-NEW: parallel Firestore reads
-  ├── businesses/{biz}/instagram_comment_history/{username}  → commenterHistory
-  └── businesses/{biz}/instagram_post_reply_log/{mediaId}    → postReplyLog
-
-existing: buildBusinessInfo()  (unchanged)
-existing: getMediaDetails()    (unchanged)
-
-NEW: buildSystemPrompt({
-  businessInfo,
-  postCaption,
-  postTime,
-  now,
-  commenterHistory,   ← injected here
-  postReplyLog,       ← injected here
-  connection,
-  postAiInstructions,
-  bookingLink,
-})
-
-existing: openai.responses.create(...)
-existing: replyToComment(...)
-
-NEW: parallel Firestore writes (fire-and-forget, .catch(() => {}))
-  ├── update instagram_comment_history/{username}
-  └── update instagram_post_reply_log/{mediaId}
-
-existing: Telegram admin notify
-```
-
-The two reads happen in parallel with `Promise.all`:
+### Integration point in the existing POST handler
 
 ```javascript
-const commenterUsername = (commentData.from?.username || '').toLowerCase();
-const [commenterHistoryDoc, postReplyLogDoc] = await Promise.all([
-  commenterUsername
-    ? db.collection('businesses').doc(businessId)
-        .collection('instagram_comment_history').doc(commenterUsername).get()
-    : Promise.resolve(null),
-  db.collection('businesses').doc(businessId)
-    .collection('instagram_post_reply_log').doc(mediaId).get(),
-]);
-const commenterHistory = commenterHistoryDoc?.exists ? commenterHistoryDoc.data() : null;
-const postReplyLog = postReplyLogDoc?.exists ? postReplyLogDoc.data() : null;
-```
+// In the existing router.post('/', ...) handler:
 
-The two writes are fire-and-forget after the reply succeeds:
+for (const entry of body.entry) {
+  const igUserId = entry.id;
 
-```javascript
-// After replyToComment() succeeds:
-const now = new Date();
+  // EXISTING: comment events
+  if (Array.isArray(entry.changes)) {
+    for (const change of entry.changes) {
+      if (change.field === 'comments') {
+        tasks.push(handleCommentEvent(igUserId, change.value));
+      }
+    }
+  }
 
-// Write comment history
-if (commenterUsername) {
-  db.collection('businesses').doc(businessId)
-    .collection('instagram_comment_history').doc(commenterUsername)
-    .set({
-      username: commenterUsername,
-      first_seen_at: commenterHistory?.first_seen_at || now,
-      last_seen_at: now,
-      comment_count: FieldValue.increment(1),
-      last_comment_text: commentText,
-      last_reply_text: replyMessage,
-      last_media_id: mediaId,
-    }, { merge: true })
-    .catch(() => {});
-}
-
-// Write post reply log
-db.collection('businesses').doc(businessId)
-  .collection('instagram_post_reply_log').doc(mediaId)
-  .set({
-    media_id: mediaId,
-    reply_count: FieldValue.increment(1),
-    recent_replies: FieldValue.arrayUnion(replyMessage),
-    updated_at: now,
-  }, { merge: true })
-  .catch(() => {});
-```
-
-`FieldValue` is imported from `@google-cloud/firestore`. It is already a dependency. No new packages are required.
-
----
-
-## Prompt Architecture
-
-### Refactoring: Extract `buildSystemPrompt()`
-
-The current prompt is built inline using string concatenation across ~60 lines in `handleCommentEvent`. It should be extracted into a dedicated `buildSystemPrompt(options)` function (in the same file or a new `src/utils/instagramPrompt.js`). The function returns a single string. The AI call stays unchanged.
-
-### System Prompt Structure
-
-The prompt has five sections, in this order. Order matters — LLMs give more weight to earlier content.
-
-```
-[1] ROLE & PERSONA
-[2] BUSINESS CONTEXT        (from buildBusinessInfo — unchanged)
-[3] POST CONTEXT            (caption, publish date)
-[4] COMMENTER CONTEXT       (new — from commenter history)
-[5] RECENT REPLIES          (new — from post reply log)
-[6] INSTRUCTIONS            (per-post or global rules)
-```
-
-**Section 1 — Role & Persona (replaces current opening)**
-
-The current opener is: `"You are replying to Instagram post comments on behalf of a business."` — this produces a "business bot" voice. Replace with a persona that produces a human social media manager voice:
-
-```
-You are managing the Instagram comment section for {businessName}.
-Reply as their social media person — sharp, warm, and human.
-You know the business inside out and genuinely like their followers.
-Today: {now} (Tashkent, UTC+5). This is a PUBLIC comment section, not a DM.
-```
-
-**Section 2 — Business Context (unchanged)**
-
-`buildBusinessInfo()` output. No changes. Still includes services, hours, team, booking link.
-
-**Section 3 — Post Context (unchanged structure, same data)**
-
-```
-Post caption: "{postCaption}"
-Post published: {postTime}
-```
-
-**Section 4 — Commenter Context (NEW)**
-
-Only included when `commenterHistory` is non-null:
-
-```javascript
-if (commenterHistory) {
-  const isRepeat = commenterHistory.comment_count > 1;
-  if (isRepeat) {
-    lines.push(`\nCOMMENTER MEMORY:`);
-    lines.push(`@${commenterHistory.username} has commented ${commenterHistory.comment_count} times before.`);
-    lines.push(`Their last comment: "${commenterHistory.last_comment_text}"`);
-    lines.push(`Your last reply to them: "${commenterHistory.last_reply_text}"`);
-    lines.push(`Don't repeat your previous reply. Acknowledge them as a returning follower if natural.`);
-  } else {
-    lines.push(`\nCOMMENTER MEMORY: @${commenterHistory.username} — first-time commenter.`);
+  // NEW: DM events
+  if (Array.isArray(entry.messaging)) {
+    for (const messagingEvent of entry.messaging) {
+      tasks.push(handleDmEvent(igUserId, messagingEvent));  // NEW
+    }
   }
 }
 ```
 
-If `commenterHistory` is null (first ever comment), this section is omitted entirely. Do not add any "I don't know this person" text — just let the model treat them as a new visitor.
+This is a pure addition. `handleCommentEvent` is not touched.
 
-**Section 5 — Recent Replies on This Post (NEW)**
-
-Only included when `postReplyLog?.recent_replies?.length > 0`:
+### `handleDmEvent()` internal structure
 
 ```javascript
-if (postReplyLog?.recent_replies?.length > 0) {
-  lines.push(`\nRECENT REPLIES ALREADY SENT ON THIS POST (do not repeat these):`);
-  for (const r of postReplyLog.recent_replies.slice(-5)) {
-    lines.push(`- "${r}"`);
+async function handleDmEvent(igUserId, messagingEvent) {
+  try {
+    const senderId = messagingEvent.sender?.id;
+    const recipientId = messagingEvent.recipient?.id;  // same as igUserId
+    const messageText = messagingEvent.message?.text || '';
+    const quickReplyPayload = messagingEvent.message?.quick_reply?.payload || null;
+
+    // 1. Skip echo events (bot's own messages come back as echoes)
+    if (senderId === igUserId) return;
+
+    // 2. Find business connection by ig_user_id
+    const connectionSnapshot = await db
+      .collectionGroup('instagram_connection')
+      .where('ig_user_id', '==', String(igUserId))
+      .limit(1)
+      .get();
+    if (connectionSnapshot.empty) return;
+
+    const connectionDoc = connectionSnapshot.docs[0];
+    const connection = connectionDoc.data();
+    const businessId = connectionDoc.ref.parent.parent.id;
+
+    // 3. Check DM automation is enabled (dm_automation_enabled flag on connection doc)
+    if (!connection.dm_automation_enabled) return;
+
+    // 4. Decrypt access token
+    const accessToken = decrypt(connection.access_token);
+
+    // 5. Load or create conversation state
+    const convId = `${businessId}_${senderId}`;
+    const convRef = db.collection('dm_conversations').doc(convId);
+    const convDoc = await convRef.get();
+
+    let conversation = convDoc.exists ? convDoc.data() : null;
+
+    // 6. Route to appropriate step handler
+    const input = quickReplyPayload || messageText;
+    const result = await routeDmStep(conversation, input, businessId, senderId, accessToken);
+
+    // 7. Save updated state
+    await convRef.set(result.newState, { merge: false });
+
+    // 8. Send reply message(s)
+    for (const msg of result.messages) {
+      await sendDmMessage(igUserId, senderId, msg, accessToken);
+    }
+  } catch (error) {
+    console.error('Instagram DM webhook: error handling DM event:', error);
+    // Never throw — webhook must always return 200
   }
-  lines.push(`Vary your wording. Each reply should feel fresh.`);
 }
 ```
 
-**Section 6 — Instructions (existing, unchanged)**
+### `routeDmStep()` — flow logic
 
-The existing per-post / global rules section stays exactly as-is. This section already handles spam detection, language matching, tone, etc. Personality is improved by Sections 1 and 4, not by changing Section 6 rules.
+This is a pure function (or near-pure): takes current state + input, returns `{ newState, messages }`. It does make Firestore reads for business data (services, slots) but has no side effects itself.
 
-One addition to the global rules block — replace the current username handling (it's not implemented at all) with:
+```javascript
+async function routeDmStep(conversation, input, businessId, senderId, accessToken) {
+  const step = conversation?.step || null;
 
+  if (!step || step === 'DONE') {
+    return buildLanguageSelectStep(businessId);
+  }
+  if (step === 'LANGUAGE_SELECT') {
+    return handleLanguageSelect(conversation, input, businessId);
+  }
+  if (step === 'MAIN_MENU') {
+    return handleMainMenu(conversation, input, businessId);
+  }
+  if (step === 'SERVICE_SELECT') {
+    return handleServiceSelect(conversation, input, businessId);
+  }
+  if (step === 'DATE_SELECT') {
+    return handleDateSelect(conversation, input, businessId);
+  }
+  if (step === 'TIME_SELECT') {
+    return handleTimeSelect(conversation, input, businessId);
+  }
+  if (step === 'EMPLOYEE_SELECT') {
+    return handleEmployeeSelect(conversation, input, businessId);
+  }
+  if (step === 'AUTH_PHONE_REQUEST') {
+    return handlePhoneRequest(conversation, input, businessId, senderId);
+  }
+  if (step === 'AUTH_OTP_VERIFY') {
+    return handleOtpVerify(conversation, input, businessId, senderId);
+  }
+  if (step === 'BOOKING_CONFIRM') {
+    return handleBookingConfirm(conversation, businessId);
+  }
+
+  // Unknown step — reset
+  return buildLanguageSelectStep(businessId);
+}
 ```
-- The commenter's username is @{commenterUsername}. Use it naturally at most once if it fits.
-```
+
+Each `handle*` function returns `{ newState: {...}, messages: [{text, quick_replies}] }`.
 
 ---
 
-## Component Boundaries
+## Sending DM Messages with Quick Replies
 
-| Component | Owns | Does NOT Own |
-|-----------|------|-------------|
-| `handleCommentEvent` | Orchestration, all Firestore reads/writes, pre/post hooks | Prompt text, business data |
-| `buildSystemPrompt()` | Prompt text assembly from provided data | Firestore access, AI calls |
-| `buildBusinessInfo()` | Business data fetching and formatting | Prompt structure |
-| History reads | `instagram_comment_history`, `instagram_post_reply_log` reads | Business data |
-| History writes | `instagram_comment_history`, `instagram_post_reply_log` writes | Reply logic |
+### New utility function in `utils/instagram.js`
 
-`buildSystemPrompt` must be a pure function: it takes all data as arguments and returns a string. Zero Firestore access, zero async. This makes it testable in isolation.
+```javascript
+export async function sendDmMessage(igId, recipientIgScopedId, message, accessToken) {
+  const body = {
+    recipient: { id: recipientIgScopedId },
+    message: {
+      text: message.text,
+    },
+    access_token: accessToken,
+  };
+
+  if (message.quick_replies && message.quick_replies.length > 0) {
+    body.message.quick_replies = message.quick_replies.map(qr => ({
+      content_type: 'text',
+      title: qr.title,          // max 20 characters
+      payload: qr.payload,      // string identifier for this button
+    }));
+  }
+
+  const response = await fetch(
+    `https://graph.instagram.com/v21.0/${igId}/messages`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  );
+
+  const data = await response.json();
+  if (data.error) {
+    throw new Error(`Instagram DM send error: ${data.error.message}`);
+  }
+  return data;
+}
+```
+
+**Quick reply constraints (Meta API):**
+- Max 13 quick replies per message
+- Each title: max 20 characters (truncated if longer)
+- Plain text only (no emoji in payload strings, emoji OK in title)
+- Quick replies disappear after one is tapped — they are not persistent buttons
 
 ---
 
-## Data Flow Direction
+## Data Flow: DM Received to Booking Created
 
 ```
-Webhook payload
+Customer taps "Book" in Instagram DM
     │
     ▼
-handleCommentEvent(igUserId, commentData)
+Meta sends POST /instagram/webhook
+  body.entry[0].messaging[0] = {
+    sender.id: "IGSID",
+    recipient.id: "IGID",
+    message.quick_reply.payload: "BOOK"
+  }
     │
-    ├─► [READ] businesses/{biz}/instagram_connection (existing)
-    ├─► [READ] businesses/{biz}/instagram_post_settings/{mediaId} (existing)
-    ├─► [READ] Instagram API — hasExistingReply (existing)
-    ├─► [READ] businesses/{biz}/instagram_comment_history/{username}  ← NEW
-    ├─► [READ] businesses/{biz}/instagram_post_reply_log/{mediaId}    ← NEW
+    ▼
+verifyWebhookSignature()  (X-Hub-Signature-256)
     │
-    ├─► buildBusinessInfo() → business context string (existing)
-    ├─► getMediaDetails() → post caption + timestamp (existing)
+    ▼
+handleDmEvent(igUserId="IGID", messagingEvent)
     │
-    ├─► buildSystemPrompt({all data}) → system prompt string  ← NEW (extract)
+    ├─► [READ] instagram_connection collectionGroup by ig_user_id  → businessId, accessToken
+    ├─► [READ] dm_conversations/{businessId}_{senderId}            → current conversation state
     │
-    ├─► openai.responses.create() → replyMessage (existing)
+    ▼
+routeDmStep(state, "BOOK", businessId, senderId, accessToken)
     │
-    ├─► replyToComment() → Instagram API (existing)
+    ├─► step === "MAIN_MENU", input === "BOOK"
+    │   [READ] businesses/{id}/services (is_active == true)       → service list
+    │   Returns: { newState: { step: "SERVICE_SELECT", ... },
+    │              messages: [{ text: "Xizmatni tanlang:", quick_replies: [...services] }] }
     │
-    ├─► [WRITE] instagram_comment_history/{username} (fire-and-forget)  ← NEW
-    ├─► [WRITE] instagram_post_reply_log/{mediaId} (fire-and-forget)    ← NEW
+    ▼
+[WRITE] dm_conversations/{convId}  (new state: step="SERVICE_SELECT")
     │
-    └─► sendTelegramMessage() (existing)
+    ▼
+sendDmMessage(igUserId, senderId, serviceListMessage, accessToken)
+    │
+    ▼
+[Customer picks service]
+
+... (DATE_SELECT → TIME_SELECT → EMPLOYEE_SELECT flow) ...
+
+    │
+    ▼
+step === "AUTH_PHONE_REQUEST"
+    │   If user already in users/{senderId} with is_verified=true → skip to BOOKING_CONFIRM
+    │   Else → send "Telefon raqamingizni kiriting:" message, step="AUTH_OTP_VERIFY" after phone received
+    │
+    ▼
+step === "AUTH_OTP_VERIFY"
+    │   Call POST /bot/otp/send (internally, direct function call or HTTP)
+    │   Customer enters OTP code
+    │   Call POST /bot/otp/verify
+    │   On success → update users/{senderId}.is_verified=true, step="BOOKING_CONFIRM"
+    │
+    ▼
+step === "BOOKING_CONFIRM"
+    │   [READ] business data for confirmation message
+    │   Call POST /bot/businesses/{businessId}/bookings with all collected data
+    │   Returns bookingId
+    │   Send confirmation DM: "Bron tasdiqlandi! ✅\n{date} {time}\n{service}"
+    │   [WRITE] dm_conversations/{convId} = { step: "DONE", expires_at: now+5min }
+    │
+    ▼
+Booking exists in Firestore bookings/{bookingId}
 ```
 
 ---
 
-## Build Order
+## Recommended Project Structure
 
-Each step has no circular dependencies. Build in this order:
+```
+src/
+├── routes/
+│   ├── instagram-webhook.js    # MODIFIED: add DM branch + handleDmEvent() + routeDmStep()
+│   │                            # + per-step handlers (handleLanguageSelect, etc.)
+│   └── instagram.js            # UNCHANGED
+├── utils/
+│   └── instagram.js            # MODIFIED: add sendDmMessage()
+└── (no new files required for DM flow — keep complexity in instagram-webhook.js)
+```
 
-### Step 1: Firestore Schema (foundation — everything else depends on this)
+**Rationale for no new files:**
+- The DM handler is the same pattern as the comment handler — same file, same error contract
+- Per-step handlers are small functions (20-40 lines each) that don't justify their own modules
+- Splitting would require cross-file imports for shared utilities (accessToken, businessId) adding ceremony without benefit
+- All 127 existing tests are in `instagram-webhook.test.js` — new tests go in the same file
 
-Define the two new collections. No code yet — just decide field names and write one manual test document to verify the structure reads cleanly. Required before any integration work.
+**If the DM handler grows beyond ~400 lines total:** Extract step handlers into `src/utils/dmBookingFlow.js`. The `handleDmEvent()` in the route file becomes the orchestrator that imports from there. This is a clean refactor that does not require API changes.
 
-### Step 2: History Reads in `handleCommentEvent` (non-breaking)
+---
 
-Add the two parallel `Promise.all` reads before `buildBusinessInfo`. At this point, the data is fetched but not used. The AI prompt is unchanged. Zero behavior change. Safe to ship independently.
+## New vs. Modified Components
 
-### Step 3: Extract `buildSystemPrompt()` (refactor, not feature)
+| Component | Status | Change |
+|-----------|--------|--------|
+| `src/routes/instagram-webhook.js` POST handler | **Modified** | Add `entry.messaging` loop alongside existing `entry.changes` loop |
+| `handleCommentEvent()` | **Unchanged** | Zero changes |
+| `handleDmEvent()` | **New** | DM orchestration function in same file |
+| `routeDmStep()` | **New** | Step routing logic |
+| `handle*()` step functions | **New** | One function per flow step (8-10 functions) |
+| `src/utils/instagram.js` | **Modified** | Add `sendDmMessage()` export |
+| `firestore.indexes.json` | **Modified** | Add TTL policy for `dm_conversations.expires_at` |
+| `src/routes/instagram.js` | **Modified** | Add `dm_automation_enabled` field to settings PATCH + GET |
+| OAuth scope in `utils/instagram.js` `getOAuthUrl()` | **Modified** | Add `instagram_business_manage_messages` permission |
+| `bot.js` OTP endpoints | **Unchanged** | Reused internally by DM handler |
+| `public.js` booking endpoints | **Unchanged** | Reused internally by DM handler (direct Firestore queries, same pattern) |
+| `dm_conversations` Firestore collection | **New** | State persistence for active DM flows |
 
-Move the inline prompt construction into a standalone function. Input: all the same data the current inline code has. Output: same string. AI behavior should not change. Ship as a refactor — verify in staging that reply content is identical before adding new sections.
+---
 
-This step must complete before steps 4 and 5 — you cannot add new prompt sections to inline code cleanly.
+## Integration Points
 
-### Step 4: Personality Overhaul (Section 1 + username usage)
+### Business Connection Resolution
 
-Change the persona section and add `@username` injection to the rules. This is the highest-value, lowest-risk change. No new Firestore data required. Just prompt text changes. Test with 10-20 sample comments.
+Both comment and DM handlers use the same `instagram_connection` collection group query:
 
-### Step 5: Commenter Memory in Prompt (Section 4)
+```javascript
+db.collectionGroup('instagram_connection')
+  .where('ig_user_id', '==', String(igUserId))
+  .limit(1)
+  .get()
+```
 
-Add the commenter context section using data already fetched in Step 2. Depends on Step 3 (prompt function) and Step 2 (data available).
+The DM handler adds one new check on the resulting document: `connection.dm_automation_enabled`. This is a boolean stored on the existing connection document — no new collection needed.
 
-### Step 6: Reply Variety in Prompt (Section 5)
+### Booking Creation
 
-Add the recent-replies deduplication section. Same dependency as Step 5.
+The DM handler creates bookings by calling the same logic as `POST /bot/businesses/:businessId/bookings`. There are two options:
 
-### Step 7: History Writes (completes the loop)
+**Option A (recommended): Direct Firestore writes** — duplicate the booking creation logic from `bot.js` into the DM handler, or extract it into `src/utils/createBooking.js` shared by both. This avoids an internal HTTP call.
 
-Add the fire-and-forget Firestore writes after `replyToComment`. Depends on all prior steps being stable. The writes are last because they don't affect reply quality — they feed future replies. Shipping writes before reads are wired to the prompt is safe.
+**Option B: Internal HTTP call** — POST to `http://localhost:3000/bot/businesses/{id}/bookings` with the HMAC signature. This keeps the logic in one place but requires the server to call itself (fragile in Cloud Run).
+
+**Recommendation: Option A with extraction.** Create `src/utils/createBooking.js` that exports `createBookingForUser()`. Both `bot.js` and the DM handler import from it. This removes duplication and is the correct architectural move regardless.
+
+### OTP Authentication
+
+The DM handler reuses the OTP logic from `bot.js`. Same two options apply. In this case, the OTP send/verify functions are simpler and can be called directly from Firestore rather than duplicated:
+
+```javascript
+// DM handler calls same Firestore collections bot.js uses:
+// db.collection('bot_otps') — write OTP doc
+// db.collection('users') — read/write user doc
+```
+
+Extract `sendOtp(telegramId, phoneNumber)` and `verifyOtp(telegramId, otpId, otpCode)` into `src/utils/otpAuth.js`. Both `bot.js` and the DM handler import from it.
+
+**Note:** The `bot_otps` collection uses `telegram_id` as the user key. For DM users, there is no Telegram ID — use Instagram sender ID instead. The OTP collection must accept either. The simplest approach: store IG sender ID as a string in the `telegram_id` field (it is already stored as Number, so use a separate field `ig_sender_id` for DM-originated OTPs).
+
+### Available Slots and Services
+
+The DM handler queries Firestore directly for services and available slots, using the same collection paths as the public endpoints. No HTTP calls needed:
+
+```javascript
+// Services
+db.collection('businesses').doc(businessId).collection('services')
+  .where('is_active', '==', true).get()
+
+// Available slots: reuse the slot calculation logic from public.js
+// Extract into src/utils/availableSlots.js
+```
+
+---
+
+## Architectural Patterns
+
+### Pattern 1: Event Field Dispatch
+
+**What:** The single webhook POST handler inspects the event structure to determine which handler to invoke. `entry.changes` → comment handler; `entry.messaging` → DM handler.
+
+**When to use:** When a single endpoint receives structurally different events. Common in Meta webhook integrations.
+
+**Trade-offs:** Keeps one entry point (simpler routing), requires careful null checks on optional fields, grows the router file if many event types are added.
+
+```javascript
+// Both event types run in parallel via Promise.all — same as current comment handling
+const tasks = [];
+for (const entry of body.entry) {
+  if (Array.isArray(entry.changes)) {
+    for (const change of entry.changes) {
+      if (change.field === 'comments') tasks.push(handleCommentEvent(entry.id, change.value));
+    }
+  }
+  if (Array.isArray(entry.messaging)) {
+    for (const msg of entry.messaging) {
+      tasks.push(handleDmEvent(entry.id, msg));
+    }
+  }
+}
+await Promise.all(tasks);
+```
+
+### Pattern 2: Document-Keyed State with TTL
+
+**What:** Conversation state is stored in a Firestore document keyed by `{businessId}_{senderId}`. The document expires via TTL — no cleanup cron needed.
+
+**When to use:** Short-lived state that should auto-expire. Stateless compute (Cloud Run) that can't hold in-memory state across requests.
+
+**Trade-offs:** Slightly higher Firestore read/write cost per DM received. But: zero operational overhead, no memory leak risk, correct across multiple Cloud Run instances.
+
+### Pattern 3: Step Function Returns (not mutations)
+
+**What:** Each `handle*Step()` function returns `{ newState, messages }` rather than writing to Firestore directly. The orchestrator writes state and sends messages.
+
+**When to use:** When steps need to be unit-tested independently. When write ordering matters (save state before sending message — or after).
+
+**Trade-offs:** Slightly more verbose call sites. Enables testing each step without mocking Firestore writes.
+
+---
+
+## Data Flow
+
+### Request Flow
+
+```
+Instagram DM sent by customer
+    ↓
+Meta webhook POST /instagram/webhook
+    ↓
+verifyWebhookSignature()
+    ↓
+entry.messaging[] detected → handleDmEvent(igUserId, messagingEvent)
+    ↓
+[READ] instagram_connection (by ig_user_id) → businessId, accessToken, dm_enabled
+    ↓
+[READ] dm_conversations/{businessId}_{senderId} → current step + accumulated data
+    ↓
+routeDmStep(state, input) → { newState, messages }
+    ↓
+[WRITE] dm_conversations/{convId} = newState
+    ↓
+sendDmMessage() for each message in result.messages
+    ↓
+res.status(200).send('EVENT_RECEIVED')
+```
+
+### State Management
+
+```
+dm_conversations/{convId}
+    ↓ (read on each DM)
+routeDmStep() ←→ handle*Step() → { newState, messages }
+    ↓ (write after step)
+dm_conversations/{convId}  (updated TTL: +30 minutes)
+```
+
+### Key Data Flows
+
+1. **Business resolution:** Both comment and DM handlers do the same `collectionGroup` query. This is the only "expensive" read — 1 Firestore query per DM event.
+
+2. **Step accumulation:** `selected_services`, `selected_date`, `selected_time`, `selected_employee_id` accumulate on the conversation document across multiple DM exchanges until `BOOKING_CONFIRM`.
+
+3. **Booking handoff:** At `BOOKING_CONFIRM`, all accumulated state is read from the conversation doc and passed to the booking creation utility. The conversation doc then transitions to `step: "DONE"` with a short TTL.
+
+---
+
+## Scaling Considerations
+
+| Scale | Architecture Adjustments |
+|-------|--------------------------|
+| 0-50 active conversations/day | Current design is fine — Firestore reads per DM are 2-3 |
+| 50-500 active conversations/day | Add Firestore index on `dm_conversations.business_id` if business-level analytics needed |
+| 500+ active conversations/day | Consider Redis for state (not Firestore) to reduce cost; current design handles this volume fine at ~$0.06/1M reads |
+
+### Scaling Priorities
+
+1. **First bottleneck:** Instagram API rate limit on sending DMs — 200 automated DMs per hour per account. At scale, queue DM sends rather than sending synchronously in the webhook handler.
+
+2. **Second bottleneck:** `collectionGroup` query cost. At very high volume, cache the `businessId → accessToken` mapping in a short-lived in-memory cache (if Cloud Run min-instances > 0).
+
+---
+
+## Anti-Patterns
+
+### Anti-Pattern 1: Handling DMs in a Separate Webhook Route
+
+**What people do:** Register a second webhook URL `/instagram/dm-webhook` for DM events, separate from the comment webhook.
+
+**Why it's wrong:** Meta sends ALL Instagram webhook events to ONE configured URL. You cannot split them by event type at the platform level. Attempting this requires a separate app registration.
+
+**Do this instead:** Handle both event types in the same POST handler by inspecting `entry.changes` vs `entry.messaging`.
+
+### Anti-Pattern 2: Storing Conversation State In-Memory
+
+**What people do:** Use a `Map<senderId, conversationState>` in the Node.js process.
+
+**Why it's wrong:** Cloud Run scales to zero between requests and may run multiple instances. In-memory state is lost on cold start and not shared across instances.
+
+**Do this instead:** Firestore `dm_conversations` collection with TTL. 30-minute expiry is sufficient for a booking flow.
+
+### Anti-Pattern 3: Blocking the Webhook Response on DM Sends
+
+**What people do:** `await sendDmMessage()` inside the webhook handler, causing the webhook response to be delayed by the IG API round-trip.
+
+**Why it's wrong:** Meta expects webhook responses within 20 seconds. IG API calls typically take 200-500ms each. A multi-message flow can hit this limit.
+
+**Do this instead:** Respond 200 immediately, then process the DM event. Use Cloud Run's `waitUntil` pattern or ensure processing completes before returning (the current comment handler already does this — same approach works for DMs since the typical DM flow is 1-2 API calls).
+
+### Anti-Pattern 4: Duplicating Booking Logic
+
+**What people do:** Copy the full booking creation logic from `bot.js` into the DM handler.
+
+**Why it's wrong:** Two places to fix bugs, two places to update validation rules.
+
+**Do this instead:** Extract `createBooking()` into `src/utils/createBooking.js`. Both `bot.js` and the DM handler import from it.
+
+### Anti-Pattern 5: Using `message.text` Matching for Button Taps
+
+**What people do:** Check `message.text === "Book"` to detect button taps.
+
+**Why it's wrong:** Users can also type "Book" as free text. The distinguishing signal is `message.quick_reply.payload`, not `message.text`.
+
+**Do this instead:** Check `quick_reply.payload` first. Fall through to text matching only for free-text input handling.
+
+---
+
+## Build Order (Considering Dependencies)
+
+### Phase 1: Infrastructure (blocks everything)
+
+1. **Add `messages` webhook subscription** — enable DM events in Meta app configuration. No code change required but blocks DM events from arriving.
+2. **Update OAuth scope** — add `instagram_business_manage_messages` to `getOAuthUrl()` in `utils/instagram.js`. Businesses must re-auth after this change.
+3. **Add `dm_automation_enabled` field** — add to `instagram_connection` document schema and expose on `PATCH /instagram/settings` and `GET /instagram/status`. This is the per-business feature toggle.
+4. **Add `dm_conversations` TTL policy** — add to `firestore.indexes.json`. Deploy before any DM state is written.
+
+### Phase 2: Event Routing (non-breaking addition)
+
+5. **Add `entry.messaging` branch** to the existing POST handler. At this point, DM events arrive but `handleDmEvent` just logs and returns. Zero behavior change to comments.
+6. **Add `sendDmMessage()` to `utils/instagram.js`** — needed by all step handlers.
+
+### Phase 3: Flow Steps (implement in order, test each before next)
+
+7. **`handleLanguageSelect` + send initial language prompt** — first user-visible behavior. Can ship and test independently.
+8. **`handleMainMenu`** — depends on Step 7 (must be in MAIN_MENU step to test).
+9. **`handleServiceSelect`** — depends on Step 8. Requires Firestore services read.
+10. **`handleDateSelect`** — depends on Step 9.
+11. **`handleTimeSelect`** — depends on Step 10. Requires available-slots logic.
+12. **`handleEmployeeSelect`** — depends on Step 11. Requires slot-employees logic.
+13. **`handlePhoneRequest` + `handleOtpVerify`** — depends on Steps 12. Requires OTP utility extraction.
+14. **`handleBookingConfirm`** — depends on Steps 3-13. Requires booking creation utility extraction.
 
 ### Dependency Graph
 
 ```
-Step 1 (schema)
-    └─► Step 2 (reads)
-              └─► Step 5 (commenter context in prompt)
-              └─► Step 6 (variety in prompt)
-Step 3 (extract buildSystemPrompt)
-    └─► Step 4 (personality)
-    └─► Step 5
-    └─► Step 6
-Step 7 (writes) — depends on Step 2 only (needs username/mediaId in scope)
+Phase 1 (1-4): infrastructure — must complete before Phase 2
+Phase 2 (5-6): routing — must complete before Phase 3
+
+Phase 3:
+  7 (language) → 8 (menu) → 9 (service) → 10 (date)
+                                                ↓
+                                           11 (time) → 12 (employee)
+                                                              ↓
+                                                    13 (phone+OTP) → 14 (confirm)
 ```
 
-Steps 3 and 2 can be done in parallel. Steps 4, 5, 6 all depend on Step 3 and can be done in any order after it.
+Steps within Phase 3 must be built sequentially because each step is tested by completing the previous step in a real DM flow.
 
 ---
 
-## Anti-Patterns to Avoid
+## Integration Points Summary
 
-### Anti-Pattern 1: Storing Full Comment Logs Per User
+### External Services
 
-**What:** Collection of every individual comment per commenter, queried to build history
-**Why bad:** Unnecessary document volume; the prompt only needs a 3-line summary, not a log. Queries add latency on every webhook call.
-**Instead:** Single denormalized summary document per commenter, updated in-place with `merge: true`
+| Service | Integration Pattern | Notes |
+|---------|---------------------|-------|
+| Meta Instagram Graph API (webhook) | Incoming POST, no auth (Meta-signed) | Existing — add `messaging` field handling |
+| Meta Instagram Graph API (send DM) | POST `/{ig_id}/messages` with access token | New — `sendDmMessage()` utility |
+| Firestore `instagram_connection` | Collection group query by `ig_user_id` | Existing — add `dm_automation_enabled` flag |
+| Firestore `dm_conversations` | Document read/write by composite key | New collection |
+| Firestore `businesses/{id}/services` | Collection read for service list | Existing — no change |
+| Firestore `bookings` | Document write for booking creation | Existing — via shared utility |
 
-### Anti-Pattern 2: Writing History Before the Reply Succeeds
+### Internal Boundaries
 
-**What:** Write to Firestore, then call `replyToComment`, then skip the write-rollback on failure
-**Why bad:** If `replyToComment` throws, the history records a reply that was never sent. `last_reply_text` becomes stale. Dedup logic downstream could be confused.
-**Instead:** Write history only after `replyToComment()` resolves successfully. Both writes are fire-and-forget but must come after the reply call.
-
-### Anti-Pattern 3: Blocking the Webhook on History Writes
-
-**What:** `await` the history write calls before returning
-**Why bad:** Cloud Run keeps CPU allocated until the response is sent. History writes are non-critical. Adding `await` to fire-and-forget operations adds 100-300ms of latency for zero user-facing benefit.
-**Instead:** `.set().catch(() => {})` without `await`
-
-### Anti-Pattern 4: Injecting Raw History Dump Into Prompt
-
-**What:** Passing the full Firestore document as JSON into the prompt
-**Why bad:** Verbose, token-wasteful, and the model does not need field names. It needs 2-3 readable sentences.
-**Instead:** Format history into prose: `"@jane has commented 4 times before. Their last comment: '...' Your last reply: '...'"` — 1-3 lines maximum.
-
-### Anti-Pattern 5: Merging Personality Into the Rules Block
-
-**What:** Adding "be witty" and "sound human" to the existing RULES section at the bottom of the prompt
-**Why bad:** Rules are read after the persona is established. Personality instructions buried in rules have weak effect. LLM instruction-following is front-loaded.
-**Instead:** Persona is Section 1, immediately after the role declaration, before any business data.
-
----
-
-## Scalability Considerations
-
-| Concern | Current scale | With comment history |
-|---------|--------------|---------------------|
-| Firestore reads per webhook | ~4 reads | +2 reads (parallel) |
-| Firestore writes per reply | 0 new writes | +2 writes (fire-and-forget) |
-| Prompt token count | ~400-600 tokens | +50-100 tokens (history sections) |
-| Per-business storage | n/a | ~1 doc per unique commenter, ~1 doc per post |
-| Index requirements | ig_user_id collection group | No new indexes (doc ID lookups only) |
-
-At typical barbershop/salon scale (50-200 comments/week), the additional read cost is negligible. The `instagram_comment_history` collection will grow to a few hundred documents per business, which is well within Firestore's document-per-collection limits.
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| `instagram-webhook.js` ↔ `utils/instagram.js` | Import — `sendDmMessage()` | New export on existing module |
+| `instagram-webhook.js` ↔ booking logic | Shared utility import | Extract from `bot.js` into `utils/createBooking.js` |
+| `instagram-webhook.js` ↔ OTP logic | Shared utility import | Extract from `bot.js` into `utils/otpAuth.js` |
+| Comment handler ↔ DM handler | None (independent) | Both live in same file, no shared mutable state |
 
 ---
 
 ## Sources
 
-- Source code analysis: `src/routes/instagram-webhook.js` (lines 108-340)
-- Firestore schema: `firestore.indexes.json` — existing index on `instagram_connection.ig_user_id` COLLECTION_GROUP
-- Firestore docs on `FieldValue.increment` and `arrayUnion`: HIGH confidence (standard Firestore API, well-established)
-- Prompt ordering guidance (persona before rules): MEDIUM confidence (empirical from prompt engineering literature, not formally benchmarked here)
-- `@google-cloud/firestore` `FieldValue` import pattern: HIGH confidence (already a project dependency at v8.0.0)
+- Source code: `src/routes/instagram-webhook.js` — verified webhook dispatch structure and comment handler pattern
+- Source code: `src/routes/bot.js` — verified OTP and booking creation logic to reuse
+- Source code: `src/utils/instagram.js` — verified existing OAuth scope and Graph API base URL
+- Source code: `src/routes/index.js` — verified `/instagram/webhook` is public (no HMAC), correct for Meta webhook events
+- Source code: `firestore.indexes.json` — verified TTL pattern on `commenters.expires_at` to replicate for `dm_conversations`
+- Meta developer docs: `developers.facebook.com/docs/messenger-platform/instagram/features/webhook/` — DM webhook payload structure (HIGH confidence, fetched directly)
+- Meta developer docs: `developers.facebook.com/docs/instagram-platform/webhooks/` — `messages` subscription field, permission requirements (HIGH confidence, fetched directly)
+- Meta quick reply constraints: max 13 replies, 20-char title limit, plain text only (HIGH confidence, multiple sources agree)
+- Instagram API rate limit: 200 automated DMs per hour (MEDIUM confidence — referenced in multiple secondary sources, not verified in primary docs during this session)
+
+---
+
+*Architecture research for: Instagram DM booking automation — integration with existing BLYSS webhook infrastructure*
+*Researched: 2026-03-22*
