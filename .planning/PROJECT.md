@@ -1,12 +1,25 @@
-# BLYSS Instagram AI Auto-Reply
+# BLYSS Instagram Automation
 
 ## What This Is
 
-An AI-powered Instagram comment auto-reply system for barbershops and salons on the BLYSS platform. When someone comments on a business's Instagram post, the AI replies automatically — sounding like a witty, playful human social media manager who keeps the comments section alive and engaging. The system tracks returning commenters, adapts tone to post type, and avoids repetitive replies.
+Instagram automation for barbershops and salons on the BLYSS platform. Two systems: (1) AI-powered comment auto-replies that sound like a skilled human social media manager, and (2) static button-based DM booking automation that walks customers through the full booking flow — service selection, date, time, employee, and confirmation — entirely within Instagram DMs.
 
 ## Core Value
 
-Every AI reply should be indistinguishable from a skilled human social media manager — engaging, witty, and natural enough that people reply back.
+Turn Instagram engagement into real bookings — comments get human-quality replies, DMs convert to confirmed appointments.
+
+## Current Milestone: v2.0 Instagram DM Booking Automation
+
+**Goal:** Enable customers to book appointments entirely through Instagram DMs using a static, button-driven flow — no AI, no web redirect needed.
+
+**Target features:**
+- Language selection (uz/ru) as first interaction
+- Main menu with quick-reply buttons (Book, Location, Working Hours, Contact)
+- Full booking flow: services → date → time slot → employee → confirmation
+- Multiple service selection support
+- Phone + OTP authentication in DMs
+- Conversation state management with timeout handling
+- Optional per-business toggle in instagram_connection settings
 
 ## Requirements
 
@@ -36,11 +49,21 @@ Every AI reply should be indistinguishable from a skilled human social media man
 
 ### Active
 
-(None — next milestone not yet planned)
+- [ ] Language selection buttons (uz/ru) on first DM interaction
+- [ ] Main menu with quick-reply buttons (Book, Location, Working Hours, Contact)
+- [ ] Service selection with multiple service support
+- [ ] Date selection (next 7 days)
+- [ ] Time slot selection from available slots
+- [ ] Employee selection from available employees per service
+- [ ] Phone + OTP authentication within DM flow
+- [ ] Booking creation and confirmation message
+- [ ] Conversation state management with timeout handling
+- [ ] Per-business DM automation toggle in instagram_connection settings
+- [ ] Info responses for Location, Working Hours, and Contact buttons
 
 ### Out of Scope
 
-- DM auto-replies — different system, different Instagram permissions
+- ~~DM auto-replies~~ — moved to Active for v2.0
 - Comment moderation (hiding/deleting) — out of scope for this iteration
 - Scheduled replies / delayed posting — adds complexity, not needed now
 - Multi-language within single reply — match one language per reply
@@ -51,12 +74,22 @@ Every AI reply should be indistinguishable from a skilled human social media man
 
 ## Context
 
-**Current state:** v1.0 shipped (2026-03-10). The Instagram auto-reply system now produces human-quality replies with commenter memory, reply variety, and post-type awareness. 127 unit tests cover all behavior.
+**Current state:** v1.0 shipped (2026-03-10). The Instagram auto-reply system now produces human-quality replies with commenter memory, reply variety, and post-type awareness. 127 unit tests cover all behavior. v2.0 adds DM booking automation.
 
 **Codebase:**
-- `src/routes/instagram-webhook.js` — 706 lines, main auto-reply logic with `buildSystemPrompt()`, `buildBusinessInfo()`, `getCommenterHistory()`, `getPostReplies()`, `updateCommenterHistory()`, `updatePostReplies()`
+- `src/routes/instagram-webhook.js` — 706 lines, comment auto-reply logic
 - `src/routes/instagram-webhook.test.js` — 1,415 lines, 127 unit tests
+- `src/routes/instagram.js` — Instagram OAuth, settings, post management
+- `src/routes/public.js` — Available slots, slot employees, booking creation endpoints
+- `src/routes/bot.js` — Bot booking creation (HMAC only, no JWT)
 - `firestore.indexes.json` — TTL policies for commenter and post reply collections
+
+**Landing page booking flow (reference for DM flow):**
+- GET `/public/businesses/:businessId/services` — services, employees, photos
+- GET `/public/businesses/:businessId/available-slots-v2` — 15-min time slots
+- GET `/public/businesses/:businessId/slot-employees` — employees at specific slot
+- POST `/public/businesses/:businessId/bookings-v2` — create booking (JWT required)
+- POST `/bot/bookings` — create booking (HMAC only, no JWT)
 
 **Known issues:**
 - `server.test.js` fails without `JWT_SECRET` env var (pre-existing, unrelated)
@@ -86,4 +119,4 @@ Every AI reply should be indistinguishable from a skilled human social media man
 | All sections in else branch only | Per-post AI instructions override path unaffected | ✓ Good — clean separation of concerns |
 
 ---
-*Last updated: 2026-03-10 after v1.0 milestone*
+*Last updated: 2026-03-22 after v2.0 milestone start*
