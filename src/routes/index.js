@@ -20,11 +20,15 @@ import discountsRouter from './discounts.js';
 import instagramRouter from './instagram.js';
 import instagramWebhookRouter from './instagram-webhook.js';
 import adminRouter from './admin.js';
+import thirdPartySmsRouter from './thirdPartySms.js';
 
 const router = Router();
 
 // Public routes (no signature verification required)
 router.use('/public', publicRouter);
+
+// Third-party SMS endpoint (no auth — marker-gated for InformTech.uz)
+router.use('/third-party/sms-services', thirdPartySmsRouter);
 
 // Telegram Mini App routes (uses init data auth, no signature verification)
 router.use('/telegram', telegramRouter);
