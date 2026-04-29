@@ -21,7 +21,8 @@ app.use(cors({
         const allowed = [
             'https://botservice.blyss.uz',
             'https://miniapp.blyss.uz',
-            'https://barbershop-miniapp-beta.automations.uz'
+            'https://barbershop-miniapp-beta.automations.uz',
+            'https://tg-beta.shakha.uz'
         ];
         // Only allow [a-z0-9-]+-miniapp.blyss.uz (no underscores or special chars)
         if (!origin || allowed.includes(origin) || /^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?-miniapp\.blyss\.uz$/.test(origin)) {
