@@ -12,6 +12,7 @@ import notificationsRouter from './notifications.js';
 import distanceRouter from './distance.js';
 import aiRouter from './ai.js';
 import conversationsRouter from './conversations.js';
+import smsRouter from './sms.js';
 import bookingsRouter from './bookings.js';
 import telegramRouter from './telegram.js';
 import botRouter from './bot.js';
@@ -58,6 +59,7 @@ router.use('/notifications', verifySignature, notificationsRouter);
 router.use('/distance', verifySignature, distanceRouter);
 router.use('/ai', verifySignature, aiRouter);
 router.use('/businesses/:businessId/conversations', verifySignature, conversationsRouter);
+router.use('/businesses/:businessId/sms', verifySignature, smsRouter);
 
 // Instagram routes (mixed auth — POST /auth is public for OAuth callback, rest need signature + JWT)
 router.use('/instagram', instagramRouter);
