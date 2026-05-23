@@ -314,3 +314,51 @@ describe('DELETE /businesses/:businessId/sms/templates/:id', () => {
         expect(res.status).toBe(404);
     });
 });
+
+describe('GET /businesses/:businessId/sms/recipients', () => {
+    it('returns distinct recipients sorted by last_visit_at desc', async () => {
+        mockBookingsGet.mockResolvedValue({
+            docs: [
+                {
+                    data: () => ({
+                        phone_number: '998900000010',
+                        client_name: 'Ali',
+                        booking_date: { toDate: () => new Date('2026-05-01') },
+                    }),
+                },
+                {
+                    data: () => ({
+                        phone_number: '998900000010',
+                        client_name: 'Ali',
+                        booking_date: { toDate: () => new Date('2026-05-20') },
+                    }),
+                },
+                {
+                    data: () => ({
+                        phone_number: '998900000011',
+                        client_name: 'Vali',
+                        booking_date: { toDate: () => new Date('2026-04-01') },
+                    }),
+                },
+            ],
+        });
+
+        const res = await request(app)
+            .get('/businesses/biz-1/sms/recipients')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveLength(2);
+        expect(res.body[0]).toMatchObject({
+            phone_number: '998900000010',
+            name: 'Ali',
+            visit_count: 2,
+        });
+        expect(res.body[1]).toMatchObject({
+            phone_number: '998900000011',
+            name: 'Vali',
+            visit_count: 1,
+        });
+    });
+});
