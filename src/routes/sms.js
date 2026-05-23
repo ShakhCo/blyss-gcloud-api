@@ -88,26 +88,26 @@ router.get('/templates', validate(listTemplatesQuerySchema, 'query'), async (req
     const { creator_id, creator_type, business_id } = req.smsCtx;
     const { status } = req.validated;
 
-    let query = db
+    const snap = await db
         .collection('sms_templates')
         .where('business_id', '==', business_id)
         .where('creator_id', '==', creator_id)
-        .where('creator_type', '==', creator_type);
+        .where('creator_type', '==', creator_type)
+        .orderBy('created_at', 'desc')
+        .get();
 
-    if (status) query = query.where('status', '==', status);
+    const items = snap.docs
+        .map((d) => {
+            const data = d.data();
+            return {
+                id: d.id,
+                ...data,
+                created_at: data.created_at?.toDate?.()?.toISOString() ?? null,
+                moderated_at: data.moderated_at?.toDate?.()?.toISOString() ?? null,
+            };
+        })
+        .filter((tpl) => !status || tpl.status === status);
 
-    query = query.orderBy('created_at', 'desc');
-
-    const snap = await query.get();
-    const items = snap.docs.map((d) => {
-        const data = d.data();
-        return {
-            id: d.id,
-            ...data,
-            created_at: data.created_at?.toDate?.()?.toISOString() ?? null,
-            moderated_at: data.moderated_at?.toDate?.()?.toISOString() ?? null,
-        };
-    });
     return res.json(items);
 });
 
