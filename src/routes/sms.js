@@ -106,4 +106,25 @@ router.get('/templates', validate(listTemplatesQuerySchema, 'query'), async (req
     return res.json(items);
 });
 
+router.delete('/templates/:id', async (req, res) => {
+    const { creator_id, creator_type, business_id } = req.smsCtx;
+    const ref = db.collection('sms_templates').doc(req.params.id);
+    const snap = await ref.get();
+
+    if (!snap.exists) {
+        return res.status(404).json({ error: 'Template not found', error_code: 'NOT_FOUND' });
+    }
+    const data = snap.data();
+    if (
+        data.business_id !== business_id ||
+        data.creator_id !== creator_id ||
+        data.creator_type !== creator_type
+    ) {
+        return res.status(403).json({ error: 'Forbidden', error_code: 'FORBIDDEN' });
+    }
+
+    await ref.delete();
+    return res.status(204).end();
+});
+
 export default router;

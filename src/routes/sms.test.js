@@ -260,3 +260,57 @@ describe('GET /businesses/:businessId/sms/templates', () => {
         expect(res.body).toEqual([]);
     });
 });
+
+describe('DELETE /businesses/:businessId/sms/templates/:id', () => {
+    it('deletes a template owned by the caller', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({
+                business_id: 'biz-1',
+                creator_id: 'owner-1',
+                creator_type: 'business_owner',
+            }),
+        });
+        mockTemplateDocDelete.mockResolvedValue();
+
+        const res = await request(app)
+            .delete('/businesses/biz-1/sms/templates/t1')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(204);
+        expect(mockTemplateDocDelete).toHaveBeenCalledOnce();
+    });
+
+    it('returns 403 when trying to delete another creator\'s template', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({
+                business_id: 'biz-1',
+                creator_id: 'someone-else',
+                creator_type: 'business_owner',
+            }),
+        });
+
+        const res = await request(app)
+            .delete('/businesses/biz-1/sms/templates/t1')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(403);
+        expect(mockTemplateDocDelete).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when template does not exist', async () => {
+        mockTemplateDocGet.mockResolvedValue({ exists: false });
+
+        const res = await request(app)
+            .delete('/businesses/biz-1/sms/templates/nope')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(404);
+    });
+});
