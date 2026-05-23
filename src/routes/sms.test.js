@@ -362,3 +362,130 @@ describe('GET /businesses/:businessId/sms/recipients', () => {
         });
     });
 });
+
+describe('POST /businesses/:businessId/sms/send', () => {
+    it('sends to all phones and writes a campaign on success', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({
+                business_id: 'biz-1',
+                creator_id: 'owner-1',
+                creator_type: 'business_owner',
+                polished_text: 'Salom!\nBLYSS',
+                status: 'confirmed',
+            }),
+        });
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-1' });
+
+        const body = {
+            template_id: 't1',
+            phone_numbers: ['998900000010', '998900000011'],
+        };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({
+            campaign_id: 'camp-1',
+            sent: 2,
+            failed: 0,
+        });
+        expect(mockSendSms).toHaveBeenCalledTimes(2);
+        expect(mockCampaignAdd).toHaveBeenCalledOnce();
+        const camp = mockCampaignAdd.mock.calls[0][0];
+        expect(camp).toMatchObject({
+            business_id: 'biz-1',
+            template_id: 't1',
+            message_snapshot: 'Salom!\nBLYSS',
+            recipient_count: 2,
+            success_count: 2,
+            failure_count: 0,
+        });
+    });
+
+    it('returns 403 when template is not confirmed', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({
+                business_id: 'biz-1',
+                creator_id: 'owner-1',
+                creator_type: 'business_owner',
+                polished_text: 'x',
+                status: 'pending_moderation',
+            }),
+        });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(403);
+        expect(res.body).toMatchObject({ error_code: 'TEMPLATE_NOT_APPROVED' });
+        expect(mockSendSms).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 when template belongs to another business', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({
+                business_id: 'biz-OTHER',
+                creator_id: 'owner-1',
+                creator_type: 'business_owner',
+                polished_text: 'x',
+                status: 'confirmed',
+            }),
+        });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(403);
+    });
+
+    it('returns 502 when >50% of sends fail, still writes the campaign', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({
+                business_id: 'biz-1',
+                creator_id: 'owner-1',
+                creator_type: 'business_owner',
+                polished_text: 'x',
+                status: 'confirmed',
+            }),
+        });
+        mockSendSms
+            .mockResolvedValueOnce({ success: false, error: 'eskiz down' })
+            .mockResolvedValueOnce({ success: false, error: 'eskiz down' })
+            .mockResolvedValueOnce({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-2' });
+
+        const body = {
+            template_id: 't1',
+            phone_numbers: ['998900000010', '998900000011', '998900000012'],
+        };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(502);
+        expect(res.body).toMatchObject({ failed: 2, sent: 1 });
+        expect(mockCampaignAdd).toHaveBeenCalledOnce();
+    });
+});

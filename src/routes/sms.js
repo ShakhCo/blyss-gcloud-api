@@ -6,10 +6,33 @@ import { validate } from '../middleware/validate.js';
 import {
     createTemplateSchema,
     listTemplatesQuerySchema,
+    sendCampaignSchema,
 } from '../schemas/sms.js';
 import { polishSmsText } from '../utils/aiPolish.js';
+import { sendSms } from '../utils/eskiz.js';
 import { resolveSmsContext } from '../utils/smsContext.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
+
+async function sendWithConcurrency(phones, message, limit = 5) {
+    const results = [];
+    let cursor = 0;
+    async function worker() {
+        while (cursor < phones.length) {
+            const idx = cursor++;
+            const phone = phones[idx];
+            try {
+                const r = await sendSms(phone, message);
+                results[idx] = { phone, success: !!r.success, error: r.error };
+            } catch (err) {
+                results[idx] = { phone, success: false, error: err.message };
+            }
+        }
+    }
+    await Promise.all(
+        Array.from({ length: Math.min(limit, phones.length) }, () => worker()),
+    );
+    return results;
+}
 
 const router = Router({ mergeParams: true });
 
@@ -169,6 +192,53 @@ router.get('/recipients', async (req, res) => {
         }));
 
     return res.json(items);
+});
+
+router.post('/send', validate(sendCampaignSchema), async (req, res) => {
+    const { template_id, phone_numbers } = req.validated;
+    const { creator_id, creator_type, business_id } = req.smsCtx;
+
+    const tplRef = db.collection('sms_templates').doc(template_id);
+    const tplSnap = await tplRef.get();
+    if (!tplSnap.exists) {
+        return res.status(404).json({ error: 'Template not found', error_code: 'NOT_FOUND' });
+    }
+    const tpl = tplSnap.data();
+    if (tpl.business_id !== business_id) {
+        return res.status(403).json({ error: 'Forbidden', error_code: 'FORBIDDEN' });
+    }
+    if (tpl.status !== 'confirmed') {
+        return res
+            .status(403)
+            .json({ error: 'Template not approved', error_code: 'TEMPLATE_NOT_APPROVED' });
+    }
+
+    const results = await sendWithConcurrency(phone_numbers, tpl.polished_text, 5);
+    const failures = results.filter((r) => !r.success);
+
+    const campaignDoc = {
+        business_id,
+        sender_id: creator_id,
+        sender_type: creator_type,
+        template_id,
+        message_snapshot: tpl.polished_text,
+        recipient_count: phone_numbers.length,
+        success_count: results.length - failures.length,
+        failure_count: failures.length,
+        errors: failures.slice(0, 20).map((f) => ({ phone: f.phone, error: f.error || 'unknown' })),
+        sent_at: FieldValue.serverTimestamp(),
+    };
+    const ref = await db.collection('sms_campaigns').add(campaignDoc);
+
+    const payload = {
+        campaign_id: ref.id,
+        sent: campaignDoc.success_count,
+        failed: campaignDoc.failure_count,
+        errors: campaignDoc.errors,
+    };
+
+    const failedTooMany = failures.length > phone_numbers.length / 2;
+    return res.status(failedTooMany ? 502 : 200).json(payload);
 });
 
 export default router;
