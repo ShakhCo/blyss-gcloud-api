@@ -13,7 +13,7 @@ function getClient() {
 
 const SYSTEM_PROMPT = `You polish SMS marketing messages for Uzbek barbershops and salons sending via the Eskiz SMS gateway. Output ONE message body, plain text, no more than 160 characters total, no emojis, no URLs, no phone numbers other than the business's own, no all-caps shouting. Preserve the user's language (Uzbek/Russian/mixed) and intent. Append "BLYSS" on its own line at the end if not already present. Return only the polished message, no preamble.`;
 
-const URL_REGEX = /\b(https?:\/\/|www\.)\S+|\b[\w-]+\.(com|uz|ru|net|org|io|app|me)\b/i;
+const URL_REGEX = /\b(https?:\/\/|www\.)\S+|\b[\w-]+\.(com|uz|ru|net|org|io|app)(\/|:|\?|#)\S*/i;
 
 export function _validatePolishedOutput(text) {
     const trimmed = (text || '').trim();

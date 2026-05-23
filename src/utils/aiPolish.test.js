@@ -65,9 +65,20 @@ describe('_validatePolishedOutput', () => {
         expect(() => _validatePolishedOutput('Salom! Chegirma bor.\nBLYSS')).not.toThrow();
     });
 
-    it('rejects URLs (http and bare domain)', () => {
+    it('rejects URLs (http and www)', () => {
         expect(() => _validatePolishedOutput('Go to http://a.com')).toThrow(/no_urls/);
-        expect(() => _validatePolishedOutput('visit example.com today')).toThrow(/no_urls/);
+        expect(() => _validatePolishedOutput('visit www.example.com today')).toThrow(/no_urls/);
+    });
+
+    it('allows bare Uzbek brand mentions like Click.uz without a path', () => {
+        expect(() => _validatePolishedOutput("Click.uz orqali to'lov\nBLYSS")).not.toThrow();
+        expect(() => _validatePolishedOutput('Foto.uz studiya\nBLYSS')).not.toThrow();
+    });
+
+    it('still rejects URLs with a path component', () => {
+        expect(() => _validatePolishedOutput('Buyurtma: click.uz/pay')).toThrow(/no_urls/);
+        expect(() => _validatePolishedOutput('Yangiliklar: https://blyss.uz')).toThrow(/no_urls/);
+        expect(() => _validatePolishedOutput('Tashrif: www.salon.com today')).toThrow(/no_urls/);
     });
 
     it('rejects messages >160 chars', () => {
