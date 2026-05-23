@@ -289,23 +289,26 @@ describe('GET /businesses/:businessId/sms/recipients', () => {
             docs: [
                 {
                     data: () => ({
-                        phone_number: '998900000010',
-                        client_name: 'Ali',
-                        booking_date: { toDate: () => new Date('2026-05-01') },
+                        customer_phone: '998900000010',
+                        customer_name: 'Ali',
+                        booking_date: '2026-05-01',
+                        status: 'completed',
                     }),
                 },
                 {
                     data: () => ({
-                        phone_number: '998900000010',
-                        client_name: 'Ali',
-                        booking_date: { toDate: () => new Date('2026-05-20') },
+                        customer_phone: '998900000010',
+                        customer_name: 'Ali',
+                        booking_date: '2026-05-20',
+                        status: 'pending',
                     }),
                 },
                 {
                     data: () => ({
-                        phone_number: '998900000011',
-                        client_name: 'Vali',
-                        booking_date: { toDate: () => new Date('2026-04-01') },
+                        customer_phone: '998900000011',
+                        customer_name: 'Vali',
+                        booking_date: '2026-04-01',
+                        status: 'pending',
                     }),
                 },
             ],

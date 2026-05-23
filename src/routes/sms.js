@@ -143,35 +143,30 @@ router.get('/recipients', async (req, res) => {
     const byPhone = new Map();
     for (const doc of snap.docs) {
         const b = doc.data();
-        if (!b.phone_number) continue;
-        const visitDate =
-            b.booking_date?.toDate?.() ??
-            b.created_at?.toDate?.() ??
-            null;
-        const existing = byPhone.get(b.phone_number);
+        const phone = b.customer_phone;
+        if (!phone) continue;
+
+        const bookingDateStr = typeof b.booking_date === 'string' ? b.booking_date : null;
+        const existing = byPhone.get(phone);
         if (!existing) {
-            byPhone.set(b.phone_number, {
-                phone_number: b.phone_number,
-                name: b.client_name || null,
-                last_visit_at: visitDate,
+            byPhone.set(phone, {
+                phone_number: phone,
+                name: b.customer_name || null,
+                last_visit_at: bookingDateStr,
                 visit_count: 1,
             });
         } else {
             existing.visit_count += 1;
-            if (visitDate && (!existing.last_visit_at || visitDate > existing.last_visit_at)) {
-                existing.last_visit_at = visitDate;
-                if (b.client_name) existing.name = b.client_name;
+            if (bookingDateStr && (!existing.last_visit_at || bookingDateStr > existing.last_visit_at)) {
+                existing.last_visit_at = bookingDateStr;
+                if (b.customer_name) existing.name = b.customer_name;
             }
         }
     }
 
     const items = Array.from(byPhone.values())
-        .sort((a, b) => (b.last_visit_at?.getTime() ?? 0) - (a.last_visit_at?.getTime() ?? 0))
-        .slice(0, 500)
-        .map((r) => ({
-            ...r,
-            last_visit_at: r.last_visit_at?.toISOString() ?? null,
-        }));
+        .sort((a, b) => (b.last_visit_at ?? '').localeCompare(a.last_visit_at ?? ''))
+        .slice(0, 500);
 
     return res.json(items);
 });
