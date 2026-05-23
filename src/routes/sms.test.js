@@ -489,3 +489,40 @@ describe('POST /businesses/:businessId/sms/send', () => {
         expect(mockCampaignAdd).toHaveBeenCalledOnce();
     });
 });
+
+describe('GET /businesses/:businessId/sms/campaigns', () => {
+    it('returns campaigns for the business, newest first', async () => {
+        mockCampaignsQueryGet.mockResolvedValue({
+            docs: [
+                {
+                    id: 'c2',
+                    data: () => ({
+                        business_id: 'biz-1',
+                        sender_id: 'owner-1',
+                        sender_type: 'business_owner',
+                        template_id: 't1',
+                        message_snapshot: 'Salom!',
+                        recipient_count: 3,
+                        success_count: 3,
+                        failure_count: 0,
+                        errors: [],
+                        sent_at: { toDate: () => new Date('2026-05-22') },
+                    }),
+                },
+            ],
+        });
+
+        const res = await request(app)
+            .get('/businesses/biz-1/sms/campaigns')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveLength(1);
+        expect(res.body[0]).toMatchObject({
+            id: 'c2',
+            recipient_count: 3,
+            success_count: 3,
+        });
+    });
+});

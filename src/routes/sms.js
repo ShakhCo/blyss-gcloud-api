@@ -5,6 +5,7 @@ import { authenticate } from '../middleware/authenticate.js';
 import { validate } from '../middleware/validate.js';
 import {
     createTemplateSchema,
+    listCampaignsQuerySchema,
     listTemplatesQuerySchema,
     sendCampaignSchema,
 } from '../schemas/sms.js';
@@ -239,6 +240,28 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
 
     const failedTooMany = failures.length > phone_numbers.length / 2;
     return res.status(failedTooMany ? 502 : 200).json(payload);
+});
+
+router.get('/campaigns', validate(listCampaignsQuerySchema, 'query'), async (req, res) => {
+    const { business_id } = req.smsCtx;
+    const { limit } = req.validated;
+
+    const snap = await db
+        .collection('sms_campaigns')
+        .where('business_id', '==', business_id)
+        .orderBy('sent_at', 'desc')
+        .limit(limit)
+        .get();
+
+    const items = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+            id: d.id,
+            ...data,
+            sent_at: data.sent_at?.toDate?.()?.toISOString() ?? null,
+        };
+    });
+    return res.json(items);
 });
 
 export default router;
