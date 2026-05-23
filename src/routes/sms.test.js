@@ -142,12 +142,11 @@ beforeEach(() => {
 });
 
 describe('POST /businesses/:businessId/sms/templates', () => {
-    it('creates a pending_moderation template after AI polish', async () => {
-        mockPolish.mockResolvedValue('Salom! Chegirma bor.\nBLYSS');
+    it('creates a pending_moderation template with the user-provided text', async () => {
         mockTemplateAdd.mockResolvedValue({ id: 'tpl-1' });
         mockSendTelegramMessage.mockResolvedValue();
 
-        const body = { example_text: 'salom chegirma' };
+        const body = { example_text: 'Salom! Chegirma bor.' };
         const res = await request(app)
             .post('/businesses/biz-1/sms/templates')
             .set(makeSignedHeaders(body))
@@ -157,7 +156,8 @@ describe('POST /businesses/:businessId/sms/templates', () => {
         expect(res.status).toBe(201);
         expect(res.body).toMatchObject({
             id: 'tpl-1',
-            polished_text: 'Salom! Chegirma bor.\nBLYSS',
+            example_text: 'Salom! Chegirma bor.',
+            polished_text: 'Salom! Chegirma bor.',
             status: 'pending_moderation',
             creator_type: 'business_owner',
             business_id: 'biz-1',
@@ -167,39 +167,7 @@ describe('POST /businesses/:businessId/sms/templates', () => {
         expect(writtenDoc.status).toBe('pending_moderation');
         expect(writtenDoc.business_id).toBe('biz-1');
         expect(writtenDoc.creator_id).toBe('owner-1');
-    });
-
-    it('returns 400 when AI output is invalid', async () => {
-        mockPolish.mockRejectedValue(
-            Object.assign(new Error('bad'), { code: 'AI_OUTPUT_INVALID', rule: 'no_urls' }),
-        );
-
-        const body = { example_text: 'spam http://x.com' };
-        const res = await request(app)
-            .post('/businesses/biz-1/sms/templates')
-            .set(makeSignedHeaders(body))
-            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
-            .send(body);
-
-        expect(res.status).toBe(400);
-        expect(res.body).toMatchObject({ error_code: 'AI_OUTPUT_INVALID' });
-        expect(mockTemplateAdd).not.toHaveBeenCalled();
-    });
-
-    it('returns 503 when AI is unavailable', async () => {
-        mockPolish.mockRejectedValue(
-            Object.assign(new Error('no key'), { code: 'AI_UNAVAILABLE' }),
-        );
-
-        const body = { example_text: 'anything' };
-        const res = await request(app)
-            .post('/businesses/biz-1/sms/templates')
-            .set(makeSignedHeaders(body))
-            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
-            .send(body);
-
-        expect(res.status).toBe(503);
-        expect(res.body).toMatchObject({ error_code: 'AI_UNAVAILABLE' });
+        expect(writtenDoc.polished_text).toBe('Salom! Chegirma bor.');
     });
 
     it('returns 403 when caller is not authorized for the business', async () => {

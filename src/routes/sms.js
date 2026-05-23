@@ -9,7 +9,6 @@ import {
     listTemplatesQuerySchema,
     sendCampaignSchema,
 } from '../schemas/sms.js';
-import { polishSmsText } from '../utils/aiPolish.js';
 import { sendSms } from '../utils/eskiz.js';
 import { resolveSmsContext } from '../utils/smsContext.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
@@ -61,30 +60,12 @@ router.post('/templates', validate(createTemplateSchema), async (req, res) => {
     const { example_text } = req.validated;
     const { creator_id, creator_type, business_id } = req.smsCtx;
 
-    let polished;
-    try {
-        polished = await polishSmsText(example_text);
-    } catch (err) {
-        if (err.code === 'AI_UNAVAILABLE') {
-            return res.status(503).json({ error: 'AI not available', error_code: 'AI_UNAVAILABLE' });
-        }
-        if (err.code === 'AI_OUTPUT_INVALID') {
-            return res.status(400).json({
-                error: `AI output failed validation: ${err.rule}`,
-                error_code: 'AI_OUTPUT_INVALID',
-                rule: err.rule,
-            });
-        }
-        console.error('polishSmsText failed:', err);
-        return res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
-    }
-
     const doc = {
         business_id,
         creator_id,
         creator_type,
         example_text,
-        polished_text: polished,
+        polished_text: example_text,
         status: 'pending_moderation',
         rejection_reason: null,
         created_at: FieldValue.serverTimestamp(),
@@ -96,7 +77,7 @@ router.post('/templates', validate(createTemplateSchema), async (req, res) => {
     if (process.env.OPERATOR_TG_ID) {
         sendTelegramMessage(
             process.env.OPERATOR_TG_ID,
-            `New SMS template (${creator_type} ${creator_id} @ ${business_id}):\n\n${polished}\n\nTemplate ID: ${ref.id}`,
+            `New SMS template (${creator_type} ${creator_id} @ ${business_id}):\n\n${example_text}\n\nTemplate ID: ${ref.id}`,
         ).catch((e) => console.error('operator telegram ping failed:', e.message));
     }
 
