@@ -79,4 +79,31 @@ router.post('/templates', validate(createTemplateSchema), async (req, res) => {
     return res.status(201).json({ id: ref.id, ...doc, created_at: null });
 });
 
+router.get('/templates', validate(listTemplatesQuerySchema, 'query'), async (req, res) => {
+    const { creator_id, creator_type, business_id } = req.smsCtx;
+    const { status } = req.validated;
+
+    let query = db
+        .collection('sms_templates')
+        .where('business_id', '==', business_id)
+        .where('creator_id', '==', creator_id)
+        .where('creator_type', '==', creator_type);
+
+    if (status) query = query.where('status', '==', status);
+
+    query = query.orderBy('created_at', 'desc');
+
+    const snap = await query.get();
+    const items = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+            id: d.id,
+            ...data,
+            created_at: data.created_at?.toDate?.()?.toISOString() ?? null,
+            moderated_at: data.moderated_at?.toDate?.()?.toISOString() ?? null,
+        };
+    });
+    return res.json(items);
+});
+
 export default router;

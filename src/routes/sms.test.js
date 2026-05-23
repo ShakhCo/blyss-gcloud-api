@@ -218,3 +218,45 @@ describe('POST /businesses/:businessId/sms/templates', () => {
         expect(res.status).toBe(403);
     });
 });
+
+describe('GET /businesses/:businessId/sms/templates', () => {
+    it('returns the caller\'s templates ordered by created_at desc', async () => {
+        mockTemplateGet.mockResolvedValue({
+            docs: [
+                {
+                    id: 't1',
+                    data: () => ({
+                        business_id: 'biz-1',
+                        creator_id: 'owner-1',
+                        creator_type: 'business_owner',
+                        polished_text: 'a',
+                        status: 'confirmed',
+                        created_at: { toDate: () => new Date('2026-05-20') },
+                    }),
+                },
+            ],
+        });
+
+        const res = await request(app)
+            .get('/businesses/biz-1/sms/templates')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([
+            expect.objectContaining({ id: 't1', polished_text: 'a', status: 'confirmed' }),
+        ]);
+    });
+
+    it('accepts ?status=confirmed filter', async () => {
+        mockTemplateGet.mockResolvedValue({ docs: [] });
+
+        const res = await request(app)
+            .get('/businesses/biz-1/sms/templates?status=confirmed')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([]);
+    });
+});
