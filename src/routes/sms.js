@@ -238,7 +238,7 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
         ? (tenant_url.startsWith('http') ? tenant_url : `https://${tenant_url}`)
         : null;
     const messageBody = bookingUrl
-        ? `${tpl.polished_text}\n\nOnline bron qilish: ${bookingUrl}`
+        ? `${tpl.polished_text}\n\nOnlayn band qilish: ${bookingUrl}`
         : tpl.polished_text;
 
     const results = await sendWithConcurrency(eligible, messageBody, 5);
