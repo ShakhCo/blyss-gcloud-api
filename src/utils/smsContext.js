@@ -21,6 +21,7 @@ export async function resolveSmsContext(user, businessId) {
             creator_id: user.id,
             creator_type: 'business_owner',
             business_id: businessId,
+            business_owner_id: businessData.business_owner_id,
         };
     }
 
@@ -40,6 +41,7 @@ export async function resolveSmsContext(user, businessId) {
                     creator_id: match.id,
                     creator_type: 'employee',
                     business_id: businessId,
+                    business_owner_id: businessData.business_owner_id,
                 };
             }
         }

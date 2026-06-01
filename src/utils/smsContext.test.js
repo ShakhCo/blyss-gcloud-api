@@ -46,6 +46,7 @@ describe('resolveSmsContext', () => {
             creator_id: 'owner-1',
             creator_type: 'business_owner',
             business_id: 'biz-1',
+            business_owner_id: 'owner-1',
         });
     });
 
@@ -68,6 +69,7 @@ describe('resolveSmsContext', () => {
             creator_id: 'emp-7',
             creator_type: 'employee',
             business_id: 'biz-1',
+            business_owner_id: 'someone-else',
         });
     });
 
