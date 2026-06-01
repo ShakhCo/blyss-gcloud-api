@@ -695,7 +695,7 @@ describe('POST /businesses/:businessId/sms/send', () => {
 
         expect(mockSendSms).toHaveBeenCalledWith(
             '998900000010',
-            'Hi\n\nOnline bron qilish: https://umid.blyss.uz',
+            'Hi\n\nOnlayn band qilish: https://umid.blyss.uz',
         );
     });
 
