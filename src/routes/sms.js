@@ -165,7 +165,7 @@ router.get('/recipients', async (req, res) => {
         }
     }
 
-    const contactMap = await getRecentContactMap(business_id);
+    const contactMap = byPhone.size > 0 ? await getRecentContactMap(business_id) : new Map();
     const items = Array.from(byPhone.values())
         .sort((a, b) => (b.last_visit_at ?? '').localeCompare(a.last_visit_at ?? ''))
         .slice(0, 500)

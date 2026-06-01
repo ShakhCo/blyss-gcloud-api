@@ -335,11 +335,15 @@ describe('GET /businesses/:businessId/sms/recipients', () => {
             phone_number: '998900000010',
             name: 'Ali',
             visit_count: 2,
+            in_cooldown: false,
+            cooldown_until: null,
         });
         expect(res.body[1]).toMatchObject({
             phone_number: '998900000011',
             name: 'Vali',
             visit_count: 1,
+            in_cooldown: false,
+            cooldown_until: null,
         });
     });
 
