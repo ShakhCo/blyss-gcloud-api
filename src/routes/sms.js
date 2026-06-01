@@ -11,6 +11,7 @@ import {
 } from '../schemas/sms.js';
 import { sendSms } from '../utils/eskiz.js';
 import { resolveSmsContext } from '../utils/smsContext.js';
+import { getRecentContactMap, cooldownUntil } from '../utils/smsCooldown.js';
 import { sendTelegramMessage } from '../utils/telegram.js';
 
 async function sendWithConcurrency(phones, message, limit = 5) {
@@ -164,9 +165,18 @@ router.get('/recipients', async (req, res) => {
         }
     }
 
+    const contactMap = await getRecentContactMap(business_id);
     const items = Array.from(byPhone.values())
         .sort((a, b) => (b.last_visit_at ?? '').localeCompare(a.last_visit_at ?? ''))
-        .slice(0, 500);
+        .slice(0, 500)
+        .map((r) => {
+            const lastSent = contactMap.get(r.phone_number);
+            return {
+                ...r,
+                in_cooldown: !!lastSent,
+                cooldown_until: lastSent ? cooldownUntil(lastSent) : null,
+            };
+        });
 
     return res.json(items);
 });

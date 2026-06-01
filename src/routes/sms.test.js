@@ -18,6 +18,7 @@ const {
     mockPolish,
     mockSendSms,
     mockSendTelegramMessage,
+    mockSmsSendsGet,
 } = vi.hoisted(() => ({
     mockTemplateAdd: vi.fn(),
     mockTemplateGet: vi.fn(),
@@ -33,6 +34,7 @@ const {
     mockPolish: vi.fn(),
     mockSendSms: vi.fn(),
     mockSendTelegramMessage: vi.fn(),
+    mockSmsSendsGet: vi.fn(),
 }));
 
 vi.mock('../db/db.js', () => ({
@@ -68,6 +70,13 @@ vi.mock('../db/db.js', () => ({
                     orderBy: vi.fn().mockReturnThis(),
                     limit: vi.fn().mockReturnThis(),
                     get: mockBookingsGet,
+                };
+            }
+            if (name === 'sms_sends') {
+                return {
+                    where: vi.fn().mockReturnThis(),
+                    get: mockSmsSendsGet,
+                    doc: vi.fn(() => ({ id: 'send-doc' })),
                 };
             }
             if (name === 'businesses') {
@@ -139,6 +148,7 @@ beforeEach(() => {
         data: () => ({ business_owner_id: 'owner-1' }),
     });
     mockEmployeesGet.mockResolvedValue({ empty: true, docs: [] });
+    mockSmsSendsGet.mockResolvedValue({ docs: [] });
 });
 
 describe('POST /businesses/:businessId/sms/templates', () => {
@@ -331,6 +341,31 @@ describe('GET /businesses/:businessId/sms/recipients', () => {
             name: 'Vali',
             visit_count: 1,
         });
+    });
+
+    it('marks a recently-contacted recipient as in_cooldown', async () => {
+        mockBookingsGet.mockResolvedValue({
+            docs: [
+                { data: () => ({ customer_phone: '998900000010', customer_name: 'Ali', booking_date: '2026-05-01' }) },
+                { data: () => ({ customer_phone: '998900000011', customer_name: 'Vali', booking_date: '2026-04-01' }) },
+            ],
+        });
+        mockSmsSendsGet.mockResolvedValue({
+            docs: [
+                { data: () => ({ phone: '998900000010', success: true, sent_at: { toDate: () => new Date('2026-05-25T00:00:00.000Z') } }) },
+            ],
+        });
+
+        const res = await request(app)
+            .get('/businesses/biz-1/sms/recipients')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(200);
+        const ali = res.body.find((r) => r.phone_number === '998900000010');
+        const vali = res.body.find((r) => r.phone_number === '998900000011');
+        expect(ali).toMatchObject({ in_cooldown: true, cooldown_until: '2026-06-24T00:00:00.000Z' });
+        expect(vali).toMatchObject({ in_cooldown: false, cooldown_until: null });
     });
 });
 
