@@ -200,7 +200,20 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
             .json({ error: 'Template not approved', error_code: 'TEMPLATE_NOT_APPROVED' });
     }
 
-    const results = await sendWithConcurrency(phone_numbers, tpl.polished_text, 5);
+    const contactMap = await getRecentContactMap(business_id);
+    const eligible = [];
+    const skipped = [];
+    for (const phone of phone_numbers) {
+        const lastSent = contactMap.get(phone);
+        if (lastSent) skipped.push({ phone, cooldown_until: cooldownUntil(lastSent) });
+        else eligible.push(phone);
+    }
+
+    if (eligible.length === 0) {
+        return res.status(200).json({ campaign_id: null, sent: 0, failed: 0, errors: [], skipped });
+    }
+
+    const results = await sendWithConcurrency(eligible, tpl.polished_text, 5);
     const failures = results.filter((r) => !r.success);
 
     const campaignDoc = {
@@ -209,22 +222,41 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
         sender_type: creator_type,
         template_id,
         message_snapshot: tpl.polished_text,
-        recipient_count: phone_numbers.length,
+        recipient_count: eligible.length,
         success_count: results.length - failures.length,
         failure_count: failures.length,
+        skipped_count: skipped.length,
         errors: failures.slice(0, 20).map((f) => ({ phone: f.phone, error: f.error || 'unknown' })),
         sent_at: FieldValue.serverTimestamp(),
     };
     const ref = await db.collection('sms_campaigns').add(campaignDoc);
+
+    const batch = db.batch();
+    for (const r of results) {
+        const sendRef = db.collection('sms_sends').doc();
+        batch.set(sendRef, {
+            business_id,
+            phone: r.phone,
+            name: null,
+            campaign_id: ref.id,
+            template_id,
+            sender_id: creator_id,
+            sender_type: creator_type,
+            success: r.success,
+            sent_at: FieldValue.serverTimestamp(),
+        });
+    }
+    await batch.commit();
 
     const payload = {
         campaign_id: ref.id,
         sent: campaignDoc.success_count,
         failed: campaignDoc.failure_count,
         errors: campaignDoc.errors,
+        skipped,
     };
 
-    const failedTooMany = failures.length > phone_numbers.length / 2;
+    const failedTooMany = failures.length > eligible.length / 2;
     return res.status(failedTooMany ? 502 : 200).json(payload);
 });
 

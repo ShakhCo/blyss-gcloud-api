@@ -19,6 +19,8 @@ const {
     mockSendSms,
     mockSendTelegramMessage,
     mockSmsSendsGet,
+    mockBatchSet,
+    mockBatchCommit,
 } = vi.hoisted(() => ({
     mockTemplateAdd: vi.fn(),
     mockTemplateGet: vi.fn(),
@@ -35,6 +37,8 @@ const {
     mockSendSms: vi.fn(),
     mockSendTelegramMessage: vi.fn(),
     mockSmsSendsGet: vi.fn(),
+    mockBatchSet: vi.fn(),
+    mockBatchCommit: vi.fn(),
 }));
 
 vi.mock('../db/db.js', () => ({
@@ -97,6 +101,7 @@ vi.mock('../db/db.js', () => ({
             limit: vi.fn().mockReturnThis(),
             get: mockEmployeesGet,
         })),
+        batch: vi.fn(() => ({ set: mockBatchSet, commit: mockBatchCommit })),
     },
 }));
 
@@ -149,6 +154,7 @@ beforeEach(() => {
     });
     mockEmployeesGet.mockResolvedValue({ empty: true, docs: [] });
     mockSmsSendsGet.mockResolvedValue({ docs: [] });
+    mockBatchCommit.mockResolvedValue();
 });
 
 describe('POST /businesses/:businessId/sms/templates', () => {
@@ -497,6 +503,85 @@ describe('POST /businesses/:businessId/sms/send', () => {
         expect(res.status).toBe(502);
         expect(res.body).toMatchObject({ failed: 2, sent: 1 });
         expect(mockCampaignAdd).toHaveBeenCalledOnce();
+    });
+
+    it('skips phones in cooldown and reports them', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'Hi', status: 'confirmed' }),
+        });
+        mockSmsSendsGet.mockResolvedValue({
+            docs: [
+                { data: () => ({ phone: '998900000010', success: true, sent_at: { toDate: () => new Date('2026-05-25T00:00:00.000Z') } }) },
+            ],
+        });
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-9' });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010', '998900000011'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(200);
+        expect(mockSendSms).toHaveBeenCalledTimes(1);
+        expect(mockSendSms).toHaveBeenCalledWith('998900000011', 'Hi');
+        expect(res.body.sent).toBe(1);
+        expect(res.body.skipped).toEqual([
+            { phone: '998900000010', cooldown_until: '2026-06-24T00:00:00.000Z' },
+        ]);
+        expect(mockBatchSet).toHaveBeenCalledTimes(1);
+        expect(mockBatchCommit).toHaveBeenCalledOnce();
+    });
+
+    it('returns sent:0 with a skip list when all phones are in cooldown', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'Hi', status: 'confirmed' }),
+        });
+        mockSmsSendsGet.mockResolvedValue({
+            docs: [
+                { data: () => ({ phone: '998900000010', success: true, sent_at: { toDate: () => new Date('2026-05-25T00:00:00.000Z') } }) },
+            ],
+        });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ campaign_id: null, sent: 0, failed: 0 });
+        expect(res.body.skipped).toHaveLength(1);
+        expect(mockSendSms).not.toHaveBeenCalled();
+        expect(mockCampaignAdd).not.toHaveBeenCalled();
+    });
+
+    it('records a failed send with success:false so the customer is not locked', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'Hi', status: 'confirmed' }),
+        });
+        mockSendSms.mockResolvedValue({ success: false, error: 'provider down' });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-10' });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000011'] };
+        await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(mockBatchSet).toHaveBeenCalledTimes(1);
+        const written = mockBatchSet.mock.calls[0][1];
+        expect(written).toMatchObject({ phone: '998900000011', success: false });
     });
 });
 
