@@ -58,7 +58,17 @@ function makeHmacHeaders(bodyStr = '') {
 }
 
 describe('GET /auth/me — balance', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUserDoc.data = () => ({
+            first_name: 'Test',
+            last_name: 'User',
+            phone_number: '998901234567',
+            is_verified: true,
+            user_type: 'business_owner',
+            balance: 22450.5,
+        });
+    });
 
     it('returns the stored decimal balance', async () => {
         const hmac = makeHmacHeaders('');
