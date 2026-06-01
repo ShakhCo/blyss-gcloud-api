@@ -18,10 +18,12 @@ function sendDoc(phone, success, sentAt) {
 }
 
 describe('cooldownUntil', () => {
-    it('returns lastSent + 30 days as ISO', () => {
-        const last = new Date('2026-05-01T00:00:00.000Z');
-        expect(cooldownUntil(last)).toBe('2026-05-31T00:00:00.000Z');
+    it('SMS_COOLDOWN_DAYS is 30', () => {
         expect(SMS_COOLDOWN_DAYS).toBe(30);
+    });
+
+    it('returns lastSent + 30 days as ISO', () => {
+        expect(cooldownUntil(new Date('2026-05-01T00:00:00.000Z'))).toBe('2026-05-31T00:00:00.000Z');
     });
 });
 
@@ -43,5 +45,11 @@ describe('getRecentContactMap', () => {
 
         expect(map.get('998900000010')).toEqual(newer);
         expect(map.has('998900000011')).toBe(false); // failed send never locks
+    });
+
+    it('returns an empty map when there are no recent sends', async () => {
+        mockSmsSendsGet.mockResolvedValue({ docs: [] });
+        const map = await getRecentContactMap('biz-new');
+        expect(map.size).toBe(0);
     });
 });
