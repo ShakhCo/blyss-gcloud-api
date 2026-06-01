@@ -71,6 +71,8 @@ router.post('/templates', validate(createTemplateSchema), async (req, res) => {
         rejection_reason: null,
         created_at: FieldValue.serverTimestamp(),
         moderated_at: null,
+        type: null,
+        price_per_sms: null,
     };
 
     const ref = await db.collection('sms_templates').add(doc);
@@ -100,9 +102,12 @@ router.get('/templates', validate(listTemplatesQuerySchema, 'query'), async (req
     const items = snap.docs
         .map((d) => {
             const data = d.data();
+            const confirmed = data.status === 'confirmed';
             return {
                 id: d.id,
                 ...data,
+                type: confirmed ? (data.type ?? null) : null,
+                price_per_sms: confirmed ? (data.price_per_sms ?? null) : null,
                 created_at: data.created_at?.toDate?.()?.toISOString() ?? null,
                 moderated_at: data.moderated_at?.toDate?.()?.toISOString() ?? null,
             };

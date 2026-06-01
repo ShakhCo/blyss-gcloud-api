@@ -243,6 +243,26 @@ describe('GET /businesses/:businessId/sms/templates', () => {
         expect(res.status).toBe(200);
         expect(res.body).toEqual([]);
     });
+
+    it('exposes type/price only for confirmed templates', async () => {
+        mockTemplateGet.mockResolvedValue({
+            docs: [
+                { id: 'c1', data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'A', status: 'confirmed', type: 'ads', price_per_sms: 500, created_at: null, moderated_at: null }) },
+                { id: 'p1', data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'B', status: 'pending_moderation', type: 'ads', price_per_sms: 500, created_at: null, moderated_at: null }) },
+            ],
+        });
+
+        const res = await request(app)
+            .get('/businesses/biz-1/sms/templates')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(200);
+        const confirmed = res.body.find((t) => t.id === 'c1');
+        const pending = res.body.find((t) => t.id === 'p1');
+        expect(confirmed).toMatchObject({ type: 'ads', price_per_sms: 500 });
+        expect(pending).toMatchObject({ type: null, price_per_sms: null });
+    });
 });
 
 describe('DELETE /businesses/:businessId/sms/templates/:id', () => {
