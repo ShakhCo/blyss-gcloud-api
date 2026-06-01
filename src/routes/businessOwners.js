@@ -111,7 +111,8 @@ router.post('/register', validate(businessOwnerSchema), async (req, res) => {
             phone_number,
             telegram_id: telegram_id ?? null,
             date_created: dateCreated,
-            is_verified: false
+            is_verified: false,
+            balance: 0
         });
 
         res.status(201).json(businessOwnerResponseSchema.parse({

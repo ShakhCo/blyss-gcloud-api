@@ -397,6 +397,10 @@ router.post('/register', validate(registerSchema), async (req, res) => {
             createData.telegram_id = userData.telegram_id ?? null;
         }
 
+        if (user_type === 'business_owner') {
+            createData.balance = 0;
+        }
+
         await db.collection(collection).doc(userId).set(createData);
 
         // If registering as business_owner, update any existing employee records with this phone number
