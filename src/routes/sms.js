@@ -188,7 +188,7 @@ router.get('/recipients', async (req, res) => {
 
 router.post('/send', validate(sendCampaignSchema), async (req, res) => {
     const { template_id, phone_numbers } = req.validated;
-    const { creator_id, creator_type, business_id } = req.smsCtx;
+    const { creator_id, creator_type, business_id, business_owner_id } = req.smsCtx;
 
     const tplRef = db.collection('sms_templates').doc(template_id);
     const tplSnap = await tplRef.get();
@@ -218,8 +218,24 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
         return res.status(200).json({ campaign_id: null, sent: 0, failed: 0, errors: [], skipped });
     }
 
+    const price = tpl.price_per_sms ?? 0;
+    if (price > 0) {
+        const ownerSnap = await db.collection('business_owners').doc(business_owner_id).get();
+        const ownerBalance = ownerSnap.exists ? (ownerSnap.data().balance ?? 0) : 0;
+        const required = price * eligible.length;
+        if (ownerBalance < required) {
+            return res.status(402).json({
+                error: 'Insufficient balance',
+                error_code: 'INSUFFICIENT_BALANCE',
+                required,
+                balance: ownerBalance,
+            });
+        }
+    }
+
     const results = await sendWithConcurrency(eligible, tpl.polished_text, 5);
     const failures = results.filter((r) => !r.success);
+    const charged = price * (results.length - failures.length);
 
     const campaignDoc = {
         business_id,
@@ -231,6 +247,8 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
         success_count: results.length - failures.length,
         failure_count: failures.length,
         skipped_count: skipped.length,
+        price_per_sms: price,
+        charged,
         errors: failures.slice(0, 20).map((f) => ({ phone: f.phone, error: f.error || 'unknown' })),
         sent_at: FieldValue.serverTimestamp(),
     };
@@ -258,12 +276,24 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
         // SMS already delivered; do not fail the request over history persistence
     }
 
+    if (charged > 0) {
+        try {
+            await db.collection('business_owners').doc(business_owner_id).update({
+                balance: FieldValue.increment(-charged),
+            });
+        } catch (err) {
+            console.error('balance deduction failed for campaign', ref.id, err);
+            // SMS already delivered; do not fail the request over the deduction
+        }
+    }
+
     const payload = {
         campaign_id: ref.id,
         sent: campaignDoc.success_count,
         failed: campaignDoc.failure_count,
         errors: campaignDoc.errors,
         skipped,
+        charged,
     };
 
     const failedTooMany = failures.length > eligible.length / 2;

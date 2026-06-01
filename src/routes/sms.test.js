@@ -15,6 +15,7 @@ const {
     mockBusinessGet,
     mockEmployeesGet,
     mockUserDocGet,
+    mockOwnerUpdate,
     mockPolish,
     mockSendSms,
     mockSendTelegramMessage,
@@ -33,6 +34,7 @@ const {
     mockBusinessGet: vi.fn(),
     mockEmployeesGet: vi.fn(),
     mockUserDocGet: vi.fn(),
+    mockOwnerUpdate: vi.fn(),
     mockPolish: vi.fn(),
     mockSendSms: vi.fn(),
     mockSendTelegramMessage: vi.fn(),
@@ -87,7 +89,7 @@ vi.mock('../db/db.js', () => ({
                 return { doc: vi.fn(() => ({ get: mockBusinessGet })) };
             }
             if (name === 'business_owners' || name === 'users') {
-                return { doc: vi.fn(() => ({ get: mockUserDocGet })) };
+                return { doc: vi.fn(() => ({ get: mockUserDocGet, update: mockOwnerUpdate })) };
             }
             return {
                 doc: vi.fn(() => ({ get: vi.fn().mockResolvedValue({ exists: false }) })),
@@ -148,6 +150,7 @@ const ownerUser = {
 beforeEach(() => {
     vi.clearAllMocks();
     mockUserDocGet.mockResolvedValue(ownerUser);
+    mockOwnerUpdate.mockResolvedValue();
     mockBusinessGet.mockResolvedValue({
         exists: true,
         data: () => ({ business_owner_id: 'owner-1' }),
@@ -605,6 +608,88 @@ describe('POST /businesses/:businessId/sms/send', () => {
         expect(mockBatchSet).toHaveBeenCalledTimes(1);
         const written = mockBatchSet.mock.calls[0][1];
         expect(written).toMatchObject({ phone: '998900000011', success: false });
+    });
+
+    function confirmedTpl(price) {
+        return {
+            exists: true,
+            id: 't1',
+            data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'Hi', status: 'confirmed', price_per_sms: price }),
+        };
+    }
+    function ownerWithBalance(balance) {
+        return { exists: true, id: 'owner-1', data: () => ({ first_name: 'Own', phone_number: '998900000001', is_verified: true, balance }) };
+    }
+
+    it('deducts price x successful sends and returns charged', async () => {
+        mockTemplateDocGet.mockResolvedValue(confirmedTpl(500));
+        mockUserDocGet.mockResolvedValue(ownerWithBalance(5000));
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-p1' });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010', '998900000011'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ sent: 2, charged: 1000 });
+        expect(mockOwnerUpdate).toHaveBeenCalledTimes(1);
+        expect(mockOwnerUpdate.mock.calls[0][0]).toHaveProperty('balance');
+    });
+
+    it('rejects with 402 when balance is insufficient and sends nothing', async () => {
+        mockTemplateDocGet.mockResolvedValue(confirmedTpl(500));
+        mockUserDocGet.mockResolvedValue(ownerWithBalance(400));
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(402);
+        expect(res.body).toMatchObject({ error_code: 'INSUFFICIENT_BALANCE', required: 500, balance: 400 });
+        expect(mockSendSms).not.toHaveBeenCalled();
+        expect(mockOwnerUpdate).not.toHaveBeenCalled();
+    });
+
+    it('does not read balance or deduct for a free (price 0/null) template', async () => {
+        mockTemplateDocGet.mockResolvedValue(confirmedTpl(null));
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-free' });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(200);
+        expect(res.body.charged ?? 0).toBe(0);
+        expect(mockOwnerUpdate).not.toHaveBeenCalled();
+    });
+
+    it('charges only successful sends (failed excluded)', async () => {
+        mockTemplateDocGet.mockResolvedValue(confirmedTpl(500));
+        mockUserDocGet.mockResolvedValue(ownerWithBalance(5000));
+        mockSendSms
+            .mockResolvedValueOnce({ success: true })
+            .mockResolvedValueOnce({ success: false, error: 'x' });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-mix' });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010', '998900000011'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.body.charged).toBe(500);
     });
 
     it('still returns success when history batch.commit fails', async () => {
