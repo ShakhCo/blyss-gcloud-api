@@ -249,6 +249,7 @@ describe('GET /businesses/:businessId/sms/templates', () => {
             docs: [
                 { id: 'c1', data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'A', status: 'confirmed', type: 'ads', price_per_sms: 500, created_at: null, moderated_at: null }) },
                 { id: 'p1', data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'B', status: 'pending_moderation', type: 'ads', price_per_sms: 500, created_at: null, moderated_at: null }) },
+                { id: 'r1', data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'C', status: 'rejected', type: 'ads', price_per_sms: 500, created_at: null, moderated_at: null }) },
             ],
         });
 
@@ -262,6 +263,8 @@ describe('GET /businesses/:businessId/sms/templates', () => {
         const pending = res.body.find((t) => t.id === 'p1');
         expect(confirmed).toMatchObject({ type: 'ads', price_per_sms: 500 });
         expect(pending).toMatchObject({ type: null, price_per_sms: null });
+        const rejected = res.body.find((t) => t.id === 'r1');
+        expect(rejected).toMatchObject({ type: null, price_per_sms: null });
     });
 });
 
