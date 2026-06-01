@@ -583,6 +583,27 @@ describe('POST /businesses/:businessId/sms/send', () => {
         const written = mockBatchSet.mock.calls[0][1];
         expect(written).toMatchObject({ phone: '998900000011', success: false });
     });
+
+    it('still returns success when history batch.commit fails', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({ business_id: 'biz-1', creator_id: 'owner-1', creator_type: 'business_owner', polished_text: 'Hi', status: 'confirmed' }),
+        });
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-11' });
+        mockBatchCommit.mockRejectedValueOnce(new Error('firestore down'));
+
+        const body = { template_id: 't1', phone_numbers: ['998900000011'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ campaign_id: 'camp-11', sent: 1 });
+    });
 });
 
 describe('GET /businesses/:businessId/sms/campaigns', () => {

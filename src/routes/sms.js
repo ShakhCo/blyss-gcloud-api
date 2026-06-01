@@ -246,7 +246,12 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
             sent_at: FieldValue.serverTimestamp(),
         });
     }
-    await batch.commit();
+    try {
+        await batch.commit();
+    } catch (err) {
+        console.error('sms_sends history batch.commit failed for campaign', ref.id, err);
+        // SMS already delivered; do not fail the request over history persistence
+    }
 
     const payload = {
         campaign_id: ref.id,
