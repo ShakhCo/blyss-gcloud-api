@@ -641,6 +641,7 @@ router.get('/me', authenticate, async (req, res) => {
             phone_number: user.phone_number,
             telegram_id: user.telegram_id || null,
             is_verified: user.is_verified || false,
+            balance: user.balance ?? 0,
             created_at: user.created_at?.toDate?.().toISOString() || user.date_created?.toDate?.().toISOString()
         };
 
