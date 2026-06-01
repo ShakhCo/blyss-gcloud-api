@@ -677,6 +677,28 @@ describe('POST /businesses/:businessId/sms/send', () => {
         expect(mockOwnerUpdate).not.toHaveBeenCalled();
     });
 
+    it('appends the online-booking link from tenant_url to each message', async () => {
+        mockTemplateDocGet.mockResolvedValue(confirmedTpl(null));
+        mockBusinessGet.mockResolvedValue({
+            exists: true,
+            data: () => ({ business_owner_id: 'owner-1', tenant_url: 'umid.blyss.uz' }),
+        });
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-url' });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(mockSendSms).toHaveBeenCalledWith(
+            '998900000010',
+            'Hi\n\nOnline bron qilish: https://umid.blyss.uz',
+        );
+    });
+
     it('charges only successful sends (failed excluded)', async () => {
         mockTemplateDocGet.mockResolvedValue(confirmedTpl(500));
         mockUserDocGet.mockResolvedValue(ownerWithBalance(5000));
