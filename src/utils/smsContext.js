@@ -22,6 +22,7 @@ export async function resolveSmsContext(user, businessId) {
             creator_type: 'business_owner',
             business_id: businessId,
             business_owner_id: businessData.business_owner_id,
+            tenant_url: businessData.tenant_url ?? null,
         };
     }
 
@@ -42,6 +43,7 @@ export async function resolveSmsContext(user, businessId) {
                     creator_type: 'employee',
                     business_id: businessId,
                     business_owner_id: businessData.business_owner_id,
+                    tenant_url: businessData.tenant_url ?? null,
                 };
             }
         }

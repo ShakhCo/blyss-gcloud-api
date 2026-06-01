@@ -188,7 +188,7 @@ router.get('/recipients', async (req, res) => {
 
 router.post('/send', validate(sendCampaignSchema), async (req, res) => {
     const { template_id, phone_numbers } = req.validated;
-    const { creator_id, creator_type, business_id, business_owner_id } = req.smsCtx;
+    const { creator_id, creator_type, business_id, business_owner_id, tenant_url } = req.smsCtx;
 
     const tplRef = db.collection('sms_templates').doc(template_id);
     const tplSnap = await tplRef.get();
@@ -233,7 +233,15 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
         }
     }
 
-    const results = await sendWithConcurrency(eligible, tpl.polished_text, 5);
+    // Append the tenant's online-booking link to every message.
+    const bookingUrl = tenant_url
+        ? (tenant_url.startsWith('http') ? tenant_url : `https://${tenant_url}`)
+        : null;
+    const messageBody = bookingUrl
+        ? `${tpl.polished_text}\n\nOnline bron qilish: ${bookingUrl}`
+        : tpl.polished_text;
+
+    const results = await sendWithConcurrency(eligible, messageBody, 5);
     const failures = results.filter((r) => !r.success);
     const charged = price * (results.length - failures.length);
 
@@ -242,7 +250,7 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
         sender_id: creator_id,
         sender_type: creator_type,
         template_id,
-        message_snapshot: tpl.polished_text,
+        message_snapshot: messageBody,
         recipient_count: eligible.length,
         success_count: results.length - failures.length,
         failure_count: failures.length,
