@@ -22,7 +22,8 @@ export const businessOwnerResponseSchema = z.object({
     phone_number: z.string(),
     telegram_id: z.number().nullable(),
     date_created: z.string(),
-    is_verified: z.boolean()
+    is_verified: z.boolean(),
+    balance: z.number().default(0)
 });
 
 // Profile update schema (only first_name and last_name)

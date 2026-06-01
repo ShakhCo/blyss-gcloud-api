@@ -95,5 +95,6 @@ export const meResponseSchema = z.object({
     phone_number: z.string(),
     telegram_id: z.number().nullable().optional(),
     is_verified: z.boolean(),
+    balance: z.number().default(0),
     created_at: z.string().optional()
 });
