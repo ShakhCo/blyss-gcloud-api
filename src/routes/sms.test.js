@@ -637,7 +637,10 @@ describe('POST /businesses/:businessId/sms/send', () => {
         expect(res.status).toBe(200);
         expect(res.body).toMatchObject({ sent: 2, charged: 1000 });
         expect(mockOwnerUpdate).toHaveBeenCalledTimes(1);
-        expect(mockOwnerUpdate.mock.calls[0][0]).toHaveProperty('balance');
+        const updateArg = mockOwnerUpdate.mock.calls[0][0];
+        expect(updateArg.balance).toBeDefined();
+        // FieldValue.increment(-1000) sentinel exposes { operand: -1000 }
+        expect(updateArg.balance.operand).toBe(-1000);
     });
 
     it('rejects with 402 when balance is insufficient and sends nothing', async () => {
@@ -690,6 +693,24 @@ describe('POST /businesses/:businessId/sms/send', () => {
             .send(body);
 
         expect(res.body.charged).toBe(500);
+    });
+
+    it('still returns success when the balance deduction fails', async () => {
+        mockTemplateDocGet.mockResolvedValue(confirmedTpl(500));
+        mockUserDocGet.mockResolvedValue(ownerWithBalance(5000));
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-dedfail' });
+        mockOwnerUpdate.mockRejectedValueOnce(new Error('firestore down'));
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        const res = await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ sent: 1, charged: 500 });
     });
 
     it('still returns success when history batch.commit fails', async () => {
