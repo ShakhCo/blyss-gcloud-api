@@ -34,7 +34,7 @@ describe('resolveSmsContext', () => {
     it('returns business_owner context when caller owns the business', async () => {
         mockBusinessGet.mockResolvedValue({
             exists: true,
-            data: () => ({ business_owner_id: 'owner-1' }),
+            data: () => ({ business_owner_id: 'owner-1', tenant_url: 'umid.blyss.uz' }),
         });
 
         const ctx = await resolveSmsContext(
@@ -47,6 +47,7 @@ describe('resolveSmsContext', () => {
             creator_type: 'business_owner',
             business_id: 'biz-1',
             business_owner_id: 'owner-1',
+            tenant_url: 'umid.blyss.uz',
         });
     });
 
@@ -70,6 +71,7 @@ describe('resolveSmsContext', () => {
             creator_type: 'employee',
             business_id: 'biz-1',
             business_owner_id: 'someone-else',
+            tenant_url: null,
         });
     });
 
