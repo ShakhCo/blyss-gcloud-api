@@ -261,13 +261,16 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
     const bookingUrl = tenant_url
         ? (tenant_url.startsWith('http') ? tenant_url : `https://${tenant_url}`)
         : null;
-    // Put the booking link on its own line. Trim any trailing newlines the
-    // template already ends with, then use a single \n — the gateway renders a
-    // lone newline (as it does between the template's own lines) but collapses
-    // the blank line left by a double newline, which jammed the link before.
+    // Eskiz only delivers texts that exactly match a template moderated in its
+    // cabinet, and those are registered as a SINGLE line ending in
+    // "...Onlayn band qilish: {booking-link}" (a space before the link, which is
+    // an Eskiz variable). Newlines in the body make the text no longer match the
+    // moderated template, so Eskiz rejects it. Flatten the body to one line and
+    // join the booking link with a single space to match the registered text.
+    const flatBody = tpl.polished_text.replace(/\n/g, '').trim();
     const messageBody = bookingUrl
-        ? `${tpl.polished_text.replace(/\s+$/, '')}\nOnlayn band qilish: ${bookingUrl}`
-        : tpl.polished_text;
+        ? `${flatBody} Onlayn band qilish: ${bookingUrl}`
+        : flatBody;
 
     const results = await sendWithConcurrency(eligible, messageBody, 5);
     const failures = results.filter((r) => !r.success);

@@ -479,7 +479,7 @@ describe('POST /businesses/:businessId/sms/send', () => {
         expect(camp).toMatchObject({
             business_id: 'biz-1',
             template_id: 't1',
-            message_snapshot: 'Salom!\nBLYSS',
+            message_snapshot: 'Salom!BLYSS',
             recipient_count: 2,
             success_count: 2,
             failure_count: 0,
@@ -731,7 +731,40 @@ describe('POST /businesses/:businessId/sms/send', () => {
 
         expect(mockSendSms).toHaveBeenCalledWith(
             '998900000010',
-            'Hi\nOnlayn band qilish: https://umid.blyss.uz',
+            'Hi Onlayn band qilish: https://umid.blyss.uz',
+        );
+    });
+
+    it('flattens a multi-line body to a single line so it matches the moderated Eskiz text', async () => {
+        mockTemplateDocGet.mockResolvedValue({
+            exists: true,
+            id: 't1',
+            data: () => ({
+                business_id: 'biz-1',
+                creator_id: 'owner-1',
+                creator_type: 'business_owner',
+                polished_text: 'Salom 😊\nBu Umid\n\n📷 Instagram: umid_stylist',
+                status: 'confirmed',
+                price_per_sms: null,
+            }),
+        });
+        mockBusinessGet.mockResolvedValue({
+            exists: true,
+            data: () => ({ business_owner_id: 'owner-1', tenant_url: 'umid.blyss.uz' }),
+        });
+        mockSendSms.mockResolvedValue({ success: true });
+        mockCampaignAdd.mockResolvedValue({ id: 'camp-flat' });
+
+        const body = { template_id: 't1', phone_numbers: ['998900000010'] };
+        await request(app)
+            .post('/businesses/biz-1/sms/send')
+            .set(makeSignedHeaders(body))
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`)
+            .send(body);
+
+        expect(mockSendSms).toHaveBeenCalledWith(
+            '998900000010',
+            'Salom 😊Bu Umid📷 Instagram: umid_stylist Onlayn band qilish: https://umid.blyss.uz',
         );
     });
 
