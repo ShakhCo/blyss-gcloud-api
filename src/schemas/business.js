@@ -299,6 +299,16 @@ export const businessCustomersQuerySchema = z.object({
     employee_id: z.string().optional()
 });
 
+// Manually-added customer schema
+export const createCustomerSchema = z.object({
+    customer_name: z.string({ required_error: 'customer_name is required' })
+        .trim()
+        .min(1, 'customer_name is required')
+        .max(100, 'customer_name must be at most 100 characters'),
+    customer_phone: z.string({ required_error: 'customer_phone is required' })
+        .regex(/^998\d{9}$/, 'customer_phone must be in format 998XXXXXXXXX')
+});
+
 // Telegram OTP schemas
 // Transfer business schemas
 export const transferSendCodeSchema = z.object({

@@ -5,7 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { uploadSingle } from '../config/multer.js';
 import bcrypt from 'bcryptjs';
-import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema, businessCustomersQuerySchema, transferSendCodeSchema, transferConfirmSchema } from '../schemas/business.js';
+import { businessSchema, createBusinessSchema, updateBusinessSchema, businessResponseSchema, updateWorkingHoursSchema, uploadPhotoSchema, getPhotosQuerySchema, reorderPhotosSchema, businessCustomersQuerySchema, createCustomerSchema, transferSendCodeSchema, transferConfirmSchema } from '../schemas/business.js';
 import { serviceSchema, updateServiceSchema } from '../schemas/service.js';
 import { employeeSchema, updateEmployeeWorkingHoursSchema, updateEmployeeIsOpenNowSchema, updateEmployeeSlotCapacitySchema } from '../schemas/employee.js';
 import { employeeServiceSchema, addEmployeeServicesSchema, updateEmployeeServiceSchema } from '../schemas/employeeService.js';
@@ -2953,6 +2953,34 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
             }
         }
 
+        // Merge in manually-added customers (no bookings yet).
+        // These live in the `customers` subcollection and are keyed by phone.
+        const manualSnapshot = await db.collection('businesses').doc(id)
+            .collection('customers')
+            .get();
+
+        for (const doc of manualSnapshot.docs) {
+            const data = doc.data();
+            const phone = data.customer_phone;
+            if (!phone) continue;
+            // Scope to the requesting employee when filtering by employee_id
+            if (employee_id && data.employee_id !== employee_id) continue;
+
+            if (!customersMap.has(phone)) {
+                customersMap.set(phone, {
+                    customer_name: data.customer_name || '',
+                    customer_phone: phone,
+                    total_bookings: 0,
+                    completed_bookings: 0,
+                    total_spent: 0,
+                    last_booking_date: '',
+                    first_booking_date: '',
+                });
+            } else if (data.customer_name && !customersMap.get(phone).customer_name) {
+                customersMap.get(phone).customer_name = data.customer_name;
+            }
+        }
+
         let customers = Array.from(customersMap.values());
 
         // Search filter
@@ -2983,6 +3011,88 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
                 has_prev: page > 1,
                 has_next: page < total_pages,
             }
+        });
+    } catch (error) {
+        console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
+    }
+});
+
+/**
+ * POST /:id/customers
+ * Manually add a customer (no booking required). Stored in the `customers`
+ * subcollection keyed by phone, and merged into the customers list above.
+ */
+router.post('/:id/customers', authenticate, validate(createCustomerSchema), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { customer_name, customer_phone } = req.validated;
+
+        // Verify business exists
+        const businessDoc = await db.collection('businesses').doc(id).get();
+        if (!businessDoc.exists) {
+            return res.status(404).json({ error: 'Business not found', error_code: 'BUSINESS_NOT_FOUND' });
+        }
+
+        // Verify access (owner or accepted employee)
+        const businessData = businessDoc.data();
+        const isOwner = businessData.business_owner_id === req.user.id;
+        let employeeId = null;
+
+        if (!isOwner) {
+            const employeeSnapshot = await db.collection('businesses').doc(id)
+                .collection('employees')
+                .where('phone_number', '==', req.user.phone_number)
+                .where('is_accepted', '==', true)
+                .where('is_rejected', '==', false)
+                .limit(1)
+                .get();
+
+            if (employeeSnapshot.empty) {
+                return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
+            }
+            employeeId = employeeSnapshot.docs[0].id;
+        }
+
+        // Reject if a customer with this phone already exists — either manually
+        // added or derived from an existing booking.
+        const existingManual = await db.collection('businesses').doc(id)
+            .collection('customers')
+            .doc(customer_phone)
+            .get();
+        if (existingManual.exists) {
+            return res.status(409).json({ error: 'Customer already exists', error_code: 'CUSTOMER_EXISTS' });
+        }
+
+        const existingBooking = await db.collection('bookings')
+            .where('business_id', '==', id)
+            .where('customer_phone', '==', customer_phone)
+            .limit(1)
+            .get();
+        if (!existingBooking.empty) {
+            return res.status(409).json({ error: 'Customer already exists', error_code: 'CUSTOMER_EXISTS' });
+        }
+
+        const now = new Date();
+        await db.collection('businesses').doc(id)
+            .collection('customers')
+            .doc(customer_phone)
+            .set({
+                customer_name,
+                customer_phone,
+                employee_id: employeeId,
+                created_by: req.user.id,
+                created_at: now,
+                source: 'manual',
+            });
+
+        res.status(201).json({
+            customer_name,
+            customer_phone,
+            total_bookings: 0,
+            completed_bookings: 0,
+            total_spent: 0,
+            last_booking_date: '',
+            first_booking_date: '',
         });
     } catch (error) {
         console.error(error); res.status(500).json({ error: 'Internal server error', error_code: 'INTERNAL_ERROR' });
