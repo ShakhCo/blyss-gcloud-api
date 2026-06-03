@@ -2963,8 +2963,9 @@ router.get('/:id/customers', authenticate, validate(businessCustomersQuerySchema
             const data = doc.data();
             const phone = data.customer_phone;
             if (!phone) continue;
-            // Scope to the requesting employee when filtering by employee_id
-            if (employee_id && data.employee_id !== employee_id) continue;
+            // Scope to the requesting employee when filtering by employee_id.
+            // Business-wide customers (employee_id null) always show.
+            if (employee_id && data.employee_id && data.employee_id !== employee_id) continue;
 
             if (!customersMap.has(phone)) {
                 customersMap.set(phone, {
@@ -3036,22 +3037,24 @@ router.post('/:id/customers', authenticate, validate(createCustomerSchema), asyn
         // Verify access (owner or accepted employee)
         const businessData = businessDoc.data();
         const isOwner = businessData.business_owner_id === req.user.id;
-        let employeeId = null;
 
-        if (!isOwner) {
-            const employeeSnapshot = await db.collection('businesses').doc(id)
-                .collection('employees')
-                .where('phone_number', '==', req.user.phone_number)
-                .where('is_accepted', '==', true)
-                .where('is_rejected', '==', false)
-                .limit(1)
-                .get();
+        // Resolve the user's employee record. Solo owners are also listed as an
+        // employee, so this gives us the employee_id the team-member customers
+        // list filters by — without it, owner-added customers would be scoped to
+        // null and never appear in that list.
+        const employeeSnapshot = await db.collection('businesses').doc(id)
+            .collection('employees')
+            .where('phone_number', '==', req.user.phone_number)
+            .where('is_accepted', '==', true)
+            .where('is_rejected', '==', false)
+            .limit(1)
+            .get();
 
-            if (employeeSnapshot.empty) {
-                return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
-            }
-            employeeId = employeeSnapshot.docs[0].id;
+        if (!isOwner && employeeSnapshot.empty) {
+            return res.status(403).json({ error: 'Access denied', error_code: 'FORBIDDEN' });
         }
+
+        const employeeId = employeeSnapshot.empty ? null : employeeSnapshot.docs[0].id;
 
         // Reject if a customer with this phone already exists — either manually
         // added or derived from an existing booking.
