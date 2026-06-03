@@ -237,8 +237,12 @@ router.post('/send', validate(sendCampaignSchema), async (req, res) => {
     const bookingUrl = tenant_url
         ? (tenant_url.startsWith('http') ? tenant_url : `https://${tenant_url}`)
         : null;
+    // Put the booking link on its own line. Trim any trailing newlines the
+    // template already ends with, then use a single \n — the gateway renders a
+    // lone newline (as it does between the template's own lines) but collapses
+    // the blank line left by a double newline, which jammed the link before.
     const messageBody = bookingUrl
-        ? `${tpl.polished_text}\n\nOnlayn band qilish: ${bookingUrl}`
+        ? `${tpl.polished_text.replace(/\s+$/, '')}\nOnlayn band qilish: ${bookingUrl}`
         : tpl.polished_text;
 
     const results = await sendWithConcurrency(eligible, messageBody, 5);
