@@ -13,6 +13,7 @@ const {
     mockCampaignsQueryGet,
     mockBookingsGet,
     mockBusinessGet,
+    mockManualCustomersGet,
     mockEmployeesGet,
     mockUserDocGet,
     mockOwnerUpdate,
@@ -32,6 +33,7 @@ const {
     mockCampaignsQueryGet: vi.fn(),
     mockBookingsGet: vi.fn(),
     mockBusinessGet: vi.fn(),
+    mockManualCustomersGet: vi.fn(),
     mockEmployeesGet: vi.fn(),
     mockUserDocGet: vi.fn(),
     mockOwnerUpdate: vi.fn(),
@@ -86,7 +88,12 @@ vi.mock('../db/db.js', () => ({
                 };
             }
             if (name === 'businesses') {
-                return { doc: vi.fn(() => ({ get: mockBusinessGet })) };
+                return {
+                    doc: vi.fn(() => ({
+                        get: mockBusinessGet,
+                        collection: vi.fn(() => ({ get: mockManualCustomersGet })),
+                    })),
+                };
             }
             if (name === 'business_owners' || name === 'users') {
                 return { doc: vi.fn(() => ({ get: mockUserDocGet, update: mockOwnerUpdate })) };
@@ -156,6 +163,7 @@ beforeEach(() => {
         data: () => ({ business_owner_id: 'owner-1' }),
     });
     mockEmployeesGet.mockResolvedValue({ empty: true, docs: [] });
+    mockManualCustomersGet.mockResolvedValue({ docs: [] });
     mockSmsSendsGet.mockResolvedValue({ docs: [] });
     mockBatchCommit.mockResolvedValue();
 });
@@ -377,6 +385,34 @@ describe('GET /businesses/:businessId/sms/recipients', () => {
             in_cooldown: false,
             cooldown_until: null,
         });
+    });
+
+    it('merges manually-added customers and dedupes those who also have bookings', async () => {
+        mockBookingsGet.mockResolvedValue({
+            docs: [
+                { data: () => ({ customer_phone: '998900000010', customer_name: 'Ali', booking_date: '2026-05-01' }) },
+            ],
+        });
+        mockManualCustomersGet.mockResolvedValue({
+            docs: [
+                // Same phone as a booking → must dedupe, not add a second entry.
+                { data: () => ({ customer_phone: '998900000010', customer_name: 'Ali' }) },
+                // New manual-only customer → must be included with no visits.
+                { data: () => ({ customer_phone: '998900000022', customer_name: 'Manual Bek' }) },
+            ],
+        });
+
+        const res = await request(app)
+            .get('/businesses/biz-1/sms/recipients')
+            .set(makeSignedHeaders())
+            .set('Cookie', `access_token=${authToken('business_owner', 'owner-1')}`);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveLength(2);
+        const ali = res.body.find((r) => r.phone_number === '998900000010');
+        const bek = res.body.find((r) => r.phone_number === '998900000022');
+        expect(ali).toMatchObject({ visit_count: 1, name: 'Ali' });
+        expect(bek).toMatchObject({ phone_number: '998900000022', name: 'Manual Bek', visit_count: 0, in_cooldown: false });
     });
 
     it('marks a recently-contacted recipient as in_cooldown', async () => {

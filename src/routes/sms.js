@@ -170,6 +170,30 @@ router.get('/recipients', async (req, res) => {
         }
     }
 
+    // Merge in manually-added customers (no booking history). The Map is keyed
+    // by phone, so customers who also have bookings are deduped automatically.
+    const manualSnap = await db
+        .collection('businesses')
+        .doc(business_id)
+        .collection('customers')
+        .get();
+    for (const doc of manualSnap.docs) {
+        const c = doc.data();
+        const phone = c.customer_phone;
+        if (!phone) continue;
+        const existing = byPhone.get(phone);
+        if (!existing) {
+            byPhone.set(phone, {
+                phone_number: phone,
+                name: c.customer_name || null,
+                last_visit_at: null,
+                visit_count: 0,
+            });
+        } else if (!existing.name && c.customer_name) {
+            existing.name = c.customer_name;
+        }
+    }
+
     const contactMap = byPhone.size > 0 ? await getRecentContactMap(business_id) : new Map();
     const items = Array.from(byPhone.values())
         .sort((a, b) => (b.last_visit_at ?? '').localeCompare(a.last_visit_at ?? ''))
